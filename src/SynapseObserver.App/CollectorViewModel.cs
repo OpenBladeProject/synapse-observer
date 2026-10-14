@@ -31,6 +31,8 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
     private int failedCalls;
     private bool stopping;
     private bool nativeFailureGapCounted;
+    private bool malformedLossMarkerEmitted;
+    private bool cleanupRequested;
     private int gaps;
     private int droppedEvents;
     private int stepStartGaps;
@@ -135,7 +137,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
         : "Stop recording and save the evidence ZIP.";
     private string EndedRecordingInstructions => (stepPhase > 0
         ? $"Restore the starting setting: {startingSetting}. " : "Recording is unavailable. ")
-        + (stopping ? "Wait for recording cleanup, then save the partial evidence."
+        + (stopping || cleanupRequested ? "Wait for recording cleanup, then save the partial evidence."
             : "Stop recording and save the partial evidence.");
     public string StepStatus => !HasCurrentStep ? "Your setting changes and restoration markers are recorded." : CurrentActivity.IsReadOnly ? "This is your report, not a hardware measurement or firmware confirmation."
         : !recording ? "Current-state reports are available without observing Synapse. Setting changes need a recording."
@@ -276,6 +278,8 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
             // and accumulated loss remain intact across successive recordings.
             droppedEvents = 0;
             nativeFailureGapCounted = false;
+            malformedLossMarkerEmitted = false;
+            cleanupRequested = false;
             recordingStartGaps = gaps;
             recordingNumber++;
             recording = true;
@@ -389,6 +393,14 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
                 // engine queue drains into the smaller shared ring.
                 nativeStatus = await observer.StopAsync();
                 if (UpdateDroppedEvents(nativeStatus)) NotifyObservationSummaries();
+                if (!nativeStatus.Finished)
+                {
+                    // Dispose previously paid a second wait without retaining its
+                    // result. Keep the sole reader alive for that bounded wait so
+                    // a late finish publishes its final events and queue totals.
+                    nativeStatus = await observer.StopAsync();
+                    if (UpdateDroppedEvents(nativeStatus)) NotifyObservationSummaries();
+                }
                 pumpCancellation?.Cancel();
                 if (pump is not null) await pump;
                 await PollOnceAsync();
@@ -496,7 +508,12 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
                     // The ring remains readable; keep one reader through stop so
                     // buffered events do not overflow its smaller shared ring.
                     observerEnded = true;
-                    Marker(EvidenceMarkerKind.Failure, "observer", "Malformed observer records rejected", EvidenceProvenance.Observer);
+                    cleanupRequested = true;
+                    if (!malformedLossMarkerEmitted)
+                    {
+                        malformedLossMarkerEmitted = true;
+                        Marker(EvidenceMarkerKind.Failure, "observer", "Malformed observer records rejected", EvidenceProvenance.Observer);
+                    }
                     if (!stopping)
                     {
                         recorderStatus = "Recording had malformed records. Requesting observer cleanup.";
@@ -511,7 +528,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
                     observerEnded = true;
                     // A requested stop owns its status until cleanup completes.
                     // Native failure and normal expiry have different evidence.
-                    if (!stopping)
+                    if (!stopping && !cleanupRequested)
                     {
                         if (nativeStatus.Failure != 0)
                         {
@@ -542,6 +559,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
         catch (Exception ex) when (ex is not OutOfMemoryException and not StackOverflowException)
         {
             observerEnded = true;
+            cleanupRequested = true;
             gaps++;
             Marker(EvidenceMarkerKind.Failure, "observer", "Observer polling failed", EvidenceProvenance.Observer, ex.GetType().Name);
             recorderStatus = "The recording reader failed. Requesting observer cleanup.";

@@ -90,7 +90,11 @@ draft files share one set of action windows. Concurrent stop and close join one
 cleanup. During ordinary stop and recoverable malformed-record rejection, one
 reader remains active through native final draining. A fatal reader fault stops
 that reader; cleanup performs a final drain and reports loss. Queue-drop counts
-are checked independently of record parsing and again from the stop result.
+are checked independently of record parsing and again from the stop result. If
+the first stop wait is unconfirmed, one additional bounded wait retains the
+reader and captures a late native finish before the final drain. An unconfirmed
+second result remains a partial-recording failure. Repeated malformed records
+retain every rejected-record count while emitting one loss marker per recording.
 
 See `EvidenceLimits` and `FeaturePayloadPrivacy` in `src/SynapseObserver.Core`
 for the exact limits and privacy classifier. Maintainers should review the

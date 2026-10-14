@@ -74,6 +74,21 @@ public sealed class NativeObservationSessionTests
         CryptographicOperations.ZeroMemory(retained);
     }
 
+    [Fact]
+    public async Task TimedOutExplicitStopDoesNotHideAnotherWaitInsideDisposal()
+    {
+        var mapping = MemoryMappedFile.CreateNew(null,
+            NativeObservationSession.HeaderSize + NativeObservationSession.Slots * NativeEventParser.RecordSize,
+            MemoryMappedFileAccess.ReadWrite);
+        await using var session = new NativeObservationSession(mapping, Origin);
+        var status = await session.StopAsync();
+        Assert.False(status.Finished);
+        Assert.Equal(170, status.Failure);
+        var disposal = session.DisposeAsync();
+        Assert.True(disposal.IsCompletedSuccessfully);
+        await disposal;
+    }
+
     private static byte[] Record(ulong sequence, byte marker, uint operation = 1)
     {
         var bytes = new byte[NativeEventParser.RecordSize];

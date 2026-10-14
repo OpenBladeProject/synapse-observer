@@ -31,7 +31,7 @@ public sealed class ReaderFailureRecoveryTests
         Assert.False(close.IsCompleted);
         observer.ReleaseStop.SetResult();
         await close.WaitAsync(TimeSpan.FromSeconds(5));
-        Assert.Equal(1, observer.Stops);
+        Assert.Equal(failure == 0 ? 1 : 2, observer.Stops);
         Assert.Equal(1, observer.Disposals);
         Assert.Equal(1, observer.MaximumConcurrentPolls);
         Assert.False(model.IsRecording);

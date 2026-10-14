@@ -25,6 +25,7 @@ public sealed class NativeObservationSession : INativeObservationSession
     private readonly long origin;
     public long OriginTimestampTicks => origin;
     private bool disposed;
+    private bool stopRequested;
     private NativeObservationSession(MemoryMappedFile mapping, MemoryMappedViewAccessor view, SafeProcessHandle process, SafeFileHandle worker, long origin)
     { this.mapping = mapping; this.view = view; this.process = process; this.worker = worker; this.origin = origin; }
     internal NativeObservationSession(MemoryMappedFile mapping, long origin)
@@ -154,7 +155,7 @@ public sealed class NativeObservationSession : INativeObservationSession
     }
     public async Task<NativeSessionStatus> StopAsync(CancellationToken cancellationToken = default)
     {
-        ObjectDisposedException.ThrowIf(disposed, this); view.Write(12, 1);
+        ObjectDisposedException.ThrowIf(disposed, this); view.Write(12, 1); stopRequested = true;
         for (int i = 0; i < 100 && view.ReadInt32(4) == 0; ++i) await Task.Delay(20, cancellationToken).ConfigureAwait(false);
         var status = GetStatus();
         return status.Finished ? status : status with { Failure = 170, Diagnostic = "Stop was requested but detachment was not confirmed. The module stays resident. Restart Synapse manually before another recording." };
@@ -162,7 +163,9 @@ public sealed class NativeObservationSession : INativeObservationSession
     public async ValueTask DisposeAsync()
     {
         if (disposed) return;
-        try { await StopAsync().ConfigureAwait(false); }
+        // Explicit callers own bounded waits and final evidence collection.
+        // Do not hide another wait after their last status/record read.
+        try { if (!stopRequested) await StopAsync().ConfigureAwait(false); }
         finally { disposed = true; worker.Dispose(); process.Dispose(); view.Dispose(); mapping.Dispose(); }
     }
     private static IntPtr WriteRemote(SafeProcessHandle process, byte[] bytes)

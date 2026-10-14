@@ -17,6 +17,10 @@
 
 ### Fixed
 
+- Preserve late stop events and drop totals, bound repeated malformed-record
+  markers, and keep automatic-cleanup guidance when native recording ends
+  ([#2](https://github.com/OpenBladeProject/synapse-observer/pull/2)).
+
 - Retain valid events after an invalid interface record, keep the reader draining
   during recoverable errors, preserve queue-drop counts after polling faults,
   and clarify cleanup guidance and rejected-record receipts
