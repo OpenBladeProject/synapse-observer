@@ -1,0 +1,12 @@
+<UserControl x:Class="SynapseObserver.App.SettingEntryView" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <UserControl.Resources><BooleanToVisibilityConverter x:Key="VisibleWhenTrue" /></UserControl.Resources>
+  <StackPanel>
+    <ComboBox ItemsSource="{Binding Choices}" SelectedItem="{Binding SelectedChoice}" DisplayMemberPath="Label" MinHeight="44" Padding="10" FontSize="15" AutomationProperties.Name="{Binding Tag, RelativeSource={RelativeSource AncestorType=UserControl}}" AutomationProperties.HelpText="Choose the state shown in Synapse. Other state lets you enter an unfamiliar value." />
+    <StackPanel Visibility="{Binding ShowDetails, Converter={StaticResource VisibleWhenTrue}}" Margin="0,10,0,0">
+      <Label Content="{Binding DetailsLabel}" Target="{Binding ElementName=DetailsBox}" Padding="0,0,0,6" />
+      <TextBox x:Name="DetailsBox" Text="{Binding Details, UpdateSourceTrigger=PropertyChanged}" MaxLength="80" MinHeight="44" Padding="10" AutomationProperties.Name="{Binding DetailsLabel}" />
+      <TextBlock Text="{Binding DetailsHint}" Foreground="{StaticResource MutedTextBrush}" FontSize="13" Margin="0,6,0,0" />
+    </StackPanel>
+    <TextBlock Text="{Binding ValidationHint}" Foreground="{StaticResource MutedTextBrush}" FontSize="13" Margin="0,6,0,12" AutomationProperties.LiveSetting="Polite" />
+  </StackPanel>
+</UserControl>

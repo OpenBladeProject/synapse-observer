@@ -36,7 +36,8 @@ internal sealed class CollectorViewModel : INotifyPropertyChanged
     private int step;
     private int stepPhase;
     private string startingSetting = string.Empty;
-    private string changedSetting = string.Empty;
+    public SettingEntry StartingEntry { get; } = new();
+    public SettingEntry ChangedEntry { get; } = new();
     private string deviceSummary = "Ready to identify your laptop. Device information stays on this computer until you save a ZIP.";
     private string recorderStatus = "Device information is available even if recording cannot start.";
     private string collectionDetails = "The observer collects selected laptop feature calls. An observed response is labeled as a user-mode returned buffer, not firmware confirmation.";
@@ -45,10 +46,14 @@ internal sealed class CollectorViewModel : INotifyPropertyChanged
     public CollectorViewModel(bool preview)
     {
         this.preview = preview;
+        StartingEntry.Reset(0);
+        ChangedEntry.Reset(0);
+        StartingEntry.PropertyChanged += (_, _) => RefreshCommands();
+        ChangedEntry.PropertyChanged += (_, _) => RefreshCommands();
         CollectCommand = new AsyncCommand(() => GuardAsync(CollectAsync), () => !busy && !collecting && !recording);
         StartCommand = new AsyncCommand(() => GuardAsync(StartAsync), () => !busy && HasInventory && consent && !recording && (preview || backendCandidate is not null));
         StopCommand = new AsyncCommand(() => GuardAsync(StopAsync), () => recording);
-        MarkCommand = new AsyncCommand(() => GuardAsync(MarkAsync), () => recording && !observerEnded && step < Activities.Length && (stepPhase == 2 || (stepPhase == 0 ? !string.IsNullOrWhiteSpace(startingSetting) : !string.IsNullOrWhiteSpace(changedSetting))));
+        MarkCommand = new AsyncCommand(() => GuardAsync(MarkAsync), () => recording && !observerEnded && step < Activities.Length && (stepPhase == 2 || (stepPhase == 0 ? StartingEntry.HasValue : ChangedEntry.HasValue)));
         SkipCommand = new AsyncCommand(() => GuardAsync(() => SkipAsync(false)), () => recording && !observerEnded && step < Activities.Length && stepPhase == 0);
         UnavailableCommand = new AsyncCommand(() => GuardAsync(() => SkipAsync(true)), () => recording && !observerEnded && step < Activities.Length && stepPhase == 0);
         SaveCommand = new AsyncCommand(() => GuardAsync(SaveAsync), () => !preview && !busy && HasInventory && !recording);
@@ -71,8 +76,9 @@ internal sealed class CollectorViewModel : INotifyPropertyChanged
     public bool ShowInventoryScreen => !HasInventory;
     public bool ShowExport => HasInventory && !recording;
     public bool IsRecording => recording;
-    public bool ShowStartingValue => stepPhase == 0;
-    public bool ShowChangedValue => stepPhase == 1;
+    public bool HasCurrentStep => step < Titles.Length;
+    public bool ShowStartingValue => HasCurrentStep && stepPhase == 0;
+    public bool ShowChangedValue => HasCurrentStep && stepPhase == 1;
     public bool ShowAttach => !recording;
     public string CollectButtonText => HasInventory ? "Refresh device information" : "Collect device information";
     public string DeviceSummary => deviceSummary;
@@ -81,11 +87,11 @@ internal sealed class CollectorViewModel : INotifyPropertyChanged
     public string Status => status;
     public string StepTitle => step < Titles.Length ? $"{step + 1} of {Titles.Length} · {Titles[step]}" : "Recording steps finished";
     public string StepInstructions => step < Titles.Length
-        ? stepPhase == 0 ? "Enter the setting currently shown in Synapse. Then begin this step."
-        : stepPhase == 1 ? "Choose a different available setting in Synapse. Enter its value below, then mark the change."
+        ? stepPhase == 0 ? "Select the setting currently shown in Synapse. Then begin this step."
+        : stepPhase == 1 ? "Change one available setting in Synapse. Select its new value below, then mark the change."
         : $"Restore the starting setting in Synapse: {startingSetting}. Mark restoration after Synapse shows that value."
         : "Stop recording and save the evidence ZIP.";
-    public string StepStatus => stepPhase == 0 ? "Skip any setting you do not want to change."
+    public string StepStatus => !HasCurrentStep ? "Your setting changes and restoration markers are recorded." : stepPhase == 0 ? "Skip any setting you do not want to change."
         : stepPhase == 1 ? "The collector observes Synapse. It does not change a setting for you."
         : "Restoration will be recorded as your observation of Synapse's display.";
     public string MarkButtonText => stepPhase == 0 ? "Begin this step" : stepPhase == 1 ? "I changed it" : "I restored it";
@@ -100,14 +106,14 @@ internal sealed class CollectorViewModel : INotifyPropertyChanged
 
     public string StartingSetting
     {
-        get => startingSetting;
-        set { startingSetting = value; Changed(); RefreshCommands(); }
+        get => StartingEntry.Value;
+        set => StartingEntry.SetReportedText(value);
     }
 
     public string ChangedSetting
     {
-        get => changedSetting;
-        set { changedSetting = value; Changed(); RefreshCommands(); }
+        get => ChangedEntry.Value;
+        set => ChangedEntry.SetReportedText(value);
     }
 
     private async Task CollectAsync()
@@ -237,6 +243,7 @@ internal sealed class CollectorViewModel : INotifyPropertyChanged
     {
         if (stepPhase == 0)
         {
+            startingSetting = StartingEntry.Value;
             Marker(EvidenceMarkerKind.UserReportedStartingValue, Activities[step], "Starting setting reported", EvidenceProvenance.UserReported, startingSetting);
             stepStartCount = observedCalls;
             stepStartGaps = gaps;
@@ -244,7 +251,7 @@ internal sealed class CollectorViewModel : INotifyPropertyChanged
         }
         else if (stepPhase == 1)
         {
-            Marker(EvidenceMarkerKind.UserReportedTargetValue, Activities[step], "Changed setting reported", EvidenceProvenance.UserReported, changedSetting);
+            Marker(EvidenceMarkerKind.UserReportedTargetValue, Activities[step], "Changed setting reported", EvidenceProvenance.UserReported, ChangedEntry.Value);
             Marker(EvidenceMarkerKind.UserActionConfirmed, Activities[step], "User marked the Synapse change", EvidenceProvenance.UserReported);
             stepPhase = 2;
         }
@@ -273,7 +280,8 @@ internal sealed class CollectorViewModel : INotifyPropertyChanged
         step++;
         stepPhase = 0;
         startingSetting = string.Empty;
-        changedSetting = string.Empty;
+        StartingEntry.Reset(step);
+        ChangedEntry.Reset(step);
     }
 
     private async Task StopAsync()
@@ -413,7 +421,9 @@ internal sealed class CollectorViewModel : INotifyPropertyChanged
             {
                 session.AddObservation(new ControlObservation(operationId, completedAt, ObservationSource.ReturnedBuffer, observed.Api, ObservationDirection.Output,
                     callStatus, unchecked((int)observed.NativeError), error, device.VendorId, device.ProductId, device.InterfaceLabel,
-                    device.UsagePage, device.Usage, observed.ResponseBytes[0], observed.ResponseBytes, PayloadDisposition.ProvenFeatureControl, completedAt));
+                    device.UsagePage, device.Usage,
+                    observed.Api == "DeviceIoControl.HID_GET_FEATURE" && observed.ReturnedBytes == 90
+                        && observed.ResponseBytes.Length == 90 && device.ReportGeometry?.FeatureBytes == 91 ? null : observed.ResponseBytes[0], observed.ResponseBytes, PayloadDisposition.ProvenFeatureControl, completedAt));
             }
 
             observedCalls++;
@@ -516,7 +526,8 @@ internal sealed class CollectorViewModel : INotifyPropertyChanged
         {
             recording = true;
             startingSetting = "Balanced";
-            changedSetting = "Silent";
+            StartingEntry.SetReportedText("Balanced");
+            ChangedEntry.SetReportedText("Silent");
             stepPhase = 1;
             recorderStatus = "Recording selected laptop feature calls. Example data only.";
         }

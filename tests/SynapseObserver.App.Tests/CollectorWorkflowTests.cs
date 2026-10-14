@@ -120,6 +120,88 @@ public sealed class CollectorWorkflowTests
         await command.CurrentExecution;
     }
 
+    [Fact]
+    public async Task PresetsNeedNoTypingAndRestoreFrozenStartingChoice()
+    {
+        var model = await RecordingAsync();
+        model.StartingEntry.SelectedChoice = model.StartingEntry.Choices.Single(c => c.Label == "Balanced");
+        Assert.True(model.MarkCommand.CanExecute(null));
+        await Run(model.MarkCommand);
+        model.StartingEntry.SelectedChoice = model.StartingEntry.Choices.Single(c => c.Label == "Silent");
+        model.ChangedEntry.SelectedChoice = model.ChangedEntry.Choices.Single(c => c.Label == "Silent");
+        await Run(model.MarkCommand);
+        Assert.Contains("Balanced", model.StepInstructions);
+        await Run(model.MarkCommand);
+        Assert.Equal("Balanced", Assert.Single(model.Evidence!.Markers, m => m.Kind == EvidenceMarkerKind.UserReportedRestoration).Value);
+        Assert.Null(model.StartingEntry.SelectedChoice);
+        Assert.False(model.MarkCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public async Task CustomModeRequiresDetailsAndOtherStateAllowsUnfamiliarMode()
+    {
+        var model = await RecordingAsync();
+        model.StartingEntry.SelectedChoice = model.StartingEntry.Choices.Single(c => c.Label == "Custom");
+        Assert.True(model.StartingEntry.ShowDetails);
+        Assert.False(model.MarkCommand.CanExecute(null));
+        model.StartingEntry.Details = "CPU Boost, GPU High";
+        await Run(model.MarkCommand);
+        model.ChangedEntry.SelectedChoice = model.ChangedEntry.Choices.Single(c => c.IsOther);
+        Assert.False(model.MarkCommand.CanExecute(null));
+        model.ChangedEntry.Details = "Future mode";
+        await Run(model.MarkCommand);
+        await Run(model.MarkCommand);
+        Assert.Equal("Custom: CPU Boost, GPU High", Assert.Single(model.Evidence!.Markers, m => m.Kind == EvidenceMarkerKind.UserReportedRestoration).Value);
+        Assert.Contains(model.Evidence.Markers, m => m.Kind == EvidenceMarkerKind.UserReportedTargetValue && m.Value == "Future mode");
+    }
+
+    [Fact]
+    public async Task FixedFansRequireSpeedAndChangingChoiceClearsDetails()
+    {
+        var model = await RecordingAsync();
+        await Run(model.SkipCommand);
+        model.StartingEntry.SelectedChoice = model.StartingEntry.Choices.Single(c => c.Label == "Fixed");
+        Assert.False(model.MarkCommand.CanExecute(null));
+        model.StartingEntry.Details = "CPU 4200 RPM, GPU 4000 RPM";
+        await Run(model.MarkCommand);
+        model.ChangedEntry.SelectedChoice = model.ChangedEntry.Choices.Single(c => c.Label == "Fixed");
+        model.ChangedEntry.Details = "4800 RPM";
+        model.ChangedEntry.SelectedChoice = model.ChangedEntry.Choices.Single(c => c.Label == "Automatic");
+        Assert.False(model.ChangedEntry.ShowDetails);
+        Assert.Equal(string.Empty, model.ChangedEntry.Details);
+        await Run(model.MarkCommand);
+        await Run(model.MarkCommand);
+        Assert.Equal("Fixed: CPU 4200 RPM, GPU 4000 RPM", Assert.Single(model.Evidence!.Markers, m => m.Kind == EvidenceMarkerKind.UserReportedRestoration).Value);
+    }
+
+    [Fact]
+    public async Task EveryActivityHasOtherStateAndFinishedStepsHideEditors()
+    {
+        var model = await RecordingAsync();
+        for (var i = 0; i < 4; i++)
+        {
+            Assert.Single(model.StartingEntry.Choices, c => c.IsOther);
+            Assert.Null(model.StartingEntry.SelectedChoice);
+            await Run(model.SkipCommand);
+        }
+        Assert.False(model.HasCurrentStep);
+        Assert.False(model.ShowStartingValue);
+        Assert.False(model.ShowChangedValue);
+        Assert.False(model.MarkCommand.CanExecute(null));
+        Assert.True(model.StopCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public void OverlongCombinedStateCannotBeMarked()
+    {
+        var entry = new SettingEntry();
+        entry.Reset(0);
+        entry.SelectedChoice = entry.Choices.Single(c => c.Label == "Custom");
+        entry.Details = new string('x', 80);
+        Assert.False(entry.HasValue);
+        Assert.Contains("80", entry.ValidationHint);
+    }
+
     private static async Task<CollectorViewModel> RecordingAsync()
     {
         var model = new CollectorViewModel(true);

@@ -22,8 +22,9 @@ there is no Blade model or PID allowlist. See [model coverage](docs/model-covera
 2. Select **Collect device information**.
 3. To add a recording, open your laptop's controls in Synapse, check recording
    availability, and allow observation for this session.
-4. Follow the setting cards. Note the starting value, change one setting in
-   Synapse, then restore the starting value. Skip settings you do not have.
+4. Select the starting setting, change one setting in Synapse, then select its
+   new value and restore the starting setting. Use **Other state…** for an
+   unfamiliar value. Skip settings you do not have.
 5. Stop recording, save the evidence ZIP, and attach it to your support request.
 
 Nothing is uploaded automatically. The collector does not apply settings or

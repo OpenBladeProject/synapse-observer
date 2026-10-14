@@ -14,3 +14,7 @@
   Windows displays a generic composite-device label ([#2](https://github.com/OpenBladeProject/synapse-observer/pull/2)).
 - Accept signed Razer Synapse engine updates without per-version approval; keep
   hashes and versions as evidence provenance ([#2](https://github.com/OpenBladeProject/synapse-observer/pull/2)).
+- Select common settings from dropdowns during guided recordings, with an Other
+  state option and details for exact restoration ([#2](https://github.com/OpenBladeProject/synapse-observer/pull/2)).
+- Preserve completed 90-byte feature responses without inventing a report ID;
+  retain only reviewed numeric payloads ([#2](https://github.com/OpenBladeProject/synapse-observer/pull/2)).

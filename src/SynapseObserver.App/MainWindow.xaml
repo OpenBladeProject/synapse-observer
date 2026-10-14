@@ -1,4 +1,4 @@
-<Window x:Class="SynapseObserver.App.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="Synapse Observer" Style="{StaticResource {x:Type Window}}" Width="820" Height="740" MinWidth="680" MinHeight="620" WindowStartupLocation="CenterScreen">
+<Window x:Class="SynapseObserver.App.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:local="clr-namespace:SynapseObserver.App" Title="Synapse Observer" Style="{StaticResource {x:Type Window}}" Width="820" Height="740" MinWidth="680" MinHeight="620" WindowStartupLocation="CenterScreen">
   <Window.Resources>
     <BooleanToVisibilityConverter x:Key="VisibleWhenTrue" />
   </Window.Resources>
@@ -42,14 +42,14 @@
                   <TextBlock Text="{Binding StepInstructions}" Margin="0,8,0,12" />
                   <StackPanel Visibility="{Binding ShowStartingValue, Converter={StaticResource VisibleWhenTrue}}">
                     <Label Content="Starting setting" Target="{Binding ElementName=StartingSettingBox}" Padding="0,0,0,6" />
-                    <TextBox x:Name="StartingSettingBox" Text="{Binding StartingSetting, UpdateSourceTrigger=PropertyChanged}" MaxLength="80" Padding="10" Margin="0,0,0,12" AutomationProperties.Name="Starting setting" />
+                    <local:SettingEntryView x:Name="StartingSettingBox" DataContext="{Binding StartingEntry}" Tag="Starting setting" />
                   </StackPanel>
                   <StackPanel Visibility="{Binding ShowChangedValue, Converter={StaticResource VisibleWhenTrue}}">
                     <Label Content="Changed setting" Target="{Binding ElementName=ChangedSettingBox}" Padding="0,0,0,6" />
-                    <TextBox x:Name="ChangedSettingBox" Text="{Binding ChangedSetting, UpdateSourceTrigger=PropertyChanged}" MaxLength="80" Padding="10" Margin="0,0,0,12" AutomationProperties.Name="Changed setting" />
+                    <local:SettingEntryView x:Name="ChangedSettingBox" DataContext="{Binding ChangedEntry}" Tag="Changed setting" />
                   </StackPanel>
                   <TextBlock Text="{Binding StepStatus}" Foreground="{StaticResource MutedTextBrush}" Margin="0,0,0,12" />
-                  <WrapPanel>
+                  <WrapPanel Visibility="{Binding HasCurrentStep, Converter={StaticResource VisibleWhenTrue}}">
                     <Button Content="{Binding MarkButtonText}" Command="{Binding MarkCommand}" Style="{StaticResource PrimaryButton}" />
                     <Button Content="Skip" Command="{Binding SkipCommand}" />
                     <Button Content="Setting unavailable" Command="{Binding UnavailableCommand}" />
