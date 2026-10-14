@@ -140,6 +140,7 @@ public sealed class EvidenceSession : IDisposable
             {
                 PayloadProjectionKind = projection.Kind,
                 NumericMeaningUninterpreted = projection.NumericMeaningUninterpreted,
+                ReturnedLengthUnknown = observation.ReturnedLengthUnknown,
                 HeaderHints = projection.HeaderHints,
                 PayloadComparison = scoped && observation.Buffer.Length <= EvidenceLimits.MaxPayloadBytesPerObservation
                     ? ComparePayload(observation) : null,
@@ -238,6 +239,13 @@ public sealed class EvidenceSession : IDisposable
         && EvidenceText.IsToken(observation.Api)
         && EvidenceText.IsToken(observation.InterfaceLabel)
         && (observation.ErrorCategory is null || EvidenceText.IsToken(observation.ErrorCategory))
+        && (!observation.ReturnedLengthUnknown
+            || observation.Source == ObservationSource.ReturnedBuffer
+                && observation.Api == "HidD_GetFeature"
+                && observation.Direction == ObservationDirection.Output
+                && observation.Status == ObservationStatus.Succeeded
+                && observation.ErrorCategory is null
+                && observation.ReturnedBytes is null)
         && observation.Buffer.Length <= int.MaxValue;
 
     private PayloadComparisonEvidence ComparePayload(ControlObservation observation)

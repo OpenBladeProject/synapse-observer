@@ -17,6 +17,15 @@
 
 ### Fixed
 
+- Preserve reviewed successful HID responses while labeling unknown returned
+  lengths separately; distinguish observed API failures from recording loss
+  ([#2](https://github.com/OpenBladeProject/synapse-observer/pull/2)).
+- Show the actual recording end reason, prioritize known queue loss over missing
+  events, and update only changed summaries while polling
+  ([#2](https://github.com/OpenBladeProject/synapse-observer/pull/2)).
+- Correct the marker-limit instructions
+  ([#2](https://github.com/OpenBladeProject/synapse-observer/pull/2)).
+
 - Preserve selected activities and reported key behavior, associate keyboard input
   with the exact laptop, and keep declarations separate from setting changes
   ([#2](https://github.com/OpenBladeProject/synapse-observer/pull/2)).

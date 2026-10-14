@@ -905,12 +905,28 @@ public static class ContributionDraftBuilder
                 "One or more unsupported, malformed, failed, sensitive, or over-limit report bodies were withheld."));
         }
 
-        if (snapshot.Observations.Any(static item => item.Status != ObservationStatus.Succeeded))
+        if (snapshot.Observations.Any(static item => item.ReturnedLengthUnknown))
         {
             gaps.Add(new ContributionQualityGap(
                 "observations",
-                "IncompleteCall",
-                "One or more observed calls were pending, failed, or cancelled."));
+                "ReturnedLengthNotProvided",
+                "HidD_GetFeature succeeded, but the API does not provide an actual returned-byte count."));
+        }
+
+        if (snapshot.Observations.Any(static item => item.Status == ObservationStatus.Failed))
+        {
+            gaps.Add(new ContributionQualityGap(
+                "observations",
+                "ObservedApiFailure",
+                "One or more observed calls completed with a failure status."));
+        }
+
+        if (snapshot.Observations.Any(static item => item.Status is ObservationStatus.Pending or ObservationStatus.Cancelled))
+        {
+            gaps.Add(new ContributionQualityGap(
+                "observations",
+                "CompletionNotObserved",
+                "One or more observed calls remained pending or were cancelled before completion was observed."));
         }
 
         if (snapshot.RejectedMarkerCount + snapshot.RejectedObservationCount + snapshot.RejectedCoverageCount > 0)

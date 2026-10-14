@@ -170,6 +170,37 @@ These corrections do not extend the earlier live thermal trial to lighting,
 logo, key probes, other Blade models, or the revised native drain. The final
 package source revision and executable hash are recorded in build-manifest.json.
 
+## Follow-up review corrections, 2026-10-14
+
+Claude reviewed the corrective range `433f413...d904655`. Its ten reported items
+were checked independently: four runtime defects, unnecessary empty-poll UI work,
+and a documentation typo were confirmed. Version 0.2.3 corrects those six items.
+The other findings were conditional or rejected as current integrity defects;
+no second review of 0.2.3 is claimed.
+
+Successful HidD_GetFeature returned buffers preserve `returnedLengthUnknown`
+with a null actual returned-byte count. The caveat is separate from ErrorCategory
+and recording loss, allowing complete reviewed report bodies through the same
+privacy grammar. Unknown and malformed bodies remain metadata-only. The quality
+receipt labels returned-length uncertainty, observed API failure, and unobserved
+completion separately. Failed API calls keep their actual failed status and
+native error while the guide reports that the call itself was captured.
+
+Owned App fixtures exercise the real native-event-to-session projection for a
+reviewed HID response, ordinary API failure, pending I/O, and dropped-event-only
+steps. They confirm queue loss wins over a no-observation reason; manual stop
+never reports expiry; native failure and normal expiry remain distinguishable;
+and every unfinished step keeps its exact restoration reminder. Fifty empty
+polls produce no binding or command notifications. New calls and dropped-event
+counts update only the three affected summaries.
+
+All 360 Release tests pass (Core 230, Backend 55, App 75). The packaged build
+also runs the unchanged native fixtures. The privacy classifier and native hook
+code are unchanged; the revised mapping has only owned synthetic validation.
+No new vendor-process attachment, device command, or keyboard input recording
+occurred. Earlier live thermal results remain limited to their recorded sources.
+The final package source revision and executable hash are in build-manifest.json.
+
 ## Pending before public release
 
 - Typed setting-change response payloads: the observed returned bodies remain

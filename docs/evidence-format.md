@@ -34,7 +34,11 @@ entry and API-return timing, status/error metadata, and payload disposition.
 Input call records and returned-buffer records are separate. Actual output-buffer
 capacity is recorded independently of the request length. Pending native
 I/O has no completed response. `HidD_GetFeature` does not return an actual byte
-count; that uncertainty remains explicit. GET_FEATURE can return a setter
+count; `returnedLengthUnknown` preserves that caveat on its successful returned
+buffer, while `returnedBytes` stays null. This caveat is independent of capture
+loss and does not exclude a complete buffer from the reviewed privacy grammar.
+A fully observed API failure keeps its failed status and native error; it is
+counted separately from lost or incomplete observations. GET_FEATURE can return a setter
 acknowledgement as well as a query response. Annotation roles and getter coverage
 use the report's command identity, not the transport API name.
 

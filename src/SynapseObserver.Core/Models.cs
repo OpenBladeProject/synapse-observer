@@ -192,7 +192,10 @@ public sealed record ControlObservation(
     double? CompletedRelativeMilliseconds = null,
     uint? OutputBufferCapacity = null,
     uint? RequestedBytes = null,
-    uint? ReturnedBytes = null);
+    uint? ReturnedBytes = null)
+{
+    public bool ReturnedLengthUnknown { get; init; }
+}
 
 public enum FeaturePayloadProjectionKind
 {
@@ -265,6 +268,8 @@ public sealed record SanitizedControlObservation(
     public PayloadComparisonEvidence? PayloadComparison { get; init; }
 
     public bool NumericMeaningUninterpreted { get; init; }
+
+    public bool ReturnedLengthUnknown { get; init; }
 
     public bool CompletePayloadRetained => PayloadHex is not null;
 }

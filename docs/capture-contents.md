@@ -46,7 +46,10 @@ request.
 
 The receipt counts captured and not-investigated coverage leaves, inventory
 gaps, complete action windows, reviewed reports, redacted bodies, unassociated
-observations, special-key observations, and rejected records. It names partial,
+observations, special-key observations, and rejected records. It distinguishes
+`ObservedApiFailure`, `CompletionNotObserved`, and the informational
+`ReturnedLengthNotProvided` caveat. An observed API failure is independent of
+collector data loss. It names partial,
 skipped, unavailable, failed, cancelled,
 redacted, and incomplete results. It also records the maintainer stages still
 required and sets query-validation, setter-validation, and production-admission
@@ -64,10 +67,10 @@ with the JSON files when attaching the ZIP to a support request.
   collections during live observation.
 - Feature reports are bounded to 4,096 bytes per observation, 4 MiB of retained
   bodies per session, 4,096 observations, and 16 KiB per native observer event.
-- The session accepts up to 512 markers and 128 guided coverage items. The
+- The session accepts up to 512 markers and 128 guided coverage items.
   Reaching the marker limit preserves earlier evidence, counts rejected markers,
-  and leaves stop/export available. The independent coverage draft still contains the complete maintained capability
-  universe; it is not limited by the guided-item bound.
+  and leaves stop/export available. The independent coverage draft still contains
+  the complete maintained capability universe; it is not limited by the guided-item bound.
 - Special-key evidence is bounded to 256 observations, 32 observations per
   prompted probe, and 64 probe summaries.
 - Display text is limited to 256 characters and opaque identifier tokens to 80

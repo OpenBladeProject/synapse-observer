@@ -28,6 +28,8 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
     private double observerOrigin;
     private int stepStartCount;
     private int observedCalls;
+    private int failedCalls;
+    private bool stopping;
     private int gaps;
     private int droppedEvents;
     private int stepStartGaps;
@@ -133,7 +135,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
         : stepPhase == 1 ? "The collector observes Synapse. It does not change a setting for you."
         : "Restoration will be recorded as your observation of the displayed setting.";
     public string MarkButtonText => HasCurrentStep && CurrentActivity.IsReadOnly ? "Save current state" : stepPhase == 0 ? "Begin this step" : stepPhase == 1 ? "I changed it" : "I restored it";
-    public string ObservationSummary => $"{observedCalls} observed calls · {gaps} recording gaps";
+    public string ObservationSummary => $"{observedCalls} observed calls · {failedCalls} failed calls · {gaps} recording gaps";
     public string ExportSummary => $"The ZIP contains device information, {observedCalls} observed calls, recording coverage, and your action markers. Unproven or sensitive payloads are omitted. Review it before sharing.";
 
     public bool AttachConsent
@@ -314,7 +316,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
         {
             if (!Marker(EvidenceMarkerKind.UserReportedRestoration, CurrentActivity.Id, "User reported restoration of starting setting", EvidenceProvenance.UserReported, startingSetting)) return Task.CompletedTask;
             SetCurrentCoverage(observedCalls > stepStartCount && gaps == stepStartGaps ? CoverageState.Completed : CoverageState.CompletedWithGaps,
-                observedCalls <= stepStartCount ? CoverageReason.NoMatchingEvents : gaps > stepStartGaps ? CoverageReason.CaptureFailed : CoverageReason.None);
+                gaps > stepStartGaps ? CoverageReason.CaptureFailed : observedCalls <= stepStartCount ? CoverageReason.NoMatchingEvents : CoverageReason.None);
             NextStep();
         }
 
@@ -357,7 +359,10 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
 
     private async Task StopCoreAsync()
     {
+        stopping = true;
         busy = true;
+        status = "Stopping recording and retaining completed observations.";
+        recorderStatus = "Stopping recording.";
         Refresh();
         NativeSessionStatus? nativeStatus = null;
         Exception? stopFailure = null;
@@ -405,6 +410,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
             pumpCancellation = null;
             pump = null;
             recording = false;
+            stopping = false;
             busy = false;
             consent = false;
             backendCandidate = null;
@@ -451,10 +457,27 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
                 if (nativeStatus.Finished)
                 {
                     observerEnded = true;
-                    recorderStatus = "The native observer has stopped. Restore the starting setting in Synapse if needed, then stop and save this session.";
-                    // StopCoreAsync owns the single RecordingStopped marker.
-                    status = "The recording time limit was reached. Stop and save the evidence. Restore the starting setting in Synapse if this step is unfinished.";
-                    Refresh();
+                    // A requested stop owns its status until cleanup completes.
+                    // Native failure and normal expiry have different evidence.
+                    if (!stopping)
+                    {
+                        if (nativeStatus.Failure != 0)
+                        {
+                            gaps++;
+                            Marker(EvidenceMarkerKind.Failure, "observer", "Native observer failed", EvidenceProvenance.Observer);
+                            recorderStatus = nativeStatus.Diagnostic;
+                            status = "The observer encountered an error. Stop and save the partial evidence; restart Synapse manually before another recording.";
+                        }
+                        else
+                        {
+                            recorderStatus = "The native observer reached the recording time limit.";
+                            status = "The recording time limit was reached. Stop and save the evidence.";
+                        }
+                        if (HasCurrentStep && stepPhase > 0)
+                            status = $"Restore {startingSetting} in Synapse before leaving this setting. " + status;
+                        // StopCoreAsync owns the single RecordingStopped marker.
+                        Refresh();
+                    }
                     return;
                 }
 
@@ -498,7 +521,11 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
                 var operationId = $"op-{observed.Sequence}";
                 var at = observerOrigin + observed.RelativeMilliseconds;
                 var completedAt = observerOrigin + observed.CompletionRelativeMilliseconds;
-                var error = observed.CompletionGap;
+                var returnedLengthUnknown = observed.Result && observed.Api == "HidD_GetFeature"
+                    && observed.CompletionGap == "return-length-unknown";
+                // HidD exposes no actual byte count. This is an API caveat,
+                // independent of operation failure or lost capture data.
+                var error = returnedLengthUnknown ? null : observed.CompletionGap;
                 // HidD_GetFeature returns BOOL, not an output byte count. Only
                 // DeviceIoControl supplies an actual returned-length value.
                 uint? actualReturnedBytes = observed.Api.StartsWith("DeviceIoControl.", StringComparison.Ordinal)
@@ -516,11 +543,13 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
                         observed.Api == "DeviceIoControl.HID_GET_FEATURE" && observed.ReturnedBytes == 90
                             && observed.ResponseBytes.Length == 90 && observed.OutputBufferCapacity >= 91
                             && device.ReportGeometry?.FeatureBytes == 91 ? null : observed.ResponseBytes[0], observed.ResponseBytes, PayloadDisposition.ProvenFeatureControl, completedAt, observed.OutputBufferCapacity,
-                        observed.RequestedBytes, actualReturnedBytes));
+                        observed.RequestedBytes, actualReturnedBytes)
+                    { ReturnedLengthUnknown = returnedLengthUnknown });
                 }
 
                 observedCalls++;
-                if (error is not null || !observed.Result)
+                if (callStatus == ObservationStatus.Failed) failedCalls++;
+                if (error is not null)
                 {
                     gaps++;
                 }
@@ -537,18 +566,24 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
         }
 
         var dropped = observer.GetStatus().DroppedEvents;
-        if (dropped > 0)
+        var visibleStateChanged = batch.Count > 0;
+        if (dropped > droppedEvents)
         {
             collectionDetails = $"{dropped} events were dropped by the bounded observer queue. Completed-call observations cannot establish firmware application. Pending asynchronous completions were not observed.";
-            if (dropped > droppedEvents)
-            {
-                gaps += dropped - droppedEvents;
-                droppedEvents = dropped;
-                Marker(EvidenceMarkerKind.Failure, "observer", "Observer queue dropped events", EvidenceProvenance.Observer, $"count-{dropped}");
-            }
+            visibleStateChanged = true;
+            gaps += dropped - droppedEvents;
+            droppedEvents = dropped;
+            Marker(EvidenceMarkerKind.Failure, "observer", "Observer queue dropped events", EvidenceProvenance.Observer, $"count-{dropped}");
         }
 
-        Refresh();
+        if (visibleStateChanged)
+        {
+            // Polling changes these summaries, not the activity editors or
+            // command availability. Empty unchanged polls need no UI work.
+            Changed(nameof(ObservationSummary));
+            Changed(nameof(CollectionDetails));
+            Changed(nameof(ExportSummary));
+        }
     }
 
     private void AddControlObservation(ControlObservation observation)
