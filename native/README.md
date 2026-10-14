@@ -11,12 +11,13 @@ Windows user, session, and integrity level. The fixed adjacent observer DLL must
 match the SHA embedded when the managed project was built. There is no DLL path,
 module allowlist, target executable, or elevation override in the user interface.
 The reviewed engine and module hashes are in `TargetPolicy.cs`; they identify
-local Synapse 4.0.823.108 source evidence, not completed live validation.
+the reviewed Synapse 4.0.823.108 build. A short passive live trial is recorded in ../VALIDATION.md.
 
 Before attachment the backend re-enumerates the selected feature collections.
 Every collection must belong to the same physical USB parent with Razer vendor
-identity and a Blade product name. Unknown PID, interface number, usage page,
-and feature report geometry are allowed. Zero-access descriptor inspection and
+identity and a bus-reported Blade product name. Unfamiliar PID, interface number, usage page,
+and positive feature-report sizes are allowed; missing caps are not inferred.
+Zero-access descriptor inspection and
 `NtQueryObject(ObjectNameInformation)` establish exact NT object names. Hooks
 compare each original handle with those names and ignore every other handle.
 No path, serial, or object name is included in event records.
@@ -44,16 +45,18 @@ Known limits:
 - HidD_GetFeature supplies no actual returned byte count. Its completed caller
   buffer is capped at descriptor geometry and marked `return-length-unknown`.
   This is a returned user-mode buffer, not a USB transfer or firmware readback.
-- NT object-name mapping must still be checked against real Synapse HID handles.
-  An unmapped handle is excluded. Zero observations remain partial evidence.
+- NT object-name mapping matched one live 375-byte laptop feature call. Other
+  collections and command paths still need coverage. An unmapped handle is
+  excluded; zero observations remain partial evidence.
 - Startup, stop, timeout, and dropped-record failures remain explicit. Stop
   disables hooks, waits briefly for callbacks, and drains completed records.
   The DLL and trampoline allocations remain pinned until Synapse exits because
   callback counters alone cannot prove that no thread is about to enter a hook.
   Another recording requires a manual Synapse restart. No process is stopped
   automatically. A failure to confirm stop must remain visible to the user.
-- The remote loader is implemented but has not been exercised against Synapse.
-  Process protection or code-integrity policy may refuse it. There is no bypass.
+- The remote loader completed one authorized trial on the reviewed Synapse build.
+  Other builds and security configurations remain unvalidated. Process protection
+  or code-integrity policy may refuse attachment. There is no bypass.
 
 Build from the repository root:
 

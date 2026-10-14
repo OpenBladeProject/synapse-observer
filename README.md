@@ -3,6 +3,10 @@
 A small Windows app that collects device information and Synapse activity to
 help add Razer Blade support to [OpenBlade](https://github.com/OpenBladeProject/openblade-core).
 
+Device information collection covers the Blade family, including Pro and Stealth
+models. Recording discovers the laptop's own HID interfaces and report sizes;
+there is no Blade model or PID allowlist. See [model coverage](docs/model-coverage.md).
+
 ## Requirements
 
 - Windows 11, x64.
@@ -44,9 +48,10 @@ your restoration markers do not establish firmware readback. After a session,
 the inactive observer module remains loaded until Synapse exits; restart
 Synapse normally before recording again.
 
-This is an unsigned development prototype. Live attachment, real device-handle
-matching, and security-software compatibility still need validation before a
-public release. Do not disable security protections to run it.
+This is an unsigned development prototype. A short live test observed one laptop
+feature call and confirmed stop. Setting-change recordings, other laptops, and
+security-software compatibility still need validation before a public release.
+Do not disable security protections to run it.
 
 ## Development
 
