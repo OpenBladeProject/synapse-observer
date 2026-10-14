@@ -1,14 +1,55 @@
 # Synapse Observer
 
-A standalone Windows evidence collector for adding Razer Blade support to
-[OpenBlade](https://github.com/OpenBladeProject/openblade-core).
+A small Windows app that collects device information and Synapse activity to
+help add Razer Blade support to [OpenBlade](https://github.com/OpenBladeProject/openblade-core).
 
-The intended workflow is: open the app, collect device information, follow a
-few short recording steps in Synapse, and share one evidence ZIP.
+## Requirements
 
-The collector observes vendor activity. It does not control the laptop or
-replay captured commands. Development and live-observation limits are recorded
-in [AGENTS.md](AGENTS.md).
+- Windows 11, x64.
+- [.NET 10 Desktop Runtime, x64](https://dotnet.microsoft.com/en-us/download/dotnet/10.0).
+  The download does not include .NET. Windows offers its installation link if
+  the required runtime is missing.
+- Synapse for recording setting changes. Device information can be collected
+  without Synapse.
 
-The first implementation is a prototype. Public distribution requires tested
-Synapse coverage, reviewed privacy filtering, and release signing.
+## Use
+
+1. Open `SynapseObserver.exe` normally.
+2. Select **Collect device information**.
+3. To add a recording, open your laptop's controls in Synapse, check recording
+   availability, and allow observation for this session.
+4. Follow the setting cards. Note the starting value, change one setting in
+   Synapse, then restore the starting value. Skip settings you do not have.
+5. Stop recording, save the evidence ZIP, and attach it to your support request.
+
+Nothing is uploaded automatically. The collector does not apply settings or
+replay commands. A partial device-information bundle is useful when recording
+cannot start.
+
+## Prototype limits
+
+Native observation currently recognizes the reviewed Synapse engine
+**4.0.823.108** and its matching HID module. Other versions can export device
+information while awaiting review. An unfamiliar Blade PID is a discovery
+input; it is not rejected just because OpenBlade does not support it.
+
+Recordings last at most five minutes. The observer collects feature-report API
+calls for one identified physical Blade device. It excludes keyboard and mouse
+input, unrelated IOCTLs, local device paths, and serial-number inventory fields.
+Unknown or potentially identifying report bodies remain metadata-only; reviewed
+numeric command envelopes can include their bytes. See [evidence format](docs/evidence-format.md).
+
+Pending asynchronous I/O is reported as a gap. Observed returned buffers and
+your restoration markers do not establish firmware readback. After a session,
+the inactive observer module remains loaded until Synapse exits; restart
+Synapse normally before recording again.
+
+This is an unsigned development prototype. Live attachment, real device-handle
+matching, and security-software compatibility still need validation before a
+public release. Do not disable security protections to run it.
+
+## Development
+
+See [building and verification](docs/building.md), [validation status](VALIDATION.md),
+and the [native observer notes](native/README.md). Licensed under
+[GPL-3.0-or-later](LICENSE); dependency notices are included in the portable ZIP.

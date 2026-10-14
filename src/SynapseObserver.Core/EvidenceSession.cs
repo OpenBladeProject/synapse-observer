@@ -1,0 +1,235 @@
+namespace SynapseObserver.Core;
+
+public sealed class EvidenceSession
+{
+    private readonly object _sync = new();
+    private readonly List<EvidenceMarker> _markers = [];
+    private readonly List<SanitizedControlObservation> _observations = [];
+    private readonly Dictionary<string, CoverageItem> _coverage = new(StringComparer.Ordinal);
+    private int _payloadBytes;
+    private int _rejectedMarkers;
+    private int _rejectedObservations;
+    private int _rejectedCoverage;
+
+    public EvidenceSession(InventorySnapshot inventory, DateTimeOffset? startedAtUtc = null)
+    {
+        ArgumentNullException.ThrowIfNull(inventory);
+        Inventory = InventorySanitizer.Sanitize(inventory);
+        StartedAtUtc = startedAtUtc ?? DateTimeOffset.UtcNow;
+    }
+
+    public InventorySnapshot Inventory { get; }
+
+    public DateTimeOffset StartedAtUtc { get; }
+
+    public EvidenceAddResult AddMarker(EvidenceMarker marker)
+    {
+        ArgumentNullException.ThrowIfNull(marker);
+        lock (_sync)
+        {
+            if (_markers.Count >= EvidenceLimits.MaxMarkers)
+            {
+                _rejectedMarkers++;
+                return EvidenceAddResult.RejectedLimit;
+            }
+
+            if (!double.IsFinite(marker.RelativeMilliseconds)
+                || marker.RelativeMilliseconds < 0
+                || !EvidenceText.IsToken(marker.ActivityId)
+                || !EvidenceText.IsDisplayText(marker.Label)
+                || (marker.Value is not null && !EvidenceText.IsDisplayText(marker.Value)))
+            {
+                _rejectedMarkers++;
+                return EvidenceAddResult.RejectedInvalid;
+            }
+
+            if (marker.Kind is EvidenceMarkerKind.UserReportedStartingValue
+                    or EvidenceMarkerKind.UserReportedTargetValue
+                    or EvidenceMarkerKind.UserReportedRestoration
+                && marker.Provenance != EvidenceProvenance.UserReported)
+            {
+                _rejectedMarkers++;
+                return EvidenceAddResult.RejectedInvalid;
+            }
+
+            _markers.Add(marker);
+            return EvidenceAddResult.Added;
+        }
+    }
+
+    public EvidenceAddResult AddObservation(ControlObservation observation)
+    {
+        ArgumentNullException.ThrowIfNull(observation);
+        lock (_sync)
+        {
+            if (_observations.Count >= EvidenceLimits.MaxObservations)
+            {
+                _rejectedObservations++;
+                return EvidenceAddResult.RejectedLimit;
+            }
+
+            if (!IsValidObservation(observation))
+            {
+                _rejectedObservations++;
+                return EvidenceAddResult.RejectedInvalid;
+            }
+
+            var disposition = observation.PayloadDisposition;
+            string? payloadHex = null;
+            var projection = FeaturePayloadPrivacy.Classify(observation);
+            if (disposition == PayloadDisposition.ProvenFeatureControl)
+            {
+                if (!IsProvenFeatureControlScope(observation))
+                {
+                    disposition = PayloadDisposition.RedactedUnproven;
+                }
+                else if (observation.Buffer.Length > EvidenceLimits.MaxPayloadBytesPerObservation)
+                {
+                    disposition = PayloadDisposition.RedactedOverLimit;
+                }
+                else if (!projection.IncludesPayload)
+                {
+                    disposition = PayloadDisposition.ExcludedSensitive;
+                }
+                else if (_payloadBytes <= EvidenceLimits.MaxTotalPayloadBytes - observation.Buffer.Length)
+                {
+                    payloadHex = projection.PayloadHex;
+                    _payloadBytes += observation.Buffer.Length;
+                }
+                else
+                {
+                    disposition = PayloadDisposition.RedactedOverLimit;
+                }
+            }
+
+            _observations.Add(new SanitizedControlObservation(
+                observation.OperationId,
+                observation.RelativeMilliseconds,
+                observation.Source,
+                observation.Api,
+                observation.Direction,
+                observation.Status,
+                observation.NativeStatus,
+                observation.ErrorCategory,
+                observation.VendorId,
+                observation.ProductId,
+                observation.InterfaceLabel,
+                observation.UsagePage,
+                observation.Usage,
+                observation.ReportId,
+                observation.Buffer.Length,
+                disposition,
+                payloadHex,
+                observation.CompletedRelativeMilliseconds)
+            {
+                PayloadProjectionKind = projection.Kind,
+                HeaderHints = projection.HeaderHints,
+            });
+            return disposition == observation.PayloadDisposition
+                ? EvidenceAddResult.Added
+                : EvidenceAddResult.AddedPayloadRedacted;
+        }
+    }
+
+    public EvidenceAddResult SetCoverage(CoverageItem item)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+        lock (_sync)
+        {
+            if (!EvidenceText.IsToken(item.ActivityId) || !EvidenceText.IsDisplayText(item.Label))
+            {
+                _rejectedCoverage++;
+                return EvidenceAddResult.RejectedInvalid;
+            }
+
+            if (!_coverage.ContainsKey(item.ActivityId)
+                && _coverage.Count >= EvidenceLimits.MaxCoverageItems)
+            {
+                _rejectedCoverage++;
+                return EvidenceAddResult.RejectedLimit;
+            }
+
+            _coverage[item.ActivityId] = item;
+            return EvidenceAddResult.Added;
+        }
+    }
+
+    public EvidenceSessionSnapshot Snapshot()
+    {
+        lock (_sync)
+        {
+            return new EvidenceSessionSnapshot(
+                EvidenceSessionSnapshot.CurrentSchemaVersion,
+                StartedAtUtc,
+                Inventory,
+                EvidenceSessionSnapshot.Freeze(_markers),
+                EvidenceSessionSnapshot.Freeze(_observations),
+                EvidenceSessionSnapshot.Freeze(_coverage.Values.OrderBy(static item => item.ActivityId, StringComparer.Ordinal)),
+                _rejectedMarkers,
+                _rejectedObservations,
+                _rejectedCoverage);
+        }
+    }
+
+    private static bool IsValidObservation(ControlObservation observation) =>
+        double.IsFinite(observation.RelativeMilliseconds)
+        && observation.RelativeMilliseconds >= 0
+        && (observation.CompletedRelativeMilliseconds is null
+            || double.IsFinite(observation.CompletedRelativeMilliseconds.Value)
+                && observation.CompletedRelativeMilliseconds.Value >= observation.RelativeMilliseconds)
+        && EvidenceText.IsToken(observation.OperationId)
+        && EvidenceText.IsToken(observation.Api)
+        && EvidenceText.IsToken(observation.InterfaceLabel)
+        && (observation.ErrorCategory is null || EvidenceText.IsToken(observation.ErrorCategory))
+        && observation.Buffer.Length <= int.MaxValue;
+
+    private bool IsProvenFeatureControlScope(ControlObservation observation)
+    {
+        if (observation.VendorId != 0x1532
+            || observation.Source is ObservationSource.UsbTransfer
+            || observation.Api is not ("HidD_SetFeature" or "HidD_GetFeature"
+                or "DeviceIoControl.HID_SET_FEATURE" or "DeviceIoControl.HID_GET_FEATURE")
+            || observation.Source == ObservationSource.ReturnedBuffer
+                && (observation.Status != ObservationStatus.Succeeded
+                    || observation.Direction != ObservationDirection.Output))
+        {
+            return false;
+        }
+
+        return Inventory.RazerHidInterfaces.Value.Any(candidate =>
+            candidate.InterfaceLabel == observation.InterfaceLabel
+            && candidate.VendorId == observation.VendorId
+            && candidate.ProductId == observation.ProductId
+            && candidate.UsagePage == observation.UsagePage
+            && candidate.Usage == observation.Usage
+            && candidate.ReportGeometry is not null
+            && candidate.ReportGeometry.FeatureBytes == observation.Buffer.Length);
+    }
+}
+
+internal static class EvidenceText
+{
+    public static bool IsToken(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value) || value.Length > EvidenceLimits.MaxTokenLength)
+        {
+            return false;
+        }
+
+        return value.All(static character =>
+            char.IsAsciiLetterOrDigit(character)
+            || character is '-' or '_' or '.' or ':');
+    }
+
+    public static bool IsDisplayText(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value) || value.Length > EvidenceLimits.MaxTextLength)
+        {
+            return false;
+        }
+
+        return value.All(static character =>
+            !char.IsControl(character)
+            && character is not '\\' and not '/');
+    }
+}
