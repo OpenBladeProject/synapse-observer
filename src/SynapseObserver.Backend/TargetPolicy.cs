@@ -1,12 +1,12 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
-using System.Security.Cryptography;
-using System.Security.Cryptography.X509Certificates;
 using System.Security.Principal;
 namespace SynapseObserver.Backend;
 internal static class TargetPolicy
 {
+    internal const uint TrustProviderFlags = 0x80; // WTD_REVOCATION_CHECK_CHAIN_EXCLUDE_ROOT
+    internal const uint TrustRevocationChecks = 1; // WTD_REVOKE_WHOLECHAIN
     internal static string SafeDiagnostic(Exception exception) => exception is InvalidOperationException ? exception.Message : "Process identity could not be verified. Start Synapse normally under the same Windows account and refresh.";
     internal static void Validate(Process process)
     {
@@ -84,7 +84,7 @@ internal static class TargetPolicy
         using var lockedFile = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.Read);
         var file = new Native.TrustFile { Size = (uint)Marshal.SizeOf<Native.TrustFile>(), Path = path };
         IntPtr ptr = Marshal.AllocHGlobal(Marshal.SizeOf<Native.TrustFile>());
-        var data = new Native.TrustData { Size = (uint)Marshal.SizeOf<Native.TrustData>(), UiChoice = 2, UnionChoice = 1, FileInfo = ptr, StateAction = 1, ProviderFlags = 0x1010 };
+        var data = new Native.TrustData { Size = (uint)Marshal.SizeOf<Native.TrustData>(), UiChoice = 2, UnionChoice = 1, FileInfo = ptr, StateAction = 1, RevocationChecks = TrustRevocationChecks, ProviderFlags = TrustProviderFlags };
         Guid policy = new("00AAC56B-CD44-11d0-8CC2-00C04FC295EE");
         try
         {
@@ -100,21 +100,26 @@ internal static class TargetPolicy
             var certInfo = Marshal.PtrToStructure<Native.ProviderCertificatePrefix>(cert);
             if (certInfo.Size < Marshal.SizeOf<Native.ProviderCertificatePrefix>() || certInfo.Certificate == IntPtr.Zero)
                 throw new InvalidOperationException("The verified Synapse signer is unavailable.");
-            using var certificate = new X509Certificate2(certInfo.Certificate);
-            IntPtr organizationOid = Marshal.StringToHGlobalAnsi("2.5.4.10");
-            try
-            {
-                var organization = new System.Text.StringBuilder(512);
-                uint length = Native.CertGetNameStringW(certificate.Handle, 3, 0, organizationOid, organization, (uint)organization.Capacity);
-                if (length <= 1 || length >= organization.Capacity || !IsRazerPublisher(certificate.GetNameInfo(X509NameType.SimpleName, false), organization.ToString()))
-                    throw new InvalidOperationException("The Synapse engine or HID module is not signed by Razer. Device information remains available.");
-            }
-            finally { Marshal.FreeHGlobal(organizationOid); }
+            string? commonName = SubjectAttribute(certInfo.Certificate, "2.5.4.3");
+            string? organization = SubjectAttribute(certInfo.Certificate, "2.5.4.10");
+            if (!IsRazerPublisher(commonName, organization))
+                throw new InvalidOperationException("The Synapse engine or HID module is not signed by Razer. Device information remains available.");
         }
         finally
         {
             if (data.StateData != IntPtr.Zero) { data.StateAction = 2; Native.WinVerifyTrust(new IntPtr(-1), ref policy, ref data); }
             Marshal.DestroyStructure<Native.TrustFile>(ptr); Marshal.FreeHGlobal(ptr);
         }
+    }
+    private static string? SubjectAttribute(IntPtr certificate, string attributeOid)
+    {
+        IntPtr oid = Marshal.StringToHGlobalAnsi(attributeOid);
+        try
+        {
+            var value = new System.Text.StringBuilder(512);
+            uint length = Native.CertGetNameStringW(certificate, 3, 0, oid, value, (uint)value.Capacity);
+            return length > 1 && length < value.Capacity ? value.ToString() : null;
+        }
+        finally { Marshal.FreeHGlobal(oid); }
     }
 }

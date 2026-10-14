@@ -42,4 +42,11 @@ public sealed class SynapseIdentityTests
         string module = Path.Combine(root, "app-other", "resources", "app.asar.unpacked", "node_modules", "node-rz-hid", "build", "Release", "HID.node");
         Assert.False(TargetPolicy.IsHidModuleOfEngine(module, engine));
     }
+    [Fact]
+    public void PublisherTrustChecksChainRevocationWithoutDisablingIt()
+    {
+        Assert.Equal(1u, TargetPolicy.TrustRevocationChecks);
+        Assert.Equal(0u, TargetPolicy.TrustProviderFlags & 0x10u);
+        Assert.NotEqual(0u, TargetPolicy.TrustProviderFlags & 0x80u);
+    }
 }
