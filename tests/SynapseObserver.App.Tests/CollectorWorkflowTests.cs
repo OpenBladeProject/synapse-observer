@@ -139,6 +139,7 @@ public sealed class CollectorWorkflowTests
 
     private sealed class MalformedOwnedObserver : INativeObservationSession
     {
+        public long OriginTimestampTicks => System.Diagnostics.Stopwatch.GetTimestamp();
         public bool Stopped { get; private set; }
         public bool Disposed { get; private set; }
         public NativeSessionStatus GetStatus() => new(true, Stopped, 0, 0, "Owned fixture");

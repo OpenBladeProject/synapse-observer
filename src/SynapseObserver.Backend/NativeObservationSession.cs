@@ -7,6 +7,7 @@ using Microsoft.Win32.SafeHandles;
 namespace SynapseObserver.Backend;
 public interface INativeObservationSession : IAsyncDisposable
 {
+    long OriginTimestampTicks { get; }
     NativeSessionStatus GetStatus();
     Task<IReadOnlyList<NativeObservationEvent>> PollAsync(CancellationToken cancellationToken = default);
     Task<NativeSessionStatus> StopAsync(CancellationToken cancellationToken = default);
@@ -21,6 +22,7 @@ public sealed class NativeObservationSession : INativeObservationSession
     private readonly SafeProcessHandle process;
     private readonly SafeFileHandle worker;
     private readonly long origin;
+    public long OriginTimestampTicks => origin;
     private bool disposed;
     private NativeObservationSession(MemoryMappedFile mapping, MemoryMappedViewAccessor view, SafeProcessHandle process, SafeFileHandle worker, long origin)
     { this.mapping = mapping; this.view = view; this.process = process; this.worker = worker; this.origin = origin; }

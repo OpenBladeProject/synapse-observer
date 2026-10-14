@@ -13,7 +13,8 @@ internal sealed class CollectorViewModel : INotifyPropertyChanged
     private static readonly string[] Activities = ["performance", "fans", "charge-limit", "lighting"];
     private static readonly string[] Titles = ["Performance mode", "Fan setting", "Battery charge limit", "Keyboard lighting"];
     private readonly bool preview;
-    private readonly Stopwatch elapsed = new();
+    private long sessionOriginTicks = Stopwatch.GetTimestamp();
+    private double RelativeMilliseconds => (Stopwatch.GetTimestamp() - sessionOriginTicks) * 1000.0 / Stopwatch.Frequency;
     private readonly WindowsInventorySource inventorySource = new();
     private IReadOnlyList<LocalHidCandidate> controlCandidates = [];
     private BackendCandidate? backendCandidate;
@@ -125,7 +126,7 @@ internal sealed class CollectorViewModel : INotifyPropertyChanged
 
             var inventory = preview ? PreviewInventory() : await Task.Run(() => new InventoryCollector(inventorySource).CollectAsync());
             session = new EvidenceSession(inventory);
-            elapsed.Restart();
+            sessionOriginTicks = Stopwatch.GetTimestamp();
             var identities = inventory.MachineIdentity.Value;
             var identity = identities.FirstOrDefault();
             deviceSummary = $"{identity?.ProductName ?? "Laptop identity unavailable"} · BIOS {identity?.BiosVersion ?? "unavailable"}\n{inventory.RazerHidInterfaces.Value.Count} Razer HID interfaces · {inventory.SynapseProcesses.Value.Count} related software processes";
@@ -204,8 +205,10 @@ internal sealed class CollectorViewModel : INotifyPropertyChanged
                     return;
                 }
 
-                observerOrigin = elapsed.Elapsed.TotalMilliseconds;
                 observer = await NativeObservationSession.StartAsync(backendCandidate, controlCandidates.Select(candidate => candidate.InterfacePath).ToArray());
+                // Use the observer's actual QPC origin, not the time at which its
+                // Task.Run was queued. User markers and events share this clock.
+                observerOrigin = (observer.OriginTimestampTicks - sessionOriginTicks) * 1000.0 / Stopwatch.Frequency;
             }
 
             recording = true;
@@ -297,7 +300,7 @@ internal sealed class CollectorViewModel : INotifyPropertyChanged
         {
             stopFailure = ex;
             gaps++;
-            session?.AddMarker(new EvidenceMarker(elapsed.ElapsedMilliseconds, EvidenceMarkerKind.Failure, "observer", "Final observer drain failed", EvidenceProvenance.Observer, ex.GetType().Name));
+            session?.AddMarker(new EvidenceMarker(RelativeMilliseconds, EvidenceMarkerKind.Failure, "observer", "Final observer drain failed", EvidenceProvenance.Observer, ex.GetType().Name));
         }
         finally
         {
@@ -328,11 +331,11 @@ internal sealed class CollectorViewModel : INotifyPropertyChanged
                 session!.SetCoverage(new CoverageItem(Activities[step], Titles[step], CoverageState.CompletedWithGaps, CoverageReason.IncompleteRestoration));
             }
 
-            session?.AddMarker(new EvidenceMarker(elapsed.ElapsedMilliseconds, EvidenceMarkerKind.RecordingStopped, "session", "Recording stopped", EvidenceProvenance.Observer));
+            session?.AddMarker(new EvidenceMarker(RelativeMilliseconds, EvidenceMarkerKind.RecordingStopped, "session", "Recording stopped", EvidenceProvenance.Observer));
             recorderStatus = nativeStatus?.Diagnostic ?? "Recording stopped. Gaps and user-reported restoration remain labeled in the evidence.";
             if (nativeStatus is { Failure: not 0 } || stopFailure is not null)
             {
-                session?.AddMarker(new EvidenceMarker(elapsed.ElapsedMilliseconds, EvidenceMarkerKind.Failure, "observer", "Recording cleanup has a gap", EvidenceProvenance.Observer));
+                session?.AddMarker(new EvidenceMarker(RelativeMilliseconds, EvidenceMarkerKind.Failure, "observer", "Recording cleanup has a gap", EvidenceProvenance.Observer));
                 status = "Recording ended with a gap. Save the partial evidence; restart Synapse manually before another session.";
             }
             else
@@ -478,7 +481,7 @@ internal sealed class CollectorViewModel : INotifyPropertyChanged
 
     private void Marker(EvidenceMarkerKind kind, string activity, string label, EvidenceProvenance provenance, string? value = null)
     {
-        if (session?.AddMarker(new EvidenceMarker(elapsed.ElapsedMilliseconds, kind, activity, label, provenance, value)) is EvidenceAddResult.RejectedInvalid or EvidenceAddResult.RejectedLimit)
+        if (session?.AddMarker(new EvidenceMarker(RelativeMilliseconds, kind, activity, label, provenance, value)) is EvidenceAddResult.RejectedInvalid or EvidenceAddResult.RejectedLimit)
         {
             throw new InvalidDataException("The marker was rejected. Use a short setting value without personal details or paths.");
         }
@@ -493,7 +496,7 @@ internal sealed class CollectorViewModel : INotifyPropertyChanged
         catch (Exception ex) when (ex is not OutOfMemoryException and not StackOverflowException)
         {
             status = $"This step could not finish ({ex.GetType().Name}). Collected information is still available.";
-            session?.AddMarker(new EvidenceMarker(elapsed.ElapsedMilliseconds, EvidenceMarkerKind.Failure, "session", "Collector step failed", EvidenceProvenance.Collector, ex.GetType().Name));
+            session?.AddMarker(new EvidenceMarker(RelativeMilliseconds, EvidenceMarkerKind.Failure, "session", "Collector step failed", EvidenceProvenance.Collector, ex.GetType().Name));
             Refresh();
         }
     }
