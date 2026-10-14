@@ -443,11 +443,7 @@ public sealed class WindowsInventorySource : IInventorySource
                 && node.InstanceId.Contains("VID_", StringComparison.OrdinalIgnoreCase))
             {
                 usb = node;
-                if (node.FriendlyName?.Contains("Blade", StringComparison.OrdinalIgnoreCase) == true
-                    || node.FriendlyName?.Contains("Razer", StringComparison.OrdinalIgnoreCase) == true)
-                {
-                    usbProductName = node.FriendlyName;
-                }
+                usbProductName = GetBusReportedProductName(current);
             }
 
             if (CM_Get_Parent(out current, current, 0) != CrSuccess)
@@ -462,7 +458,7 @@ public sealed class WindowsInventorySource : IInventorySource
             direct.FriendlyName,
             usb.InstanceId,
             usb.BaseHardwareIdentity,
-            usbProductName ?? usb.FriendlyName);
+            usbProductName);
     }
 
     private static DeviceNodeIdentity GetDeviceNodeIdentity(uint deviceInstance)
@@ -490,6 +486,36 @@ public sealed class WindowsInventorySource : IInventorySource
             : null;
     }
 
+    private static string? GetBusReportedProductName(uint deviceInstance)
+    {
+        // FriendlyName commonly says USB Composite Device. Read the bus-provided
+        // description of this exact USB ancestor instead of inferring its model.
+        // DEVPKEY_Device_BusReportedDeviceDesc, defined by the Windows SDK.
+        var key = new DevicePropertyKey { FormatId = new Guid("540b947e-8b40-45bc-a8a2-6a0b894cbda2"), PropertyId = 4 };
+        var buffer = new byte[1024];
+        uint length = (uint)buffer.Length;
+        return CM_Get_DevNode_PropertyW(deviceInstance, ref key, out uint type, buffer, ref length, 0) == CrSuccess
+            ? DecodeBusReportedProductName(buffer, type, length)
+            : null;
+    }
+
+    internal static string? DecodeBusReportedProductName(ReadOnlySpan<byte> buffer, uint type, uint length)
+    {
+        const uint stringType = 0x12;
+        if (type != stringType || length < 2 || length > 1024 || length > buffer.Length || (length & 1) != 0)
+        {
+            return null;
+        }
+
+        var value = buffer[..checked((int)length)];
+        if (value[^2] != 0 || value[^1] != 0)
+        {
+            return null;
+        }
+
+        string text = Encoding.Unicode.GetString(value[..^2]);
+        return text.Contains('\0') ? null : CleanText(text);
+    }
     private static string? GetDeviceRegistryText(uint deviceInstance, uint property)
     {
         uint dataType = 0;
@@ -614,6 +640,12 @@ public sealed class WindowsInventorySource : IInventorySource
         }
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct DevicePropertyKey
+    {
+        public Guid FormatId;
+        public uint PropertyId;
+    }
     [StructLayout(LayoutKind.Sequential)]
     private struct SystemPowerStatus
     {
@@ -781,6 +813,14 @@ public sealed class WindowsInventorySource : IInventorySource
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool SetupDiDestroyDeviceInfoList(IntPtr deviceInfoSet);
 
+    [DllImport("cfgmgr32.dll", ExactSpelling = true)]
+    private static extern int CM_Get_DevNode_PropertyW(
+        uint deviceInstance,
+        ref DevicePropertyKey propertyKey,
+        out uint propertyType,
+        [Out] byte[] buffer,
+        ref uint bufferLength,
+        uint flags);
     [DllImport("cfgmgr32.dll")]
     private static extern int CM_Get_Parent(out uint parentDeviceInstance, uint deviceInstance, uint flags);
 
