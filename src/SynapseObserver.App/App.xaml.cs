@@ -33,11 +33,12 @@ public partial class App : Application
             var output = Path.GetFullPath(e.Args[renderIndex + 1]);
             Directory.CreateDirectory(output);
             ShutdownMode = ShutdownMode.OnExplicitShutdown;
-            for (int stage = 0; stage < 3; stage++)
+            for (int stage = 0; stage < 4; stage++)
             {
                 new MainWindow(true).RenderPreview(Path.Combine(output, $"collector-stage-{stage}.png"), stage);
             }
 
+            new MainWindow(true) { Width = 560 }.RenderPreview(Path.Combine(output, "collector-narrow-custom.png"), 3);
             Shutdown();
             return;
         }

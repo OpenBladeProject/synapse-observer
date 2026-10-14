@@ -10,6 +10,7 @@ public partial class MainWindow : Window
 {
     private readonly CollectorViewModel viewModel;
     private bool closing;
+    private bool wasRecording;
 
     public MainWindow(bool preview)
     {
@@ -17,6 +18,22 @@ public partial class MainWindow : Window
         viewModel = new CollectorViewModel(preview);
         DataContext = viewModel;
         Closing += HandleClosing;
+        viewModel.PropertyChanged += (_, _) =>
+        {
+            var finished = wasRecording && !viewModel.IsRecording;
+            wasRecording = viewModel.IsRecording;
+            if (finished)
+            {
+                Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, new Action(() =>
+                {
+                    if (!closing && IsEnabled && IsVisible && viewModel.ShowExport)
+                    {
+                        ExportCard.BringIntoView();
+                        SaveEvidenceButton.Focus();
+                    }
+                }));
+            }
+        };
     }
 
     internal void RenderPreview(string path, int stage)
@@ -25,12 +42,13 @@ public partial class MainWindow : Window
         Show();
         UpdateLayout();
         var content = (FrameworkElement)Content;
+        var contentOffset = VisualTreeHelper.GetOffset(content);
         var image = new RenderTargetBitmap((int)content.ActualWidth, (int)content.ActualHeight, 96, 96, PixelFormats.Pbgra32);
         var visual = new DrawingVisual();
         using (var drawing = visual.RenderOpen())
         {
             drawing.DrawRectangle(Background, null, new Rect(0, 0, image.PixelWidth, image.PixelHeight));
-            drawing.DrawRectangle(new VisualBrush(content), null, new Rect(0, 0, image.PixelWidth, image.PixelHeight));
+            drawing.DrawRectangle(new VisualBrush(content) { ViewboxUnits = BrushMappingMode.Absolute, Viewbox = new Rect(contentOffset.X, contentOffset.Y, content.ActualWidth, content.ActualHeight) }, null, new Rect(0, 0, image.PixelWidth, image.PixelHeight));
         }
 
         image.Render(visual);

@@ -18,3 +18,6 @@
   state option and details for exact restoration ([#2](https://github.com/OpenBladeProject/synapse-observer/pull/2)).
 - Preserve completed 90-byte feature responses without inventing a report ID;
   retain only reviewed numeric payloads ([#2](https://github.com/OpenBladeProject/synapse-observer/pull/2)).
+- Match the refreshed blocker UI with compact status cards, blue buttons,
+  keyboard focus rings, and automatic navigation to Save after recording
+  ([#2](https://github.com/OpenBladeProject/synapse-observer/pull/2)).

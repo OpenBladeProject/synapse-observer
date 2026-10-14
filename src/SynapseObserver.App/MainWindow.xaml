@@ -1,44 +1,45 @@
-<Window x:Class="SynapseObserver.App.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:local="clr-namespace:SynapseObserver.App" Title="Synapse Observer" Style="{StaticResource {x:Type Window}}" Width="820" Height="740" MinWidth="680" MinHeight="620" WindowStartupLocation="CenterScreen">
+<Window x:Class="SynapseObserver.App.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:local="clr-namespace:SynapseObserver.App" Title="Synapse Observer" Style="{StaticResource {x:Type Window}}" Width="640" SizeToContent="Height" MaxHeight="640" MinWidth="560" MinHeight="420" WindowStartupLocation="CenterScreen">
   <Window.Resources>
     <BooleanToVisibilityConverter x:Key="VisibleWhenTrue" />
   </Window.Resources>
-  <Grid Margin="32">
+  <Window.Icon><DrawingImage><DrawingImage.Drawing><GeometryDrawing Brush="White"><GeometryDrawing.Pen><Pen Brush="#0067C0" Thickness="1.5" /></GeometryDrawing.Pen><GeometryDrawing.Geometry><GeometryGroup><RectangleGeometry Rect="3,3,18,13" RadiusX="2" RadiusY="2" /><LineGeometry StartPoint="12,16" EndPoint="12,20" /><LineGeometry StartPoint="7,20" EndPoint="17,20" /></GeometryGroup></GeometryDrawing.Geometry></GeometryDrawing></DrawingImage.Drawing></DrawingImage></Window.Icon>
+  <Grid Margin="20,18">
     <Grid.RowDefinitions>
       <RowDefinition Height="Auto" />
       <RowDefinition Height="*" />
       <RowDefinition Height="Auto" />
     </Grid.RowDefinitions>
-    <StackPanel Margin="0,0,0,24">
-      <DockPanel>
-        <TextBlock Text="SYNAPSE OBSERVER" FontWeight="SemiBold" FontSize="14" VerticalAlignment="Center" />
-        <TextBlock Text="Prototype · local collection" Foreground="{StaticResource MutedTextBrush}" HorizontalAlignment="Right" FontSize="13" />
-      </DockPanel>
-      <TextBlock Text="Help add support for your Blade" FontSize="28" FontWeight="SemiBold" Margin="0,16,0,8" />
-      <TextBlock Text="Collect device information, record a few changes in Synapse, and share one ZIP." Foreground="{StaticResource MutedTextBrush}" />
-    </StackPanel>
+    <Grid Margin="0,0,0,12">
+      <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+      <StackPanel>
+        <TextBlock Text="Synapse Observer" FontSize="20" FontWeight="SemiBold" />
+        <TextBlock Text="Collect evidence to help add Blade support" Foreground="{StaticResource MutedTextBrush}" Margin="0,3,0,0" />
+      </StackPanel>
+      <Border Grid.Column="1" Background="#E9EDF3" CornerRadius="4" Padding="8,3" VerticalAlignment="Top" Margin="12,4,0,0"><TextBlock Text="Prototype" FontSize="11" Foreground="#586477" /></Border>
+    </Grid>
     <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,8,0">
       <StackPanel>
         <Border Style="{StaticResource Card}" Visibility="{Binding ShowInventoryScreen, Converter={StaticResource VisibleWhenTrue}}">
           <StackPanel>
-            <TextBlock Text="1  Your laptop" FontSize="20" FontWeight="SemiBold" />
-            <TextBlock Text="{Binding DeviceSummary}" Foreground="{StaticResource MutedTextBrush}" Margin="0,12,0,16" />
+            <TextBlock Text="Your laptop" FontSize="17" FontWeight="SemiBold" />
+            <TextBlock Text="{Binding DeviceSummary}" Foreground="{StaticResource MutedTextBrush}" Margin="0,10,0,12" />
             <Button Content="{Binding CollectButtonText}" Command="{Binding CollectCommand}" Style="{StaticResource PrimaryButton}" HorizontalAlignment="Left" AutomationProperties.HelpText="Read device information without sending a firmware command." />
-            <ProgressBar IsIndeterminate="True" Height="4" Margin="0,16,0,0" Visibility="{Binding IsCollecting, Converter={StaticResource VisibleWhenTrue}}" />
+            <ProgressBar IsIndeterminate="True" Height="4" Margin="0,12,0,0" Visibility="{Binding IsCollecting, Converter={StaticResource VisibleWhenTrue}}" />
           </StackPanel>
         </Border>
-        <TextBlock Text="{Binding DeviceSummary}" Foreground="{StaticResource MutedTextBrush}" Margin="0,0,0,16" Visibility="{Binding HasInventory, Converter={StaticResource VisibleWhenTrue}}" />
+        <TextBlock Text="{Binding DeviceSummary}" Foreground="{StaticResource MutedTextBrush}" Margin="0,0,0,12" Visibility="{Binding HasInventory, Converter={StaticResource VisibleWhenTrue}}" />
         <Border Style="{StaticResource Card}" Visibility="{Binding HasInventory, Converter={StaticResource VisibleWhenTrue}}">
           <StackPanel>
-            <TextBlock Text="2  Record changes in Synapse" FontSize="20" FontWeight="SemiBold" />
-            <TextBlock Text="{Binding RecorderStatus}" Margin="0,12,0,12" Foreground="{StaticResource MutedTextBrush}" AutomationProperties.LiveSetting="Polite" />
+            <TextBlock Text="Record Synapse changes" FontSize="17" FontWeight="SemiBold" />
+            <TextBlock Text="{Binding RecorderStatus}" Margin="0,8,0,10" Foreground="{StaticResource MutedTextBrush}" FontSize="12" AutomationProperties.LiveSetting="Polite" />
             <StackPanel Visibility="{Binding ShowAttach, Converter={StaticResource VisibleWhenTrue}}">
               <CheckBox Content="Allow observation of Synapse during this session" IsChecked="{Binding AttachConsent}" Margin="0,0,0,12" AutomationProperties.HelpText="The prototype loads a fixed observer into a verified Synapse process. It records control feature calls without replaying them." />
               <Button Content="Start recording" Command="{Binding StartCommand}" HorizontalAlignment="Left" Style="{StaticResource PrimaryButton}" />
             </StackPanel>
             <StackPanel Visibility="{Binding IsRecording, Converter={StaticResource VisibleWhenTrue}}">
-              <Border Background="{StaticResource BackgroundBrush}" CornerRadius="8" Padding="16" Margin="0,4,0,12">
+              <Border Background="{StaticResource BackgroundBrush}" CornerRadius="5" Padding="12" Margin="0,4,0,12">
                 <StackPanel>
-                  <TextBlock Text="{Binding StepTitle}" FontSize="18" FontWeight="SemiBold" />
+                  <TextBlock Text="{Binding StepTitle}" FontSize="15" FontWeight="SemiBold" />
                   <TextBlock Text="{Binding StepInstructions}" Margin="0,8,0,12" />
                   <StackPanel Visibility="{Binding ShowStartingValue, Converter={StaticResource VisibleWhenTrue}}">
                     <Label Content="Starting setting" Target="{Binding ElementName=StartingSettingBox}" Padding="0,0,0,6" />
@@ -60,18 +61,18 @@
                 <TextBlock Text="{Binding ObservationSummary}" VerticalAlignment="Center" Margin="0,0,20,0" />
               </WrapPanel>
             </StackPanel>
-            <Expander Header="Collection details" Margin="0,16,0,0">
+            <Expander Header="Collection details" Margin="0,12,0,0">
               <TextBlock Text="{Binding CollectionDetails}" Margin="0,8,0,0" Foreground="{StaticResource MutedTextBrush}" />
             </Expander>
             <Button Content="Check recording availability" Command="{Binding CollectCommand}" HorizontalAlignment="Left" Margin="0,12,0,0" Visibility="{Binding ShowAttach, Converter={StaticResource VisibleWhenTrue}}" />
           </StackPanel>
         </Border>
-        <Border Style="{StaticResource Card}" Visibility="{Binding ShowExport, Converter={StaticResource VisibleWhenTrue}}">
+        <Border x:Name="ExportCard" Style="{StaticResource Card}" Visibility="{Binding ShowExport, Converter={StaticResource VisibleWhenTrue}}">
           <StackPanel>
-            <TextBlock Text="3  Save your evidence" FontSize="20" FontWeight="SemiBold" />
-            <TextBlock Text="{Binding ExportSummary}" Foreground="{StaticResource MutedTextBrush}" Margin="0,12,0,16" />
-            <Button Content="Save evidence ZIP…" Command="{Binding SaveCommand}" HorizontalAlignment="Left" Style="{StaticResource PrimaryButton}" />
-            <TextBlock Text="Attach the saved ZIP to your support request. Nothing is uploaded automatically." Foreground="{StaticResource MutedTextBrush}" Margin="0,12,0,0" FontSize="13" />
+            <TextBlock Text="Save your evidence" FontSize="17" FontWeight="SemiBold" />
+            <TextBlock Text="{Binding ExportSummary}" Foreground="{StaticResource MutedTextBrush}" Margin="0,10,0,12" />
+            <Button x:Name="SaveEvidenceButton" Content="Save evidence ZIP…" Command="{Binding SaveCommand}" HorizontalAlignment="Left" Style="{StaticResource PrimaryButton}" />
+            <TextBlock Text="Attach the saved ZIP to your support request. Nothing is uploaded automatically." Foreground="{StaticResource MutedTextBrush}" Margin="0,12,0,0" FontSize="12" />
           </StackPanel>
         </Border>
       </StackPanel>
@@ -79,7 +80,7 @@
     <Border Grid.Row="2" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" Padding="0,12,0,0" Margin="0,12,0,0">
       <DockPanel>
         <Button Content="Stop recording" Command="{Binding StopCommand}" DockPanel.Dock="Right" Visibility="{Binding IsRecording, Converter={StaticResource VisibleWhenTrue}}" />
-        <TextBlock Text="{Binding Status}" Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" AutomationProperties.LiveSetting="Polite" />
+        <TextBlock Text="{Binding Status}" Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" FontSize="12" AutomationProperties.LiveSetting="Polite" />
       </DockPanel>
     </Border>
   </Grid>

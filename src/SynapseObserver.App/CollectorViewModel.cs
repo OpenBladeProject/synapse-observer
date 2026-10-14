@@ -530,7 +530,7 @@ internal sealed class CollectorViewModel : INotifyPropertyChanged
         deviceSummary = "Razer Blade · example device\nBIOS 1.00 · 3 Razer HID interfaces · Synapse detected";
         recorderStatus = "Synapse is ready. Start a short recording when you are ready to change settings.";
         status = "Device information collected. You can save it now or add a recording.";
-        if (stage == 2)
+        if (stage >= 2)
         {
             recording = true;
             startingSetting = "Balanced";
@@ -538,6 +538,12 @@ internal sealed class CollectorViewModel : INotifyPropertyChanged
             ChangedEntry.SetReportedText("Silent");
             stepPhase = 1;
             recorderStatus = "Recording selected laptop feature calls. Example data only.";
+            if (stage == 3)
+            {
+                StartingEntry.SelectedChoice = StartingEntry.Choices.Single(choice => choice.Label == "Custom");
+                StartingEntry.Details = "CPU Boost, GPU High";
+                stepPhase = 0;
+            }
         }
 
         Refresh();
