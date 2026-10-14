@@ -28,13 +28,15 @@ public sealed class NativeObservationSession : INativeObservationSession
     { this.mapping = mapping; this.view = view; this.process = process; this.worker = worker; this.origin = origin; }
     private static readonly SemaphoreSlim StartGate = new(1, 1);
     public static Task<NativeObservationSession> StartAsync(BackendCandidate candidate, string selectedInterfacePath, CancellationToken cancellationToken = default) => StartAsync(candidate, new[] { selectedInterfacePath }, cancellationToken);
-    public static Task<NativeObservationSession> StartAsync(BackendCandidate candidate, IReadOnlyList<string> selectedInterfacePaths, CancellationToken cancellationToken = default) => Task.Run(() =>
+    public static Task<NativeObservationSession> StartAsync(BackendCandidate candidate, IReadOnlyList<string> selectedInterfacePaths, CancellationToken cancellationToken = default) => StartAsync(candidate, selectedInterfacePaths, 300, cancellationToken);
+    public static Task<NativeObservationSession> StartAsync(BackendCandidate candidate, IReadOnlyList<string> selectedInterfacePaths, uint durationSeconds, CancellationToken cancellationToken = default) => Task.Run(() =>
     {
+        if (durationSeconds is < 1 or > 300) throw new ArgumentOutOfRangeException(nameof(durationSeconds));
         StartGate.Wait(cancellationToken);
-        try { return Start(candidate, selectedInterfacePaths, cancellationToken); }
+        try { return Start(candidate, selectedInterfacePaths, durationSeconds, cancellationToken); }
         finally { StartGate.Release(); }
     }, cancellationToken);
-    private static NativeObservationSession Start(BackendCandidate candidate, IReadOnlyList<string> interfacePaths, CancellationToken token)
+    private static NativeObservationSession Start(BackendCandidate candidate, IReadOnlyList<string> interfacePaths, uint durationSeconds, CancellationToken token)
     {
         long origin = Stopwatch.GetTimestamp();
         token.ThrowIfCancellationRequested();
@@ -72,7 +74,7 @@ public sealed class NativeObservationSession : INativeObservationSession
             try { var export = Native.GetProcAddress(local, "ObserverStart"); if (export == IntPtr.Zero) throw new InvalidOperationException("Observer export missing."); start = remoteModule.BaseAddress + checked((int)(export - local)); }
             finally { Native.FreeLibrary(local); }
             byte[] config = new byte[8492];
-            BitConverter.GetBytes((uint)config.Length).CopyTo(config, 0); BitConverter.GetBytes(300u).CopyTo(config, 4);
+            BitConverter.GetBytes((uint)config.Length).CopyTo(config, 0); BitConverter.GetBytes(durationSeconds).CopyTo(config, 4);
             Encoding.Unicode.GetBytes(mapName).CopyTo(config, 8);
             BitConverter.GetBytes((uint)selectedNames.Length).CopyTo(config, 264);
             for (int i = 0; i < selectedNames.Length; ++i) Encoding.Unicode.GetBytes(selectedNames[i]).CopyTo(config, 268 + i * 1024);
