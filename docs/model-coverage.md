@@ -12,11 +12,12 @@ collections, never a copied Blade 16 interface or report geometry. Pro, Stealth,
 14, 15, 16, 17, 18, and unfamiliar Blade names have synthetic discovery fixtures.
 Those fixtures check policy; they do not establish physical compatibility.
 
-The current native prototype recognizes Synapse 4.0.823.108 and its reviewed
-node-rz-hid module. This software-version gate applies to every laptop model.
-Synapse 2, Synapse 3, and unfamiliar Synapse 4 builds can contribute inventory;
-their process/module identities and transport need review before live recording
-is available. Do not infer a laptop is unsupported from that recording result.
+Recording identifies an installed RazerAppEngine process and its node-rz-hid
+module by their trusted Razer signatures and roles. It does not use a version
+or file-hash allowlist. A new version is a provenance value, not a rejection
+reason. Synapse 2 or 3 and a different future transport may need another observer
+backend if they do not use this engine/module path; their inventory is still
+useful. Do not infer a laptop lacks a capability from an unavailable recording.
 
 Feature reports can have unfamiliar lengths and command bodies. Their timing,
 API, selected interface, status, and shape stay in the evidence. Unknown bodies

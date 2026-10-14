@@ -32,10 +32,10 @@ cannot start.
 
 ## Prototype limits
 
-Native observation currently recognizes the reviewed Synapse engine
-**4.0.823.108** and its matching HID module. Other versions can export device
-information while awaiting review. An unfamiliar Blade PID is a discovery
-input; it is not rejected just because OpenBlade does not support it.
+Native observation identifies the installed, signed Razer Synapse engine and
+its loaded HID module. Updates do not require version approval. Versions and
+hashes are recorded as evidence. An unfamiliar Blade PID is a discovery input;
+it is not rejected just because OpenBlade does not support it.
 
 Recordings last at most five minutes. The observer collects feature-report API
 calls for one identified physical Blade device. It excludes keyboard and mouse

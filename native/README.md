@@ -5,13 +5,18 @@ reports, firmware commands, input reads, or arbitrary IOCTLs. Attachment changes
 the reviewed Synapse process by loading the matching observer DLL and installing
 MinHook detours. Live attachment requires the user's explicit recording action.
 
-The managed backend verifies the exact reviewed `RazerAppEngine.exe` SHA-256 and
-Windows Authenticode trust, the loaded `node-rz-hid` module hash, x64 architecture,
-Windows user, session, and integrity level. The fixed adjacent observer DLL must
-match the SHA embedded when the managed project was built. There is no DLL path,
-module allowlist, target executable, or elevation override in the user interface.
-The reviewed engine and module hashes are in `TargetPolicy.cs`; they identify
-the reviewed Synapse 4.0.823.108 build. A short passive live trial is recorded in ../VALIDATION.md.
+The managed backend verifies Windows Authenticode trust and the accepted signer's
+Razer legal publisher identity for both the installed RazerAppEngine executable
+and its loaded node-rz-hid module. Canonical installation paths and signed engine
+role metadata prevent a renamed unrelated executable from becoming a target.
+The module must belong to the same engine installation. Native x64 architecture,
+Windows user, session, and integrity level must match the collector. Version and
+file hashes are evidence provenance, with no per-build admission list.
+
+The fixed observer DLL still matches the SHA embedded in its own managed build.
+There is no arbitrary DLL, executable, or elevation override. Attachment is
+revalidated immediately before loading the observer. See [validation status](../VALIDATION.md)
+for the actual configurations and transports exercised.
 
 Before attachment the backend re-enumerates the selected feature collections.
 Every collection must belong to the same physical USB parent with Razer vendor

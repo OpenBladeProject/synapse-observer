@@ -30,4 +30,10 @@ internal static class Native
     [DllImport("kernel32", CharSet=CharSet.Ansi, ExactSpelling=true)] internal static extern IntPtr GetProcAddress(IntPtr module, string name);
     [DllImport("kernel32", CharSet=CharSet.Unicode, SetLastError=true)] internal static extern IntPtr LoadLibraryExW(string path, IntPtr file, uint flags);
     [DllImport("kernel32")] internal static extern bool FreeLibrary(IntPtr module);
+    [StructLayout(LayoutKind.Sequential)] internal struct ProviderCertificatePrefix { public uint Size; public IntPtr Certificate; }
+    [DllImport("wintrust", ExactSpelling=true)] internal static extern IntPtr WTHelperProvDataFromStateData(IntPtr state);
+    [DllImport("wintrust", ExactSpelling=true)] internal static extern IntPtr WTHelperGetProvSignerFromChain(IntPtr provider, uint signer, [MarshalAs(UnmanagedType.Bool)] bool counterSigner, uint counterIndex);
+    [DllImport("wintrust", ExactSpelling=true)] internal static extern IntPtr WTHelperGetProvCertFromChain(IntPtr signer, uint certificate);
+    [DllImport("crypt32", ExactSpelling=true, CharSet=CharSet.Unicode)] internal static extern uint CertGetNameStringW(IntPtr certificate, uint type, uint flags, IntPtr parameter, System.Text.StringBuilder name, uint size);
+    [DllImport("kernel32", ExactSpelling=true, CharSet=CharSet.Unicode, SetLastError=true)] internal static extern uint GetFinalPathNameByHandleW(SafeFileHandle file, System.Text.StringBuilder path, uint size, uint flags);
 }

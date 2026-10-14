@@ -171,12 +171,12 @@ internal sealed class CollectorViewModel : INotifyPropertyChanged
         if (eligible.Length == 1)
         {
             backendCandidate = eligible[0];
-            recorderStatus = $"Ready to observe {controlCandidates.Count} feature-report interfaces on your laptop. This prototype supports the reviewed Synapse build only.";
+            recorderStatus = $"Ready to observe {controlCandidates.Count} feature-report interfaces on your laptop. Razer publisher and process identity verified.";
         }
         else
         {
             recorderStatus = processes.Count == 0 ? "Start Synapse normally and open your laptop's controls. Then check recording availability. You can save device information now."
-                : eligible.Length > 1 ? "More than one reviewed Synapse engine is running. Close duplicate Synapse instances, then check recording availability."
+                : eligible.Length > 1 ? "More than one verified Synapse engine is running. Close duplicate Synapse instances, then check recording availability."
                 : processes[0].Diagnostic;
         }
 

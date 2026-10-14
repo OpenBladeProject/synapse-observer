@@ -49,7 +49,7 @@ The ZIP stays local; this record contains the sanitized result only.
 
 - Useful setting-change request/response/action correlation, including the
   91-byte control collection; the idle trial did not exercise those commands.
-- Other Blade model contributor trials and additional Synapse versions.
+- Other Blade model and different transport contributor trials.
 - Security-software behavior with the intended signed release build.
 - Pending asynchronous I/O completion remains outside observer coverage.
 
