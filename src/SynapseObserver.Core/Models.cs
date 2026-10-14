@@ -184,7 +184,8 @@ public sealed record ControlObservation(
     byte? ReportId,
     ReadOnlyMemory<byte> Buffer,
     PayloadDisposition PayloadDisposition,
-    double? CompletedRelativeMilliseconds = null);
+    double? CompletedRelativeMilliseconds = null,
+    uint? OutputBufferCapacity = null);
 
 public enum FeaturePayloadProjectionKind
 {
@@ -232,7 +233,8 @@ public sealed record SanitizedControlObservation(
     int BufferLength,
     PayloadDisposition PayloadDisposition,
     string? PayloadHex,
-    double? CompletedRelativeMilliseconds = null)
+    double? CompletedRelativeMilliseconds = null,
+    uint? OutputBufferCapacity = null)
 {
     public FeaturePayloadProjectionKind PayloadProjectionKind { get; init; }
 

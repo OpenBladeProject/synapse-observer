@@ -23,6 +23,7 @@ struct Event {
     DWORD interfaceIndex{};
     std::array<unsigned char, MaxPayload> input{};
     std::array<unsigned char, MaxPayload> output{};
+    DWORD outputBufferCapacity{};
     uint64_t completionTimestampTicks{};
 };
 struct Targets { void* setFeature; void* getFeature; void* deviceIoControl; };

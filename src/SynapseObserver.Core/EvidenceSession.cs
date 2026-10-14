@@ -120,7 +120,8 @@ public sealed class EvidenceSession
                 observation.Buffer.Length,
                 disposition,
                 payloadHex,
-                observation.CompletedRelativeMilliseconds)
+                observation.CompletedRelativeMilliseconds,
+                observation.OutputBufferCapacity)
             {
                 PayloadProjectionKind = projection.Kind,
                 HeaderHints = projection.HeaderHints,

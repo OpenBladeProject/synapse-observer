@@ -17,6 +17,7 @@ public sealed class BareFeatureResponseTests
 
         var stored = Assert.Single(session.Snapshot().Observations);
         Assert.Equal(90, stored.BufferLength);
+        Assert.Equal((uint)91, stored.OutputBufferCapacity);
         Assert.Equal(Convert.ToHexString(bytes), stored.PayloadHex);
         Assert.Equal(180, stored.PayloadHex!.Length);
         Assert.StartsWith("02", stored.PayloadHex, StringComparison.Ordinal);
@@ -44,6 +45,8 @@ public sealed class BareFeatureResponseTests
     [InlineData("no-completion")]
     [InlineData("non-razer")]
     [InlineData("truncated-native-gap")]
+    [InlineData("capacity-90")]
+    [InlineData("capacity-unknown")]
     public void AddObservation_BarePacketOutsideExactCompletedContext_IsRedacted(string context)
     {
         var observation = CreateObservation(CreateThermalResponse());
@@ -62,6 +65,8 @@ public sealed class BareFeatureResponseTests
             "no-completion" => observation with { CompletedRelativeMilliseconds = null },
             "non-razer" => observation with { VendorId = 0x1234 },
             "truncated-native-gap" => observation with { ErrorCategory = "buffer-truncated" },
+            "capacity-90" => observation with { OutputBufferCapacity = 90 },
+            "capacity-unknown" => observation with { OutputBufferCapacity = null },
             _ => throw new ArgumentOutOfRangeException(nameof(context)),
         };
 
@@ -176,7 +181,7 @@ public sealed class BareFeatureResponseTests
         "op-response", 10, ObservationSource.ReturnedBuffer, "DeviceIoControl.HID_GET_FEATURE",
         ObservationDirection.Output, ObservationStatus.Succeeded, 0, null,
         0x1532, 0xFFFF, "hid-preview-01", 1, 2, null, bytes,
-        PayloadDisposition.ProvenFeatureControl, 11);
+        PayloadDisposition.ProvenFeatureControl, 11, 91);
 
     private static void RecalculateChecksum(Span<byte> report)
     {

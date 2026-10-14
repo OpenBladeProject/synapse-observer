@@ -53,11 +53,12 @@ struct Callback {
     Callback() : outer(nesting++ == 0) { callbacks.fetch_add(1); }
     ~Callback() { callbacks.fetch_sub(1); --nesting; }
 };
-Event Begin(Operation operation, void* buffer, DWORD length) {
+Event Begin(Operation operation, void* buffer, DWORD length, DWORD outputBufferCapacity = 0) {
     Event e{};
     e.sequence = ++sequence;
     LARGE_INTEGER time{}; QueryPerformanceCounter(&time); e.timestampTicks = time.QuadPart;
     e.operation = operation; e.requestedBytes = length; e.interfaceIndex = selectedIndex;
+    e.outputBufferCapacity = outputBufferCapacity;
     const DWORD copyLength = operation == Operation::GetFeature || operation == Operation::IoctlGetFeature ? (length ? 1 : 0) : length;
     if (copyLength > MaxPayload) e.gap = Gap::BufferTooLarge;
     else if (!Copy(e.input.data(), buffer, copyLength)) e.gap = Gap::UnreadableBuffer;
@@ -76,7 +77,7 @@ BOOLEAN FeatureCall(Feature original, Operation operation, HANDLE handle, PVOID 
     Callback callback;
     const bool capture = callback.outer && recording && Admitted(handle);
     Event e{};
-    if (capture) e = Begin(operation, buffer, length);
+    if (capture) e = Begin(operation, buffer, length, operation == Operation::GetFeature ? length : 0);
     SetLastError(incomingError);
     const BOOLEAN result = original(handle, buffer, length);
     const DWORD error = GetLastError();
@@ -107,7 +108,7 @@ BOOL WINAPI HookIoctl(HANDLE handle, DWORD code, LPVOID input, DWORD inputSize, 
     if (capture) {
         // GET_FEATURE uses a caller-supplied report ID. Never snapshot its
         // uninitialized input/output tail before the original call.
-        e = code == GetFeatureCode ? Begin(Operation::IoctlGetFeature, inputSize ? input : output, inputSize ? inputSize : outputSize) : Begin(Operation::IoctlSetFeature, input, inputSize);
+        e = code == GetFeatureCode ? Begin(Operation::IoctlGetFeature, inputSize ? input : output, inputSize ? inputSize : outputSize, outputSize) : Begin(Operation::IoctlSetFeature, input, inputSize);
     }
     SetLastError(incomingError);
     const BOOL result = originalIoctl(handle, code, input, inputSize, output, outputSize, returned, overlapped);
@@ -122,7 +123,7 @@ BOOL WINAPI HookIoctl(HANDLE handle, DWORD code, LPVOID input, DWORD inputSize, 
         else if (result && code == GetFeatureCode) {
             DWORD bytes{};
             if (!Copy(&bytes, returned, sizeof(bytes))) e.gap = Gap::UnreadableBuffer;
-            else if (bytes > outputSize || bytes > MaxPayload || bytes > selectedFeatureBytes[e.interfaceIndex]) e.gap = Gap::BufferTooLarge;
+            else if (bytes > e.outputBufferCapacity || bytes > MaxPayload || bytes > selectedFeatureBytes[e.interfaceIndex]) e.gap = Gap::BufferTooLarge;
             else if (!Copy(e.output.data(), output, bytes)) e.gap = Gap::UnreadableBuffer;
             else { e.returnedBytes = bytes; e.outputLength = bytes; }
         }

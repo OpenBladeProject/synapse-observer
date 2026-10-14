@@ -19,4 +19,5 @@ struct StartConfig { DWORD size; DWORD durationSeconds; wchar_t mappingName[128]
 static_assert(sizeof(observer::Event) == 8256);
 static_assert(sizeof(observer::StartConfig) == 8492);
 static_assert(offsetof(observer::SharedState, events) == 32);
+static_assert(offsetof(observer::Event, outputBufferCapacity) == 8244);
 static_assert(offsetof(observer::Event, completionTimestampTicks) == 8248);

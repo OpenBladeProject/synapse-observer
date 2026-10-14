@@ -99,6 +99,9 @@ public static class FeaturePayloadPrivacy
         && observation.Status == ObservationStatus.Succeeded
         && observation.ErrorCategory is null
         && observation.ReportId is null
+        // A 90-byte output capacity cannot distinguish a bare packet from
+        // a clipped envelope. Require room for the full feature report.
+        && observation.OutputBufferCapacity is >= 91
         && observation.CompletedRelativeMilliseconds is double completed
         && double.IsFinite(completed)
         && completed >= observation.RelativeMilliseconds;

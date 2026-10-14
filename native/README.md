@@ -40,7 +40,9 @@ Up to eight feature collections from one laptop may be observed for five minutes
 Event timestamps use QueryPerformanceCounter; managed relative time starts before
 attachment. Each event keeps call entry and API-return completion separately;
 a pending asynchronous operation's API-return timestamp does not claim its I/O
-completed. `InterfaceIndex` preserves the selected collection order.
+completed. GET events also retain the caller-provided output buffer capacity,
+independently from request and returned byte counts. `InterfaceIndex` preserves
+the selected collection order.
 
 Known limits:
 
