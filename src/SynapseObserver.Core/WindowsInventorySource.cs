@@ -9,7 +9,7 @@ using Microsoft.Win32.SafeHandles;
 
 namespace SynapseObserver.Core;
 
-public sealed class WindowsInventorySource : IInventorySource
+public sealed partial class WindowsInventorySource : IInventorySource
 {
     private const ushort RazerVendorId = 0x1532;
     private const uint DigcfPresent = 0x00000002;
@@ -124,6 +124,7 @@ public sealed class WindowsInventorySource : IInventorySource
     {
         cancellationToken.ThrowIfCancellationRequested();
         var interfaces = new List<LocalHidCandidate>();
+        var descriptorDetails = new List<HidDescriptorSupportEvidence>();
         var failures = 0;
         HidD_GetHidGuid(out var hidGuid);
 
@@ -134,6 +135,7 @@ public sealed class WindowsInventorySource : IInventorySource
             DigcfPresent | DigcfDeviceInterface);
         if (infoSet.IsInvalid)
         {
+            _lastHidDescriptorSupport = [];
             return SectionResult<IReadOnlyList<LocalHidCandidate>>.Unavailable(
                 interfaces,
                 $"Windows HID enumeration was unavailable (Win32 {Marshal.GetLastWin32Error()}).");
@@ -184,6 +186,7 @@ public sealed class WindowsInventorySource : IInventorySource
             ushort? usagePage = null;
             ushort? usage = null;
             HidReportGeometry? geometry = null;
+            HidpCaps? descriptorCaps = null;
             string? issue = null;
             var descriptorState = CollectionState.Collected;
 
@@ -207,13 +210,37 @@ public sealed class WindowsInventorySource : IInventorySource
                     caps.InputReportByteLength,
                     caps.OutputReportByteLength,
                     caps.FeatureReportByteLength);
+                descriptorCaps = caps;
             }
 
             var parent = GetParentIdentity(deviceInstance);
+            var productName = handle.IsInvalid ? null : GetHidProductName(handle);
+            var interfaceLabel = MakeOpaqueLabel("hid", devicePath);
+            if (descriptorCaps is { } completeCaps && IsPhysicalBladeHid(parent, productName))
+            {
+                var physicalIdentity = parent.UsbInstanceId ?? parent.InstanceId ?? devicePath;
+                descriptorDetails.Add(new HidDescriptorSupportEvidence(
+                    interfaceLabel,
+                    MakeOpaqueLabel("device", physicalIdentity),
+                    attributes.VendorId,
+                    attributes.ProductId,
+                    completeCaps.UsagePage,
+                    completeCaps.Usage,
+                    completeCaps.InputReportByteLength,
+                    completeCaps.OutputReportByteLength,
+                    completeCaps.FeatureReportByteLength,
+                    completeCaps.NumberInputButtonCaps,
+                    completeCaps.NumberInputValueCaps,
+                    completeCaps.NumberOutputButtonCaps,
+                    completeCaps.NumberOutputValueCaps,
+                    completeCaps.NumberFeatureButtonCaps,
+                    completeCaps.NumberFeatureValueCaps));
+            }
+
             interfaces.Add(new LocalHidCandidate(
                 devicePath,
-                MakeOpaqueLabel("hid", devicePath),
-                handle.IsInvalid ? null : GetHidProductName(handle),
+                interfaceLabel,
+                productName,
                 attributes.VendorId,
                 attributes.ProductId,
                 attributesRead ? attributes.VersionNumber : null,
@@ -234,6 +261,8 @@ public sealed class WindowsInventorySource : IInventorySource
         {
             failures++;
         }
+
+        _lastHidDescriptorSupport = descriptorDetails.ToArray();
 
         IReadOnlyList<LocalHidCandidate> result = interfaces;
         if (interfaces.Count == 0 && failures == 0)

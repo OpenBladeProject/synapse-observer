@@ -13,6 +13,9 @@ public sealed class InventoryCollectorTests
         Assert.Equal(CollectionState.Cancelled, snapshot.PowerSource.State);
         Assert.Equal(CollectionState.Cancelled, snapshot.RazerHidInterfaces.State);
         Assert.Equal(CollectionState.Cancelled, snapshot.SynapseProcesses.State);
+        Assert.Equal(CollectionState.Cancelled, snapshot.Support.HidDescriptors.State);
+        Assert.Equal(CollectionState.Cancelled, snapshot.Support.Displays.State);
+        Assert.Equal(CollectionState.Cancelled, snapshot.Support.SystemPlatform.State);
     }
 
     [Fact]

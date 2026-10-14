@@ -6,3 +6,4 @@
 *.json text eol=crlf
 *.xaml text eol=crlf
 *.ps1 text eol=crlf
+*.rtf -text

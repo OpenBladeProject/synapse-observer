@@ -14,10 +14,11 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "GUI publish failed ($LASTEXITCODE)." }
     $taskExecutable = Join-Path $taskOutput 'SynapseObserver.exe'
     if (!(Test-Path -LiteralPath $taskExecutable) -or (Get-Item -LiteralPath $taskExecutable).Length -eq 0) { throw 'The portable executable is missing or empty.' }
-    $taskUnexpected = @(Get-ChildItem -LiteralPath $taskOutput -File | Where-Object Name -notin @('SynapseObserver.exe', 'LICENSE.txt', 'THIRD-PARTY-NOTICES.txt', 'build-manifest.json'))
+    $taskUnexpected = @(Get-ChildItem -LiteralPath $taskOutput -File | Where-Object Name -notin @('SynapseObserver.exe', 'LICENSE.txt', 'THIRD-PARTY-NOTICES.txt', 'LICENSE-WINDOWS-SDK.rtf', 'build-manifest.json'))
     if ($taskUnexpected.Count -ne 0) { throw 'Unexpected loose payload: use a fresh portable output directory and rebuild.' }
     Copy-Item -LiteralPath (Join-Path $taskRoot 'LICENSE') -Destination (Join-Path $taskOutput 'LICENSE.txt')
     Copy-Item -LiteralPath (Join-Path $taskRoot 'THIRD-PARTY-NOTICES.txt') -Destination $taskOutput
+    Copy-Item -LiteralPath (Join-Path $taskRoot 'LICENSE-WINDOWS-SDK.rtf') -Destination $taskOutput
     $taskManifest = [ordered]@{
         schemaVersion = 1
         sourceRevision = ((git rev-parse HEAD) -join '').Trim()
@@ -29,7 +30,9 @@ try {
         byteLength = (Get-Item -LiteralPath $taskExecutable).Length
     }
     [IO.File]::WriteAllText((Join-Path $taskOutput 'build-manifest.json'), ($taskManifest | ConvertTo-Json) + "`r`n", [Text.UTF8Encoding]::new($false))
-    $taskArchive = Join-Path $taskRoot 'artifacts/SynapseObserver-win-x64-prototype.zip'
+    [xml]$taskVersionProperties = Get-Content -LiteralPath (Join-Path $taskRoot 'Directory.Build.props') -Raw
+    $taskVersion = [string]$taskVersionProperties.Project.PropertyGroup.Version
+    $taskArchive = Join-Path $taskRoot "artifacts/SynapseObserver-win-x64-$taskVersion.zip"
     Compress-Archive -LiteralPath (Get-ChildItem -LiteralPath $taskOutput -File).FullName -DestinationPath $taskArchive -Force
     Write-Output $taskArchive
 } finally {

@@ -46,7 +46,10 @@ internal static class InventorySanitizer
                             .ToArray(),
                         item.ModuleState,
                         SanitizeIssue(item.ModuleState, item.Issue)))
-                    .ToArray()));
+                    .ToArray()))
+        {
+            Support = SupportInventorySanitizer.Sanitize(snapshot.Support),
+        };
 
     private static SectionResult<T> SanitizeSection<T>(SectionResult<T> section, T value) =>
         new(section.State, value, SanitizeIssue(section.State, section.Issue));

@@ -19,6 +19,6 @@ jobs:
         run: ./build/Publish.ps1
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: SynapseObserver-win-x64-prototype
-          path: artifacts/SynapseObserver-win-x64-prototype.zip
+          name: SynapseObserver-win-x64
+          path: artifacts/SynapseObserver-win-x64-*.zip
           if-no-files-found: error

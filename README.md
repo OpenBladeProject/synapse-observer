@@ -29,7 +29,9 @@ there is no Blade model or PID allowlist. See [model coverage](docs/model-covera
 
 Nothing is uploaded automatically. The collector does not apply settings or
 replay commands. A partial device-information bundle is useful when recording
-cannot start.
+cannot start. The ZIP includes a complete OpenBlade coverage draft, bounded
+action-window annotations, and a quality receipt that lists collection gaps.
+See [what the ZIP contains](docs/capture-contents.md).
 
 ## Prototype limits
 
@@ -39,10 +41,15 @@ hashes are recorded as evidence. An unfamiliar Blade PID is a discovery input;
 it is not rejected just because OpenBlade does not support it.
 
 Recordings last at most five minutes. The observer collects feature-report API
-calls for one identified physical Blade device. It excludes keyboard and mouse
-input, unrelated IOCTLs, local device paths, and serial-number inventory fields.
-Unknown or potentially identifying report bodies remain metadata-only; reviewed
-numeric command envelopes can include their bytes. See [evidence format](docs/evidence-format.md).
+calls for one identified physical Blade device. An optional five-second,
+foreground M-key/Fn probe records only bounded prompted signals; ordinary typing
+and macros are excluded. The main recorder excludes keyboard and mouse input,
+unrelated IOCTLs, local device paths, and serial-number inventory fields. Unknown
+or potentially identifying report bodies remain metadata-only; reviewed numeric
+and RGB command envelopes can include their bytes. A recognized envelope is
+still passive evidence, not firmware readback or support admission. See
+[evidence format](docs/evidence-format.md) and
+[support evidence requirements](docs/support-evidence-requirements.md).
 
 Pending asynchronous I/O is reported as a gap. Observed returned buffers and
 your restoration markers do not establish firmware readback. After a session,

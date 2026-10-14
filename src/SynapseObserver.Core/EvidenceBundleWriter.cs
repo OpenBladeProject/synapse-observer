@@ -15,6 +15,16 @@ public static class EvidenceBundleWriter
         Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) },
     };
 
+    // Contribution schema labels intentionally retain their documented names
+    // (for example UserModeFeatureApi and NotInvestigated). Other manifest
+    // enums remain camel-case for bundle compatibility.
+    private static readonly JsonSerializerOptions ContributionJsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        WriteIndented = true,
+        Converters = { new JsonStringEnumConverter() },
+    };
+
     public static async Task WriteAsync(
         EvidenceSession session,
         string destinationPath,
@@ -31,17 +41,33 @@ public static class EvidenceBundleWriter
         }
 
         var snapshot = session.Snapshot();
+        var coverageDraft = ContributionDraftBuilder.CreateCoverageDraft(snapshot);
+        var annotationDraft = ContributionDraftBuilder.CreateAnnotationDraft(snapshot);
+        var qualityReceipt = ContributionDraftBuilder.CreateQualityReceipt(snapshot);
         var manifest = new EvidenceBundleManifest(
-            "synapse-observer.bundle.v1",
+            "synapse-observer.bundle.v2",
             DateTimeOffset.UtcNow,
             GetCollectorBuild(),
             FeaturePayloadPrivacy.ReviewedSourceUrls,
             "No upload was performed. Restoration markers are user-reported, and observations are user-mode call evidence rather than firmware readback.",
+            [
+                "manifest.json",
+                "coverage-draft.json",
+                "annotation-draft.json",
+                "quality-receipt.json",
+                "README.txt",
+            ],
             snapshot);
         var json = JsonSerializer.SerializeToUtf8Bytes(manifest, JsonOptions);
-        if (json.Length > EvidenceLimits.MaxBundleJsonBytes)
+        var coverageJson = JsonSerializer.SerializeToUtf8Bytes(coverageDraft, ContributionJsonOptions);
+        var annotationJson = JsonSerializer.SerializeToUtf8Bytes(annotationDraft, ContributionJsonOptions);
+        var qualityJson = JsonSerializer.SerializeToUtf8Bytes(qualityReceipt, ContributionJsonOptions);
+        if (json.Length > EvidenceLimits.MaxBundleJsonBytes
+            || coverageJson.Length > EvidenceLimits.MaxBundleJsonBytes
+            || annotationJson.Length > EvidenceLimits.MaxBundleJsonBytes
+            || qualityJson.Length > EvidenceLimits.MaxBundleJsonBytes)
         {
-            throw new InvalidOperationException("The evidence manifest exceeds the documented export bound.");
+            throw new InvalidOperationException("An evidence bundle JSON entry exceeds the documented export bound.");
         }
 
         var temporaryPath = Path.Combine(
@@ -63,6 +89,9 @@ public static class EvidenceBundleWriter
                 using (var archive = new ZipArchive(stream, ZipArchiveMode.Create, leaveOpen: true, Encoding.UTF8))
                 {
                     await WriteEntryAsync(archive, "manifest.json", json, cancellationToken).ConfigureAwait(false);
+                    await WriteEntryAsync(archive, "coverage-draft.json", coverageJson, cancellationToken).ConfigureAwait(false);
+                    await WriteEntryAsync(archive, "annotation-draft.json", annotationJson, cancellationToken).ConfigureAwait(false);
+                    await WriteEntryAsync(archive, "quality-receipt.json", qualityJson, cancellationToken).ConfigureAwait(false);
                     await WriteEntryAsync(
                         archive,
                         "README.txt",
@@ -105,11 +134,14 @@ public static class EvidenceBundleWriter
         builder.AppendLine("================================");
         builder.AppendLine();
         builder.AppendLine("This bundle was saved locally. The collector did not upload it.");
-        builder.AppendLine("It contains Windows identity fields, Razer HID descriptor metadata, bounded Synapse module metadata, user action markers, coverage status, and explicitly admitted control observations.");
+        builder.AppendLine("It contains Windows identity fields, Razer HID descriptor metadata, bounded Synapse module metadata, user action markers, prompted special-key observations, coverage status, and privacy-reviewed control observations.");
         builder.AppendLine("It does not contain HID interface paths, PnP instance paths, process IDs, command lines, account data, or module paths.");
-        builder.AppendLine("Payload hex is included only for a matching selected Razer HID feature call whose complete 91-byte envelope, checksum, padding, command, and typed values match a reviewed thermal, fan, or battery grammar. Unknown, sensitive, malformed, failed, and over-limit payloads keep bounded header and shape metadata while their bytes are omitted.");
+        builder.AppendLine("Payload hex is included only for a matching selected Razer HID feature call whose complete envelope, checksum, padding, command, and typed values match a reviewed numeric control or lighting grammar. Unknown, sensitive, malformed, failed, and over-limit payloads keep bounded header and shape metadata while their bytes are omitted.");
         builder.AppendLine("This privacy classification does not admit a device or command, prove physical transport, or prove firmware application. See payloadPrivacySources in manifest.json for the reviewed grammar sources.");
         builder.AppendLine("A user-reported restoration marker records what the user selected; it is not independent hardware readback.");
+        builder.AppendLine("coverage-draft.json lists every OpenBlade support-evidence leaf. Captured means only that this bundle contains passive evidence for that leaf; every other leaf remains NotInvestigated.");
+        builder.AppendLine("annotation-draft.json groups bounded evidence into prompted action windows. quality-receipt.json keeps collection gaps and the remaining maintainer validation stages visible.");
+        builder.AppendLine("These drafts are not PCAP files or capture-toolkit annotations, and they do not claim capture-validator compliance, query validation, setter validation, or production admission.");
         builder.AppendLine();
         builder.AppendLine($"Session started (UTC): {snapshot.StartedAtUtc:O}");
         builder.AppendLine($"Collector build: {GetCollectorBuild().InformationalVersion}");
@@ -117,6 +149,7 @@ public static class EvidenceBundleWriter
         builder.AppendLine($"Synapse process inventory: {snapshot.Inventory.SynapseProcesses.State}");
         builder.AppendLine($"Markers: {snapshot.Markers.Count}");
         builder.AppendLine($"Control observations: {snapshot.Observations.Count}");
+        builder.AppendLine($"Special-key observations: {snapshot.SpecialKeyObservations.Count}");
         builder.AppendLine($"Coverage items: {snapshot.Coverage.Count}");
         builder.AppendLine($"Rejected input events: {snapshot.RejectedMarkerCount + snapshot.RejectedObservationCount + snapshot.RejectedCoverageCount}");
         builder.AppendLine();
@@ -143,5 +176,6 @@ public static class EvidenceBundleWriter
         CollectorBuildEvidence CollectorBuild,
         IReadOnlyList<string> PayloadPrivacySources,
         string EvidenceNotice,
+        IReadOnlyList<string> Entries,
         EvidenceSessionSnapshot Session);
 }

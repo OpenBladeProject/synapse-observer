@@ -164,14 +164,14 @@ public sealed class BareFeatureResponseTests
     [Theory]
     [InlineData(null)]
     [InlineData((byte)0x07)]
-    public void Classify_ShortBufferHintsUseObservedReportId(byte? reportId)
+    public void Classify_ShortBufferDoesNotFabricateHeaderHints(byte? reportId)
     {
         var observation = CreateObservation([0xA5]) with { ReportId = reportId };
 
         var projection = FeaturePayloadPrivacy.Classify(observation);
 
         Assert.Null(projection.PayloadHex);
-        Assert.Equal(reportId, Assert.IsType<FeatureReportHeaderHints>(projection.HeaderHints).FeatureReportId);
+        Assert.Null(projection.HeaderHints);
     }
 
     private static byte[] CreateThermalResponse() => FeatureReportTestData.Create(

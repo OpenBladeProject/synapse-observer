@@ -107,6 +107,8 @@ public sealed record InventorySnapshot(
     SectionResult<IReadOnlyList<SynapseProcessEvidence>> SynapseProcesses)
 {
     public const string CurrentSchemaVersion = "synapse-observer.inventory.v1";
+
+    public SupportInventorySnapshot Support { get; init; } = SupportInventorySnapshot.Empty;
 }
 
 public enum EvidenceMarkerKind
@@ -118,6 +120,7 @@ public enum EvidenceMarkerKind
     UserReportedStartingValue,
     UserReportedTargetValue,
     UserReportedRestoration,
+    UserReportedFeatureDefinition,
     ItemSkipped,
     Failure,
     CancellationRequested,
@@ -185,7 +188,9 @@ public sealed record ControlObservation(
     ReadOnlyMemory<byte> Buffer,
     PayloadDisposition PayloadDisposition,
     double? CompletedRelativeMilliseconds = null,
-    uint? OutputBufferCapacity = null);
+    uint? OutputBufferCapacity = null,
+    uint? RequestedBytes = null,
+    uint? ReturnedBytes = null);
 
 public enum FeaturePayloadProjectionKind
 {
@@ -194,6 +199,17 @@ public enum FeaturePayloadProjectionKind
     ReviewedFanSpeed,
     ReviewedFanRpm,
     ReviewedBatterySetting,
+    ReviewedMatrixFrame,
+    ReviewedMatrixRow,
+    ReviewedMatrixLatch,
+    ReviewedHardwareLightingEffect,
+    ReviewedKeyboardBrightness,
+    ReviewedLogoState,
+    ReviewedLogoEffect,
+    ReviewedDeviceMode,
+    ReviewedKeyboardBehavior,
+    ReviewedCustomPerformance,
+    ReviewedAdapterPower,
 }
 
 public sealed record FeatureReportHeaderHints(
@@ -234,12 +250,30 @@ public sealed record SanitizedControlObservation(
     PayloadDisposition PayloadDisposition,
     string? PayloadHex,
     double? CompletedRelativeMilliseconds = null,
-    uint? OutputBufferCapacity = null)
+    uint? OutputBufferCapacity = null,
+    uint? RequestedBytes = null,
+    uint? ReturnedBytes = null)
 {
     public FeaturePayloadProjectionKind PayloadProjectionKind { get; init; }
 
     public FeatureReportHeaderHints? HeaderHints { get; init; }
+
+    public PayloadComparisonEvidence? PayloadComparison { get; init; }
+
+    public bool CompletePayloadRetained => PayloadHex is not null;
 }
+
+// Offsets describe the observed buffer, including its original report-ID envelope.
+// No byte values or stable cross-session identifiers are exported here.
+public sealed record ChangedByteRange(int Offset, int Length);
+
+public sealed record PayloadComparisonEvidence(
+    string SessionEqualityToken,
+    string? PreviousOperationId,
+    double? PreviousRelativeMilliseconds,
+    int? ChangedByteCount,
+    IReadOnlyList<ChangedByteRange> ChangedRanges,
+    bool ChangedRangesTruncated);
 
 public enum CoverageState
 {
@@ -289,7 +323,10 @@ public sealed record EvidenceSessionSnapshot(
     int RejectedObservationCount,
     int RejectedCoverageCount)
 {
-    public const string CurrentSchemaVersion = "synapse-observer.session.v1";
+    public const string CurrentSchemaVersion = "synapse-observer.session.v2";
+
+    public IReadOnlyList<SpecialKeyObservation> SpecialKeyObservations { get; init; } = [];
+    public IReadOnlyList<SpecialKeyProbeSummary> SpecialKeyProbes { get; init; } = [];
 
     internal static IReadOnlyList<T> Freeze<T>(IEnumerable<T> values) =>
         new ReadOnlyCollection<T>(values.ToArray());

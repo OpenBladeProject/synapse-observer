@@ -30,8 +30,13 @@ without a terminal, SDK, repository checkout, or maintainer assistance.
   provenance, observer gaps, and incomplete restoration distinguishable.
 - Retain unfamiliar control reports and unmatched operations within documented
   bounds. Do not silently discard them because they are not known commands.
-- Capture only the selected laptop's control feature reports; exclude keyboard
-  and mouse input. Do not record arbitrary process memory or arbitrary IOCTLs.
+- Capture only the selected laptop's control feature reports. The optional
+  special-key probe may observe only the selected Blade's input interfaces for
+  an explicitly prompted key while this window is foreground, for at most ten
+  seconds. Export only reviewed non-text key identifiers or unknown-report
+  shape and comparison metadata; omit ordinary typing, macro contents, raw
+  input bodies, and mouse input. Never register background input, suppress keys,
+  change keyboard mode, or record arbitrary process memory or arbitrary IOCTLs.
 - Raw files stay local. Export only schema-defined fields. Remove serials,
   instance paths, usernames, local paths, unrelated device data, and accounts.
   Hashing a path is not sanitization of every payload containing that path.

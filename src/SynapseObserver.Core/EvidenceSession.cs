@@ -1,15 +1,22 @@
+using System.Security.Cryptography;
+
 namespace SynapseObserver.Core;
 
-public sealed class EvidenceSession
+public sealed class EvidenceSession : IDisposable
 {
     private readonly object _sync = new();
     private readonly List<EvidenceMarker> _markers = [];
+    private readonly List<SpecialKeyObservation> _specialKeys = [];
+    private readonly List<SpecialKeyProbeSummary> _specialKeyProbes = [];
     private readonly List<SanitizedControlObservation> _observations = [];
     private readonly Dictionary<string, CoverageItem> _coverage = new(StringComparer.Ordinal);
     private int _payloadBytes;
     private int _rejectedMarkers;
     private int _rejectedObservations;
     private int _rejectedCoverage;
+    private readonly byte[] _comparisonKey = RandomNumberGenerator.GetBytes(32);
+    private readonly Dictionary<ComparisonStream, PreviousBuffer> _previousBuffers = [];
+    private bool _disposed;
 
     public EvidenceSession(InventorySnapshot inventory, DateTimeOffset? startedAtUtc = null)
     {
@@ -62,6 +69,7 @@ public sealed class EvidenceSession
         ArgumentNullException.ThrowIfNull(observation);
         lock (_sync)
         {
+            ObjectDisposedException.ThrowIf(_disposed, this);
             if (_observations.Count >= EvidenceLimits.MaxObservations)
             {
                 _rejectedObservations++;
@@ -76,10 +84,13 @@ public sealed class EvidenceSession
 
             var disposition = observation.PayloadDisposition;
             string? payloadHex = null;
-            var projection = FeaturePayloadPrivacy.Classify(observation);
+            var scoped = IsProvenFeatureControlScope(observation);
+            var projection = scoped
+                ? FeaturePayloadPrivacy.Classify(observation)
+                : new FeaturePayloadProjection(FeaturePayloadProjectionKind.MetadataOnly, null, null);
             if (disposition == PayloadDisposition.ProvenFeatureControl)
             {
-                if (!IsProvenFeatureControlScope(observation))
+                if (!scoped)
                 {
                     disposition = PayloadDisposition.RedactedUnproven;
                 }
@@ -121,10 +132,14 @@ public sealed class EvidenceSession
                 disposition,
                 payloadHex,
                 observation.CompletedRelativeMilliseconds,
-                observation.OutputBufferCapacity)
+                observation.OutputBufferCapacity,
+                observation.RequestedBytes,
+                observation.ReturnedBytes)
             {
                 PayloadProjectionKind = projection.Kind,
                 HeaderHints = projection.HeaderHints,
+                PayloadComparison = scoped && observation.Buffer.Length <= EvidenceLimits.MaxPayloadBytesPerObservation
+                    ? ComparePayload(observation) : null,
             });
             return disposition == observation.PayloadDisposition
                 ? EvidenceAddResult.Added
@@ -155,6 +170,40 @@ public sealed class EvidenceSession
         }
     }
 
+    public EvidenceAddResult AddSpecialKeyObservation(SpecialKeyObservation observation)
+    {
+        ArgumentNullException.ThrowIfNull(observation);
+        lock (_sync)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (_specialKeys.Count >= 256) return EvidenceAddResult.RejectedLimit;
+            if (!SpecialKeyEvidencePolicy.IsValid(observation, Inventory)) return EvidenceAddResult.RejectedInvalid;
+            if (_specialKeys.Count(item => item.ProbeLabel == observation.ProbeLabel) >= 32)
+                return EvidenceAddResult.RejectedLimit;
+            _specialKeys.Add(observation with { ChangedRanges = observation.ChangedRanges?.ToArray() });
+            return EvidenceAddResult.Added;
+        }
+    }
+
+    public EvidenceAddResult AddSpecialKeyProbe(SpecialKeyProbeSummary summary)
+    {
+        ArgumentNullException.ThrowIfNull(summary);
+        lock (_sync)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (_specialKeyProbes.Count >= 64) return EvidenceAddResult.RejectedLimit;
+            if (!EvidenceText.IsToken(summary.ProbeLabel) || !double.IsFinite(summary.RelativeMilliseconds)
+                || summary.RelativeMilliseconds < 0 || !Enum.IsDefined(summary.ExpectedKey)
+                || !Enum.IsDefined(summary.ModeContext) || !Enum.IsDefined(summary.EndReason)
+                || summary.ObservationCount is < 0 or > 32 || summary.IgnoredTypingCount is < 0 or > 1000000
+                || summary.RejectedPacketCount is < 0 or > 1000000)
+                return EvidenceAddResult.RejectedInvalid;
+            // Fixed policy text prevents any input-supplied diagnostic from exporting private text.
+            _specialKeyProbes.Add(summary with { Gap = SpecialKeyEvidencePolicy.Gap(summary.EndReason) });
+            return EvidenceAddResult.Added;
+        }
+    }
+
     public EvidenceSessionSnapshot Snapshot()
     {
         lock (_sync)
@@ -168,7 +217,11 @@ public sealed class EvidenceSession
                 EvidenceSessionSnapshot.Freeze(_coverage.Values.OrderBy(static item => item.ActivityId, StringComparer.Ordinal)),
                 _rejectedMarkers,
                 _rejectedObservations,
-                _rejectedCoverage);
+                _rejectedCoverage)
+            {
+                SpecialKeyObservations = EvidenceSessionSnapshot.Freeze(_specialKeys),
+                SpecialKeyProbes = EvidenceSessionSnapshot.Freeze(_specialKeyProbes),
+            };
         }
     }
 
@@ -183,6 +236,92 @@ public sealed class EvidenceSession
         && EvidenceText.IsToken(observation.InterfaceLabel)
         && (observation.ErrorCategory is null || EvidenceText.IsToken(observation.ErrorCategory))
         && observation.Buffer.Length <= int.MaxValue;
+
+    private PayloadComparisonEvidence ComparePayload(ControlObservation observation)
+    {
+        // HMAC is keyed with fresh per-session randomness; neither this key nor
+        // any stable digest is exported. The token does not reveal byte values.
+        var token = Convert.ToHexString(HMACSHA256.HashData(_comparisonKey, observation.Buffer.Span));
+        var stream = new ComparisonStream(observation.InterfaceLabel, observation.Api, observation.Source,
+            observation.Direction, observation.Buffer.Length, observation.VendorId, observation.ProductId,
+            observation.UsagePage, observation.Usage, observation.ReportId);
+        _previousBuffers.TryGetValue(stream, out var previous);
+        var ranges = new List<ChangedByteRange>();
+        int? changedCount = previous is null ? null : 0;
+        var truncated = false;
+        if (previous is not null)
+        {
+            var current = observation.Buffer.Span;
+            for (var offset = 0; offset < current.Length;)
+            {
+                if (current[offset] == previous.Bytes[offset])
+                {
+                    offset++;
+                    continue;
+                }
+
+                var start = offset;
+                while (offset < current.Length && current[offset] != previous.Bytes[offset])
+                {
+                    offset++;
+                    changedCount++;
+                }
+
+                if (ranges.Count < EvidenceLimits.MaxPayloadChangedRanges)
+                {
+                    ranges.Add(new ChangedByteRange(start, offset - start));
+                }
+                else
+                {
+                    truncated = true;
+                }
+            }
+        }
+
+        var result = new PayloadComparisonEvidence(token, previous?.OperationId,
+            previous?.RelativeMilliseconds, changedCount, ranges.AsReadOnly(), truncated);
+        if (previous is not null)
+        {
+            CryptographicOperations.ZeroMemory(previous.Bytes);
+        }
+        else if (_previousBuffers.Count >= EvidenceLimits.MaxPayloadComparisonStreams)
+        {
+            // Evict one prior stream; never retain every opaque observation.
+            var oldest = _previousBuffers.First();
+            CryptographicOperations.ZeroMemory(oldest.Value.Bytes);
+            _previousBuffers.Remove(oldest.Key);
+        }
+
+        _previousBuffers[stream] = new PreviousBuffer(observation.Buffer.ToArray(),
+            observation.OperationId, observation.RelativeMilliseconds);
+        return result;
+    }
+
+    public void Dispose()
+    {
+        lock (_sync)
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            _disposed = true;
+            CryptographicOperations.ZeroMemory(_comparisonKey);
+            foreach (var previous in _previousBuffers.Values)
+            {
+                CryptographicOperations.ZeroMemory(previous.Bytes);
+            }
+
+            _previousBuffers.Clear();
+        }
+    }
+
+    private sealed record ComparisonStream(string Interface, string Api, ObservationSource Source,
+        ObservationDirection Direction, int Length, ushort Vendor, ushort Product,
+        ushort? UsagePage, ushort? Usage, byte? ReportId);
+
+    private sealed record PreviousBuffer(byte[] Bytes, string OperationId, double RelativeMilliseconds);
 
     private bool IsProvenFeatureControlScope(ControlObservation observation)
     {

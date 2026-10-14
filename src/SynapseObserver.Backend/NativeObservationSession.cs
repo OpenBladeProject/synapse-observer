@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.IO.MemoryMappedFiles;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Security.Cryptography;
 using Microsoft.Win32.SafeHandles;
 namespace SynapseObserver.Backend;
 public interface INativeObservationSession : IAsyncDisposable
@@ -111,8 +112,28 @@ public sealed class NativeObservationSession : INativeObservationSession
         if (read < 0 || write < read || write - read > Slots) throw new InvalidDataException("Observer ring counters are invalid.");
         while (read < write)
         {
-            var bytes = new byte[NativeEventParser.RecordSize]; view.ReadArray(HeaderSize + (read % Slots) * NativeEventParser.RecordSize, bytes, 0, bytes.Length);
-            events.Add(NativeEventParser.Parse(bytes, origin, Stopwatch.Frequency));
+            var bytes = new byte[NativeEventParser.RecordSize];
+            int offset = HeaderSize + (read % Slots) * NativeEventParser.RecordSize;
+            try
+            {
+                view.ReadArray(offset, bytes, 0, bytes.Length);
+                events.Add(NativeEventParser.Parse(bytes, origin, Stopwatch.Frequency));
+            }
+            catch
+            {
+                foreach (var item in events)
+                {
+                    CryptographicOperations.ZeroMemory(item.RequestBytes);
+                    CryptographicOperations.ZeroMemory(item.ResponseBytes);
+                }
+                throw;
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(bytes);
+                // Clear the consumed slot before releasing it to the producer.
+                view.WriteArray(offset, bytes, 0, bytes.Length);
+            }
             Thread.MemoryBarrier(); view.Write(20, ++read);
         }
         return Task.FromResult<IReadOnlyList<NativeObservationEvent>>(events);

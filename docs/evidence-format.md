@@ -1,9 +1,13 @@
 # Evidence format
 
-Every explicit export contains `manifest.json` and `README.txt`. The manifest
+Every explicit export contains `manifest.json`, `coverage-draft.json`,
+`annotation-draft.json`, `quality-receipt.json`, and `README.txt`. The manifest
 records the collector build/source revision, inventory sections, action markers,
-feature observations, coverage gaps, and rejected-record counts. It contains
-no automatic upload or command replay instruction.
+feature and special-key observations, guided coverage, and rejected-record
+counts. The other JSON files prepare a complete OpenBlade coverage checklist,
+bounded action windows, and an explicit collection-quality receipt. They contain
+no automatic upload or command replay instruction. See
+[evidence ZIP contents](capture-contents.md).
 
 ## Inventory
 
@@ -28,9 +32,14 @@ capacity is recorded independently of the request length. Pending native
 I/O has no completed response. `HidD_GetFeature` does not return an actual byte
 count; that uncertainty remains explicit.
 
-Only reviewed numeric thermal, fan, and battery command envelopes that pass
-command-specific bounds, checksum, reserved-byte, and padding checks may export
-their bytes. Completed HID_GET_FEATURE IOCTL responses may contain a bare
+Only reviewed numeric thermal, fan, battery, performance, keyboard behavior,
+adapter-power, and bounded numeric or RGB lighting envelopes that pass
+command-specific bounds,
+checksum, reserved-byte, and padding checks may export their bytes. The lighting
+grammar covers exact 91-byte row, latch, brightness, logo, and effect reports,
+plus the reviewed 375-byte matrix frame shape. Recognizing one value or frame is
+a privacy decision; it does not establish a model's full range, layout, or
+support. Completed HID_GET_FEATURE IOCTL responses may contain a bare
 90-byte packet without a report ID. These require a matching 91-byte feature
 descriptor, output capacity of at least 91, successful completion with no gap,
 and the same complete privacy grammar. Export preserves the original 90 bytes
@@ -44,6 +53,13 @@ User-selected or entered starting/changed/restored values are marked `userReport
 “Setting unavailable” means the user could not find it in Synapse. It does not
 mean the hardware lacks that capability. A completed recording card means the
 guided user sequence ended; it does not establish firmware validation.
+
+The optional foreground special-key probe runs for five seconds and retains only
+bounded input admitted by its narrow prompted-key policy. Expected key and mode
+are user reports. A prompted event is exported under a generic input-evidence
+leaf unless the observed Windows key or reviewed signal independently identifies
+the signal. Ordinary typing and macros are omitted, and a P event during an Fn+P
+prompt does not prove that Fn was held or that the key controls performance.
 
 Queues, report bodies, record counts, text, and total manifest size are bounded.
 Omitted payloads, rejected records, queue loss, and incomplete restoration remain

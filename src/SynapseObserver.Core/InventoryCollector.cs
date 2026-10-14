@@ -9,6 +9,9 @@ public interface IInventorySource
     ValueTask<SectionResult<IReadOnlyList<HidInterfaceEvidence>>> CollectRazerHidInterfacesAsync(CancellationToken cancellationToken);
 
     ValueTask<SectionResult<IReadOnlyList<SynapseProcessEvidence>>> CollectSynapseProcessesAsync(CancellationToken cancellationToken);
+
+    ValueTask<SupportInventorySnapshot> CollectSupportInventoryAsync(CancellationToken cancellationToken) =>
+        ValueTask.FromResult(SupportInventorySnapshot.Empty);
 }
 
 public sealed class InventoryCollector
@@ -42,13 +45,39 @@ public sealed class InventoryCollector
             Array.Empty<SynapseProcessEvidence>(),
             cancellationToken).ConfigureAwait(false);
 
+        var support = await CollectSupportInventoryAsync(cancellationToken).ConfigureAwait(false);
+
         return new InventorySnapshot(
             InventorySnapshot.CurrentSchemaVersion,
             DateTimeOffset.UtcNow,
             identity,
             power,
             hid,
-            processes);
+            processes)
+        {
+            Support = support,
+        };
+    }
+
+    private async ValueTask<SupportInventorySnapshot> CollectSupportInventoryAsync(CancellationToken cancellationToken)
+    {
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return SupportInventorySnapshot.Cancelled;
+        }
+
+        try
+        {
+            return await _source.CollectSupportInventoryAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return SupportInventorySnapshot.Cancelled;
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException and not StackOverflowException)
+        {
+            return SupportInventorySnapshot.Unavailable($"Support inventory failed with {ex.GetType().Name}.");
+        }
     }
 
     private static async ValueTask<SectionResult<T>> CollectSectionAsync<T>(
