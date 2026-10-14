@@ -267,6 +267,36 @@ public sealed class ExpandedPayloadEvidenceTests
         Assert.Null(FeaturePayloadPrivacy.Classify(Observation(FeatureReportTestData.Create(3, 0x0A, payload))).PayloadHex);
     }
 
+    [Theory]
+    [InlineData(13, 2, new byte[] { 1, 1, 0xF4, 0xFE })]
+    [InlineData(13, 7, new byte[] { 1, 1, 3 })]
+    [InlineData(13, 1, new byte[] { 1, 2, 100 })]
+    [InlineData(7, 0x12, new byte[] { 0xE1 })]
+    public void UnfamiliarNumericValuesAreRetainedWithoutInterpretingTheirMeaning(byte commandClass, byte commandId, byte[] payload)
+    {
+        var bytes = FeatureReportTestData.Create(commandClass, commandId, payload);
+        using var session = Session(91);
+        session.AddObservation(Observation(bytes));
+        var stored = Assert.Single(session.Snapshot().Observations);
+        Assert.Equal(Convert.ToHexString(bytes), stored.PayloadHex);
+        Assert.True(stored.NumericMeaningUninterpreted);
+        // A changed selector or length is a different grammar, not a new value.
+        var invalidPayload = payload.Length == 1 ? new byte[] { payload[0], 0 } : payload.ToArray();
+        if (payload.Length > 1) invalidPayload[0] = 0xFF;
+        Assert.Null(FeaturePayloadPrivacy.Classify(Observation(FeatureReportTestData.Create(commandClass, commandId, invalidPayload))).PayloadHex);
+    }
+
+    [Theory]
+    [InlineData(13, 0x82, new byte[] { 1, 1, 2, 0 })]
+    [InlineData(13, 0x87, new byte[] { 1, 1, 3 })]
+    [InlineData(7, 0x92, new byte[] { 0xBC })]
+    public void QueryInputRetainsOnlyReviewedZeroArguments(byte commandClass, byte commandId, byte[] payload)
+    {
+        Assert.Null(FeaturePayloadPrivacy.Classify(Observation(FeatureReportTestData.Create(commandClass, commandId, payload))).PayloadHex);
+        for (int i = commandClass == 13 ? 2 : 0; i < payload.Length; i++) payload[i] = 0;
+        Assert.NotNull(FeaturePayloadPrivacy.Classify(Observation(FeatureReportTestData.Create(commandClass, commandId, payload))).PayloadHex);
+    }
+
     private static EvidenceSession Session(int featureBytes)
     {
         var inventory = SyntheticPreview.CreateInventory();

@@ -99,3 +99,11 @@ The source checklist is the schema-2
 [`device-coverage.template.json`](https://github.com/OpenBladeProject/openblade-captures/blob/main/templates/device-coverage.template.json)
 and the full evidence ladder is in the capture repository's
 [`CAPTURE_GUIDE.md`](https://github.com/OpenBladeProject/openblade-captures/blob/main/CAPTURE_GUIDE.md).
+
+Numeric value ranges are not production admission rules in this collector.
+Within the exact reviewed thermal, Custom CPU/GPU, fixed-fan, and charge-limit
+families, unfamiliar numeric values are retained with
+`numericMeaningUninterpreted: true`. The report family, control tag, channel,
+length, checksum, padding, source and status checks still apply. Query input
+arguments must match the reviewed zero-valued shape. This permits new-model
+values to be investigated without pretending to understand or support them.

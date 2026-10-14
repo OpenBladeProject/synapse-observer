@@ -69,3 +69,11 @@ closing the GUI waits for an active export to complete.
 See `EvidenceLimits` and `FeaturePayloadPrivacy` in `src/SynapseObserver.Core`
 for the exact limits and privacy classifier. Maintainers should review the
 observation layer and gaps before deriving model-specific commands.
+
+Numeric value ranges are not production admission rules in this collector.
+Within the exact reviewed thermal, Custom CPU/GPU, fixed-fan, and charge-limit
+families, unfamiliar numeric values are retained with
+`numericMeaningUninterpreted: true`. The report family, control tag, channel,
+length, checksum, padding, source and status checks still apply. Query input
+arguments must match the reviewed zero-valued shape. This permits new-model
+values to be investigated without pretending to understand or support them.

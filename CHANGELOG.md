@@ -4,6 +4,7 @@
 
 ### Added
 
+- Retain unfamiliar numeric settings in reviewed control families, label their meaning as uninterpreted, and capture zero-valued charge-limit queries. ([#2](https://github.com/OpenBladeProject/synapse-observer/pull/2))
 - Add the guided device inventory, passive Synapse observer, and local evidence
   ZIP export prototype, with discovery fixtures across Blade families and
   unfamiliar PIDs and report sizes ([#2](https://github.com/OpenBladeProject/synapse-observer/pull/2)).

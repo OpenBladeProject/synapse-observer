@@ -137,6 +137,7 @@ public sealed class EvidenceSession : IDisposable
                 observation.ReturnedBytes)
             {
                 PayloadProjectionKind = projection.Kind,
+                NumericMeaningUninterpreted = projection.NumericMeaningUninterpreted,
                 HeaderHints = projection.HeaderHints,
                 PayloadComparison = scoped && observation.Buffer.Length <= EvidenceLimits.MaxPayloadBytesPerObservation
                     ? ComparePayload(observation) : null,

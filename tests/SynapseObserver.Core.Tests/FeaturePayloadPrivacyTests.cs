@@ -5,9 +5,9 @@ namespace SynapseObserver.Core.Tests;
 public sealed class FeaturePayloadPrivacyTests
 {
     [Theory]
-    [InlineData(0x0D, 0x82, new byte[] { 0x01, 0x01, 0x02, 0x00 }, FeaturePayloadProjectionKind.ReviewedThermalMode)]
+    [InlineData(0x0D, 0x82, new byte[] { 0x01, 0x01, 0x00, 0x00 }, FeaturePayloadProjectionKind.ReviewedThermalMode)]
     [InlineData(0x0D, 0x01, new byte[] { 0x01, 0x02, 0x36 }, FeaturePayloadProjectionKind.ReviewedFanSpeed)]
-    [InlineData(0x07, 0x92, new byte[] { 0xBC }, FeaturePayloadProjectionKind.ReviewedBatterySetting)]
+    [InlineData(0x07, 0x92, new byte[] { 0x00 }, FeaturePayloadProjectionKind.ReviewedBatterySetting)]
     public void Classify_ReviewedTypedReport_RetainsCompleteEnvelope(
         byte commandClass,
         byte commandId,
@@ -70,13 +70,14 @@ public sealed class FeaturePayloadPrivacyTests
     [Theory]
     [InlineData(0x49)]
     [InlineData(0xD1)]
-    public void Classify_BatteryValueOutsideReviewedSet_ExportsMetadataOnly(byte value)
+    public void Classify_UnfamiliarBatteryNumericValue_RetainsFamilyWithUnknownMeaning(byte value)
     {
         var projection = FeaturePayloadPrivacy.Classify(CreateObservation(
             FeatureReportTestData.Create(0x07, 0x12, [value])));
 
-        Assert.Equal(FeaturePayloadProjectionKind.MetadataOnly, projection.Kind);
-        Assert.Null(projection.PayloadHex);
+        Assert.Equal(FeaturePayloadProjectionKind.ReviewedBatterySetting, projection.Kind);
+        Assert.NotNull(projection.PayloadHex);
+        Assert.True(projection.NumericMeaningUninterpreted);
     }
 
     [Fact]

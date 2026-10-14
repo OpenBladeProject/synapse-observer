@@ -101,7 +101,8 @@ public static class FeaturePayloadPrivacy
         var kind = ClassifyReviewedPayload(report[6], report[7], payload, observation.Direction);
         return kind == FeaturePayloadProjectionKind.MetadataOnly
             ? MetadataOnly(hints)
-            : new FeaturePayloadProjection(kind, hints, Convert.ToHexString(buffer));
+            : new FeaturePayloadProjection(kind, hints, Convert.ToHexString(buffer))
+            { NumericMeaningUninterpreted = IsUninterpretedNumericValue(kind, payload, report[7], observation.Direction) };
     }
 
     internal static bool IsCompletedBareFeatureResponse(ControlObservation observation) =>
@@ -198,7 +199,7 @@ public static class FeaturePayloadPrivacy
         }
 
         if (commandClass == 0x0D && commandId is 0x07 or 0x87 && payload.Length == 3
-            && payload[0] == 1 && payload[1] is 1 or 2 && payload[2] <= 2
+            && payload[0] == 1 && payload[1] is 1 or 2
             && (commandId == 7 || direction == ObservationDirection.Output || payload[2] == 0))
         {
             return FeaturePayloadProjectionKind.ReviewedCustomPerformance;
@@ -217,7 +218,9 @@ public static class FeaturePayloadPrivacy
             return FeaturePayloadProjectionKind.ReviewedAdapterPower;
         }
 
-        if (commandClass == 0x0D && commandId is 0x02 or 0x82 && IsThermalMode(payload))
+        if (commandClass == 0x0D && commandId is 0x02 or 0x82 && IsThermalFamily(payload)
+            && (commandId == 0x02 || direction == ObservationDirection.Output
+                || payload[2..].IndexOfAnyExcept((byte)0) < 0))
         {
             return FeaturePayloadProjectionKind.ReviewedThermalMode;
         }
@@ -235,7 +238,7 @@ public static class FeaturePayloadPrivacy
         if (commandClass == 0x07
             && commandId is 0x12 or 0x92
             && payload.Length == 1
-            && IsBatteryValue(payload[0]))
+            && (commandId == 0x12 || direction == ObservationDirection.Output || payload[0] == 0))
         {
             return FeaturePayloadProjectionKind.ReviewedBatterySetting;
         }
@@ -243,7 +246,10 @@ public static class FeaturePayloadPrivacy
         return FeaturePayloadProjectionKind.MetadataOnly;
     }
 
-    private static bool IsThermalMode(ReadOnlySpan<byte> payload) =>
+    private static bool IsThermalFamily(ReadOnlySpan<byte> payload) =>
+        payload.Length == 4 && payload[0] == 0x01 && payload[1] is 0x01 or 0x02;
+
+    private static bool IsKnownThermalValue(ReadOnlySpan<byte> payload) =>
         payload.Length == 4
         && payload[0] == 0x01
         && payload[1] is 0x01 or 0x02
@@ -261,8 +267,7 @@ public static class FeaturePayloadPrivacy
     private static bool IsFanSpeed(ReadOnlySpan<byte> payload) =>
         payload.Length == 3
         && payload[0] == 0x01
-        && payload[1] is 0x01 or 0x02
-        && payload[2] is >= 0x14 and <= 0x3C;
+        && payload[1] is 0x01 or 0x02;
 
     private static bool IsFanRpm(ReadOnlySpan<byte> payload, ObservationDirection direction) =>
         payload.Length == 3
@@ -272,6 +277,18 @@ public static class FeaturePayloadPrivacy
 
     private static bool IsBatteryValue(byte value) =>
         value is 0x50 or 0xB2 or 0xB7 or 0xBC or 0xC1 or 0xC6 or 0xCB or 0xD0;
+
+    private static bool IsUninterpretedNumericValue(FeaturePayloadProjectionKind kind,
+        ReadOnlySpan<byte> payload, byte commandId, ObservationDirection direction) => kind switch
+    {
+        FeaturePayloadProjectionKind.ReviewedThermalMode => !IsKnownThermalValue(payload),
+        FeaturePayloadProjectionKind.ReviewedCustomPerformance => payload[2] > 2,
+        FeaturePayloadProjectionKind.ReviewedFanSpeed => payload[2] is < 0x14 or > 0x3C,
+        FeaturePayloadProjectionKind.ReviewedBatterySetting when commandId is 0x12 or 0x92 =>
+            !(commandId == 0x92 && direction == ObservationDirection.Input && payload[0] == 0)
+            && !IsBatteryValue(payload[0]),
+        _ => false,
+    };
 
     private static bool HasExpectedStatus(ControlObservation observation, byte reportStatus) =>
         observation.Direction switch

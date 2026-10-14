@@ -88,7 +88,7 @@ public sealed class EvidenceSessionTests
     public void AddObservation_ProvenMatchingFeaturePayloadIncludesHex()
     {
         var session = SyntheticPreview.CreateSession();
-        var payload = FeatureReportTestData.Create(0x0D, 0x82, [0x01, 0x01, 0x02, 0x00]);
+        var payload = FeatureReportTestData.Create(0x0D, 0x82, [0x01, 0x01, 0x00, 0x00]);
 
         Assert.Equal(EvidenceAddResult.Added, session.AddObservation(CreateObservation(
             ObservationStatus.Succeeded,

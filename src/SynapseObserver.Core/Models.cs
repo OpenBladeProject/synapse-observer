@@ -228,6 +228,8 @@ public sealed record FeaturePayloadProjection(
     FeatureReportHeaderHints? HeaderHints,
     string? PayloadHex)
 {
+    public bool NumericMeaningUninterpreted { get; init; }
+
     public bool IncludesPayload => PayloadHex is not null;
 }
 
@@ -259,6 +261,8 @@ public sealed record SanitizedControlObservation(
     public FeatureReportHeaderHints? HeaderHints { get; init; }
 
     public PayloadComparisonEvidence? PayloadComparison { get; init; }
+
+    public bool NumericMeaningUninterpreted { get; init; }
 
     public bool CompletePayloadRetained => PayloadHex is not null;
 }
