@@ -49,9 +49,10 @@ your restoration markers do not establish firmware readback. After a session,
 the inactive observer module remains loaded until Synapse exits; restart
 Synapse normally before recording again.
 
-This is an unsigned development prototype. A short live test observed one laptop
-feature call and confirmed stop. Setting-change recordings, other laptops, and
-security-software compatibility still need validation before a public release.
+This is an unsigned development prototype. Live trials recorded a Balanced →
+Silent → Balanced change on one Blade 16 and confirmed observation stopped.
+Other laptops, different Synapse backends, and security-software compatibility
+still need validation before a public release.
 Do not disable security protections to run it.
 
 ## Development
