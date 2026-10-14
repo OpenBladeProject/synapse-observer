@@ -25,12 +25,22 @@ public static class EvidenceBundleWriter
         Converters = { new JsonStringEnumConverter() },
     };
 
-    public static async Task WriteAsync(
+    public static Task WriteAsync(
         EvidenceSession session,
         string destinationPath,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(session);
+        cancellationToken.ThrowIfCancellationRequested();
+        // Freeze before returning to the caller; no worker reads the mutable session.
+        return WriteSnapshotAsync(session.Snapshot(), destinationPath, cancellationToken);
+    }
+
+    internal static async Task WriteSnapshotAsync(
+        EvidenceSessionSnapshot snapshot,
+        string destinationPath,
+        CancellationToken cancellationToken = default)
+    {
         ArgumentException.ThrowIfNullOrWhiteSpace(destinationPath);
 
         var fullDestination = Path.GetFullPath(destinationPath);
@@ -40,35 +50,8 @@ public static class EvidenceBundleWriter
             throw new DirectoryNotFoundException("The selected export directory does not exist.");
         }
 
-        var snapshot = session.Snapshot();
-        var coverageDraft = ContributionDraftBuilder.CreateCoverageDraft(snapshot);
-        var annotationDraft = ContributionDraftBuilder.CreateAnnotationDraft(snapshot);
-        var qualityReceipt = ContributionDraftBuilder.CreateQualityReceipt(snapshot);
-        var manifest = new EvidenceBundleManifest(
-            "synapse-observer.bundle.v2",
-            DateTimeOffset.UtcNow,
-            GetCollectorBuild(),
-            FeaturePayloadPrivacy.ReviewedSourceUrls,
-            "No upload was performed. Restoration markers are user-reported, and observations are user-mode call evidence rather than firmware readback.",
-            [
-                "manifest.json",
-                "coverage-draft.json",
-                "annotation-draft.json",
-                "quality-receipt.json",
-                "README.txt",
-            ],
-            snapshot);
-        var json = JsonSerializer.SerializeToUtf8Bytes(manifest, JsonOptions);
-        var coverageJson = JsonSerializer.SerializeToUtf8Bytes(coverageDraft, ContributionJsonOptions);
-        var annotationJson = JsonSerializer.SerializeToUtf8Bytes(annotationDraft, ContributionJsonOptions);
-        var qualityJson = JsonSerializer.SerializeToUtf8Bytes(qualityReceipt, ContributionJsonOptions);
-        if (json.Length > EvidenceLimits.MaxBundleJsonBytes
-            || coverageJson.Length > EvidenceLimits.MaxBundleJsonBytes
-            || annotationJson.Length > EvidenceLimits.MaxBundleJsonBytes
-            || qualityJson.Length > EvidenceLimits.MaxBundleJsonBytes)
-        {
-            throw new InvalidOperationException("An evidence bundle JSON entry exceeds the documented export bound.");
-        }
+        var entries = await Task.Run(() => PrepareEntries(snapshot, cancellationToken), cancellationToken)
+            .ConfigureAwait(false);
 
         var temporaryPath = Path.Combine(
             destinationDirectory,
@@ -88,15 +71,10 @@ public static class EvidenceBundleWriter
                 temporaryCreated = true;
                 using (var archive = new ZipArchive(stream, ZipArchiveMode.Create, leaveOpen: true, Encoding.UTF8))
                 {
-                    await WriteEntryAsync(archive, "manifest.json", json, cancellationToken).ConfigureAwait(false);
-                    await WriteEntryAsync(archive, "coverage-draft.json", coverageJson, cancellationToken).ConfigureAwait(false);
-                    await WriteEntryAsync(archive, "annotation-draft.json", annotationJson, cancellationToken).ConfigureAwait(false);
-                    await WriteEntryAsync(archive, "quality-receipt.json", qualityJson, cancellationToken).ConfigureAwait(false);
-                    await WriteEntryAsync(
-                        archive,
-                        "README.txt",
-                        Encoding.UTF8.GetBytes(CreateReadme(snapshot)),
-                        cancellationToken).ConfigureAwait(false);
+                    foreach (var entry in entries)
+                    {
+                        await WriteEntryAsync(archive, entry.Name, entry.Bytes, cancellationToken).ConfigureAwait(false);
+                    }
                 }
 
                 await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
@@ -114,6 +92,45 @@ public static class EvidenceBundleWriter
                 File.Delete(temporaryPath);
             }
         }
+    }
+
+    private static (string Name, byte[] Bytes)[] PrepareEntries(
+        EvidenceSessionSnapshot snapshot, CancellationToken cancellationToken)
+    {
+        var drafts = ContributionDraftBuilder.CreateDrafts(snapshot, cancellationToken);
+        var manifest = new EvidenceBundleManifest(
+            "synapse-observer.bundle.v2",
+            DateTimeOffset.UtcNow,
+            GetCollectorBuild(),
+            FeaturePayloadPrivacy.ReviewedSourceUrls,
+            "No upload was performed. Restoration markers are user-reported, and observations are user-mode call evidence rather than firmware readback.",
+            [
+                "manifest.json",
+                "coverage-draft.json",
+                "annotation-draft.json",
+                "quality-receipt.json",
+                "README.txt",
+            ],
+            snapshot);
+        var json = JsonSerializer.SerializeToUtf8Bytes(manifest, JsonOptions);
+        cancellationToken.ThrowIfCancellationRequested();
+        var coverageJson = JsonSerializer.SerializeToUtf8Bytes(drafts.Coverage, ContributionJsonOptions);
+        cancellationToken.ThrowIfCancellationRequested();
+        var annotationJson = JsonSerializer.SerializeToUtf8Bytes(drafts.Annotation, ContributionJsonOptions);
+        cancellationToken.ThrowIfCancellationRequested();
+        var qualityJson = JsonSerializer.SerializeToUtf8Bytes(drafts.Quality, ContributionJsonOptions);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (json.Length > EvidenceLimits.MaxBundleJsonBytes
+            || coverageJson.Length > EvidenceLimits.MaxBundleJsonBytes
+            || annotationJson.Length > EvidenceLimits.MaxBundleJsonBytes
+            || qualityJson.Length > EvidenceLimits.MaxBundleJsonBytes)
+        {
+            throw new InvalidOperationException("An evidence bundle JSON entry exceeds the documented export bound.");
+        }
+
+        return [("manifest.json", json), ("coverage-draft.json", coverageJson),
+            ("annotation-draft.json", annotationJson), ("quality-receipt.json", qualityJson),
+            ("README.txt", Encoding.UTF8.GetBytes(CreateReadme(snapshot)))];
     }
 
     private static async Task WriteEntryAsync(

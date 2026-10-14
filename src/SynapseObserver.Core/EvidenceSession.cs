@@ -53,6 +53,8 @@ public sealed class EvidenceSession : IDisposable
             if (marker.Kind is EvidenceMarkerKind.UserReportedStartingValue
                     or EvidenceMarkerKind.UserReportedTargetValue
                     or EvidenceMarkerKind.UserReportedRestoration
+                    or EvidenceMarkerKind.UserReportedCurrentState
+                    or EvidenceMarkerKind.SpecialKeyProbeStarted
                 && marker.Provenance != EvidenceProvenance.UserReported)
             {
                 _rejectedMarkers++;

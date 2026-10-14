@@ -213,7 +213,7 @@ public sealed partial class WindowsInventorySource : IInventorySource
                 descriptorCaps = caps;
             }
 
-            var parent = GetParentIdentity(deviceInstance);
+            var parent = GetParentIdentity(deviceInstance, attributes.VendorId, attributes.ProductId);
             var productName = handle.IsInvalid ? null : GetHidProductName(handle);
             var interfaceLabel = MakeOpaqueLabel("hid", devicePath);
             if (descriptorCaps is { } completeCaps && IsPhysicalBladeHid(parent, productName))
@@ -448,7 +448,7 @@ public sealed partial class WindowsInventorySource : IInventorySource
         return $"{prefix}-{Convert.ToHexString(digest.AsSpan(0, 8)).ToLowerInvariant()}";
     }
 
-    private static ParentIdentity GetParentIdentity(uint deviceInstance)
+    private static ParentIdentity GetParentIdentity(uint deviceInstance, ushort vendorId, ushort productId)
     {
         if (CM_Get_Parent(out var parent, deviceInstance, 0) != CrSuccess)
         {
@@ -462,24 +462,24 @@ public sealed partial class WindowsInventorySource : IInventorySource
         }
 
         var current = parent;
-        DeviceNodeIdentity usb = default;
-        string? usbProductName = null;
+        var ancestors = new List<(uint DeviceInstance, DeviceNodeIdentity Identity)>(8);
         for (var depth = 0; depth < 8; depth++)
         {
             var node = GetDeviceNodeIdentity(current);
-            if (node.InstanceId is not null
-                && node.InstanceId.StartsWith("USB\\", StringComparison.OrdinalIgnoreCase)
-                && node.InstanceId.Contains("VID_", StringComparison.OrdinalIgnoreCase))
-            {
-                usb = node;
-                usbProductName = GetBusReportedProductName(current);
-            }
+            ancestors.Add((current, node));
 
             if (CM_Get_Parent(out current, current, 0) != CrSuccess)
             {
                 break;
             }
         }
+
+        var usbIndex = DeviceAncestrySelector.FindNearestPhysicalUsbVid(
+            ancestors.Select(static ancestor => ancestor.Identity.InstanceId).ToArray(), vendorId, productId);
+        var usb = usbIndex >= 0 ? ancestors[usbIndex].Identity : default;
+        var usbProductName = usbIndex >= 0
+            ? GetBusReportedProductName(ancestors[usbIndex].DeviceInstance)
+            : null;
 
         return new ParentIdentity(
             direct.InstanceId,

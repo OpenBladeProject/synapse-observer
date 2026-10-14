@@ -1,4 +1,6 @@
-#include "../src/ObserverEngine.h"
+#include "../src/ObserverShared.h"
+#include <thread>
+#include <memory>
 #include <cstdio>
 #include <cstdlib>
 using namespace observer;
@@ -75,9 +77,32 @@ int main() {
     Check(Dropped() == 10, "queue is bounded");
     unsigned seen{}; while (Poll(e)) ++seen;
     Check(seen == MaxEvents, "bounded queue count");
-    FakeGet(owned, buffer, sizeof(buffer));
-    Check(Stop(), "detach hooks");
-    Check(Poll(e) && e.outputLength == 12, "final completed call remains drainable after stop");
+    auto shared = std::make_unique<SharedState>();
+    for (unsigned i = 0; i < 64; ++i) FakeSet(owned, buffer, sizeof(buffer));
+    Check(DrainShared(*shared) == DrainResult::Blocked && shared->writeIndex == 32, "full shared ring leaves engine events queued");
+    FinishSharedDrain(*shared, 0);
+    Check(shared->dropped == 32, "missing final consumer has bounded explicitly counted loss");
+    shared = std::make_unique<SharedState>();
+    constexpr unsigned burst = 128;
+    for (unsigned i = 0; i < burst; ++i) FakeGet(owned, buffer, sizeof(buffer));
+    Check(Stop(), "detach hooks before final burst drain");
+    std::thread writer([&] { FinishSharedDrain(*shared); InterlockedExchange(&shared->finished, 1); });
+    unsigned retained{}; uint64_t previousSequence{};
+    do {
+        LONG read = InterlockedCompareExchange(&shared->readIndex, 0, 0);
+        LONG write = InterlockedCompareExchange(&shared->writeIndex, 0, 0);
+        while (read < write) {
+            const auto& item = shared->events[read % SharedSlots];
+            Check(item.outputLength == 12 && item.sequence > previousSequence, "final burst retains ordered completed responses");
+            previousSequence = item.sequence;
+            ++retained;
+            SecureZeroMemory(&shared->events[read % SharedSlots], sizeof(Event));
+            InterlockedExchange(&shared->readIndex, ++read);
+        }
+        Sleep(1);
+    } while (!InterlockedCompareExchange(&shared->finished, 0, 0) || shared->readIndex < shared->writeIndex);
+    writer.join();
+    Check(retained == burst && shared->dropped == 0 && shared->failure == 0, "burst larger than shared ring drains losslessly during stop");
     FakeGet(owned, buffer, sizeof(buffer)); Check(!Poll(e), "no collection after stop");
     std::puts("PASS: real MinHook owned-process fixture; bounded safety assertions; no device handles or hardware calls");
     return 0;

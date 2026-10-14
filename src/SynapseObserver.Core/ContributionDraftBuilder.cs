@@ -187,16 +187,39 @@ public static class ContributionDraftBuilder
         "Add production tests backed by the committed sanitized fixture and complete an explicit admission review.",
     ];
 
+    // Bundle export shares one set of windows across the three draft documents.
+    internal static (ContributionCoverageDraft Coverage, ContributionAnnotationDraft Annotation,
+        ContributionQualityReceipt Quality) CreateDrafts(
+        EvidenceSessionSnapshot snapshot, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        cancellationToken.ThrowIfCancellationRequested();
+        var windows = CreateActionWindows(snapshot);
+        cancellationToken.ThrowIfCancellationRequested();
+        var coverage = CreateCoverageDraft(snapshot, windows);
+        cancellationToken.ThrowIfCancellationRequested();
+        var annotation = CreateAnnotationDraft(snapshot, windows);
+        cancellationToken.ThrowIfCancellationRequested();
+        var quality = CreateQualityReceipt(snapshot, windows, coverage);
+        cancellationToken.ThrowIfCancellationRequested();
+        return (coverage, annotation, quality);
+    }
+
     public static ContributionCoverageDraft CreateCoverageDraft(EvidenceSessionSnapshot snapshot)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
+        return CreateCoverageDraft(snapshot, CreateActionWindows(snapshot));
+    }
+
+    private static ContributionCoverageDraft CreateCoverageDraft(
+        EvidenceSessionSnapshot snapshot, IReadOnlyList<ContributionActionWindowDraft> windows)
+    {
         var evidence = CapabilityPaths.ToDictionary(
             static path => path,
             static _ => new List<ContributionEvidenceReference>(),
             StringComparer.Ordinal);
 
         AddInventoryEvidence(snapshot.Inventory, evidence);
-        var windows = CreateActionWindows(snapshot);
         AddFeatureEvidence(snapshot, windows, evidence);
         AddSpecialKeyEvidence(snapshot, evidence);
 
@@ -228,22 +251,43 @@ public static class ContributionDraftBuilder
     public static ContributionAnnotationDraft CreateAnnotationDraft(EvidenceSessionSnapshot snapshot)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
+        return CreateAnnotationDraft(snapshot, CreateActionWindows(snapshot));
+    }
+
+    private static ContributionAnnotationDraft CreateAnnotationDraft(
+        EvidenceSessionSnapshot snapshot, IReadOnlyList<ContributionActionWindowDraft> windows)
+    {
+        var actionMarkers = windows.SelectMany(window => window.Markers.Select(marker =>
+            (window.ActivityId, Marker: marker))).ToHashSet();
         return new ContributionAnnotationDraft(
             ContributionAnnotationDraft.CurrentSchemaVersion,
             snapshot.SchemaVersion,
             Enum.GetValues<ContributionObservationLayer>(),
-            CreateActionWindows(snapshot),
+            windows,
             snapshot.SpecialKeyObservations
                 .Select(static item => new ContributionSpecialKeyDraft(ContributionObservationLayer.WindowsRawInput, item))
                 .ToArray(),
             snapshot.SpecialKeyProbes,
-            "This is a bounded annotation draft from user-mode and Windows evidence. It is not a PCAP, a capture-toolkit annotation, a firmware trace, or proof that a command was applied.");
+            "This is a bounded annotation draft from user-mode and Windows evidence. It is not a PCAP, a capture-toolkit annotation, a firmware trace, or proof that a command was applied.")
+        {
+            ContextMarkers = snapshot.Markers
+                .Select(marker => new ContributionContextMarkerDraft(marker.ActivityId, CreateMarkerDraft(marker)))
+                .Where(item => !actionMarkers.Contains((item.ActivityId, item.Marker)))
+                .ToArray(),
+        };
     }
 
     public static ContributionQualityReceipt CreateQualityReceipt(EvidenceSessionSnapshot snapshot)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
         var windows = CreateActionWindows(snapshot);
+        return CreateQualityReceipt(snapshot, windows, CreateCoverageDraft(snapshot, windows));
+    }
+
+    private static ContributionQualityReceipt CreateQualityReceipt(
+        EvidenceSessionSnapshot snapshot, IReadOnlyList<ContributionActionWindowDraft> windows,
+        ContributionCoverageDraft coverageDraft)
+    {
         var associated = windows.SelectMany(static window => window.Observations)
             .Select(static item => item.ReferenceId)
             .ToHashSet(StringComparer.Ordinal);
@@ -252,7 +296,7 @@ public static class ContributionDraftBuilder
         var redacted = snapshot.Observations.Count(static item => !item.CompletePayloadRetained);
         var gaps = CreateQualityGaps(snapshot, windows, associated);
         var inventoryGapCount = gaps.Count(static gap => gap.Code.StartsWith("Inventory", StringComparison.Ordinal));
-        var coverage = CreateCoverageDraft(snapshot).Coverage;
+        var coverage = coverageDraft.Coverage;
         var capturedCoverage = coverage.Count(static item => item.Status == ContributionCoverageStatus.Captured);
 
         return new ContributionQualityReceipt(
@@ -291,32 +335,52 @@ public static class ContributionDraftBuilder
             {
                 if (marker.Kind == EvidenceMarkerKind.UserReportedStartingValue && pending.Count > 0)
                 {
-                    windows.Add(CreateActionWindow(snapshot, group.Key, labels, pending));
+                    AddSettingWindow(snapshot, group.Key, labels, pending, windows);
                     pending.Clear();
                 }
 
                 if (pending.Count == 0 && marker.Kind != EvidenceMarkerKind.UserReportedStartingValue)
                 {
-                    windows.Add(CreateActionWindow(snapshot, group.Key, labels, [marker]));
+                    AddSettingWindow(snapshot, group.Key, labels, [marker], windows);
                     continue;
                 }
 
                 pending.Add(marker);
                 if (marker.Kind == EvidenceMarkerKind.UserReportedRestoration)
                 {
-                    windows.Add(CreateActionWindow(snapshot, group.Key, labels, pending));
+                    AddSettingWindow(snapshot, group.Key, labels, pending, windows);
                     pending.Clear();
                 }
             }
 
             if (pending.Count > 0)
             {
-                windows.Add(CreateActionWindow(snapshot, group.Key, labels, pending));
+                AddSettingWindow(snapshot, group.Key, labels, pending, windows);
             }
         }
 
         return windows.OrderBy(static item => item.StartRelativeMilliseconds).ToArray();
     }
+
+    private static void AddSettingWindow(
+        EvidenceSessionSnapshot snapshot, string activityId, IReadOnlyDictionary<string, string> labels,
+        IReadOnlyList<EvidenceMarker> markers, List<ContributionActionWindowDraft> windows)
+    {
+        // Legacy report IDs reused StartingValue/Action for declarations and probes.
+        // Preserve ambiguous starts elsewhere as incomplete setting evidence.
+        var legacyReport = activityId is "cooling-pad" or "keyboard-layout" or "mute-indicator"
+            or "startup-lighting" or "special-key-m1" or "special-key-m2" or "special-key-m3"
+            or "special-key-m4" or "special-key-m5" or "special-key-fn" or "special-key-fn-p"
+            or "power-source" or "adapter-rating" or "sensor-telemetry" or "ec-mcu" or "other-feature";
+        if (!legacyReport || markers.Any(static marker => marker.Kind is EvidenceMarkerKind.UserReportedTargetValue
+                or EvidenceMarkerKind.UserReportedRestoration))
+        {
+            windows.Add(CreateActionWindow(snapshot, activityId, labels, markers));
+        }
+    }
+
+    private static ContributionMarkerDraft CreateMarkerDraft(EvidenceMarker marker) => new(
+        marker.RelativeMilliseconds, marker.Kind, marker.Provenance, marker.Label, marker.Value);
 
     private static ContributionActionWindowDraft CreateActionWindow(
         EvidenceSessionSnapshot snapshot,
@@ -345,12 +409,7 @@ public static class ContributionDraftBuilder
                 item.Item.CompletePayloadRetained,
                 false))
             .ToArray();
-        var markerDrafts = markers.Select(static marker => new ContributionMarkerDraft(
-            marker.RelativeMilliseconds,
-            marker.Kind,
-            marker.Provenance,
-            marker.Label,
-            marker.Value)).ToArray();
+        var markerDrafts = markers.Select(CreateMarkerDraft).ToArray();
         labels.TryGetValue(activityId, out var label);
         var gap = complete
             ? observations.Length == 0 ? "No user-mode feature observation fell inside this action window." : null
@@ -391,9 +450,7 @@ public static class ContributionDraftBuilder
         EvidenceMarkerKind.UserReportedStartingValue
         or EvidenceMarkerKind.UserReportedTargetValue
         or EvidenceMarkerKind.UserActionConfirmed
-        or EvidenceMarkerKind.UserReportedRestoration
-        or EvidenceMarkerKind.UserReportedFeatureDefinition
-        or EvidenceMarkerKind.ItemSkipped;
+        or EvidenceMarkerKind.UserReportedRestoration;
 
     private static void AddInventoryEvidence(
         InventorySnapshot inventory,
@@ -521,9 +578,12 @@ public static class ContributionDraftBuilder
         SanitizedControlObservation observation,
         PowerSourceKind powerSource)
     {
-        var query = observation.HeaderHints is { CommandId: var commandId } && (commandId & 0x80) != 0
-            || observation.Api.Contains("GET_FEATURE", StringComparison.Ordinal)
-            || observation.Api == "HidD_GetFeature";
+        // GET_FEATURE transports both setter ACKs and query responses.
+        var query = observation.HeaderHints is { CommandId: var commandId } && (commandId & 0x80) != 0;
+        if (observation.HeaderHints is null)
+        {
+            yield break;
+        }
         var queryResponse = query
             && observation.Source == ObservationSource.ReturnedBuffer
             && observation.Direction == ObservationDirection.Output;
@@ -907,19 +967,21 @@ public static class ContributionDraftBuilder
 
     private static ContributionObservationRole GetObservationRole(SanitizedControlObservation observation)
     {
-        var query = observation.HeaderHints is { CommandId: var commandId } && (commandId & 0x80) != 0
-            || observation.Api.Contains("GET_FEATURE", StringComparison.Ordinal)
-            || observation.Api == "HidD_GetFeature";
-        if (!query)
+        // GET_FEATURE transports both setter ACKs and query responses.
+        var query = observation.HeaderHints is { CommandId: var commandId } && (commandId & 0x80) != 0;
+        if (observation.HeaderHints is null)
         {
-            return observation.Direction == ObservationDirection.Input
-                ? ContributionObservationRole.FeatureSetRequest
-                : ContributionObservationRole.UnclassifiedFeatureCall;
+            return ContributionObservationRole.UnclassifiedFeatureCall;
         }
 
-        return observation.Direction == ObservationDirection.Output
-            ? ContributionObservationRole.FeatureQueryResponse
-            : ContributionObservationRole.FeatureQueryRequest;
+        if (observation.Direction == ObservationDirection.Input)
+        {
+            return query ? ContributionObservationRole.FeatureQueryRequest : ContributionObservationRole.FeatureSetRequest;
+        }
+
+        return observation.Source == ObservationSource.ReturnedBuffer
+            ? query ? ContributionObservationRole.FeatureQueryResponse : ContributionObservationRole.FeatureSetResponse
+            : ContributionObservationRole.UnclassifiedFeatureCall;
     }
 
     private static IReadOnlyList<string> DistinctValues(IEnumerable<string?> values) =>

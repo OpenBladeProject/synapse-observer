@@ -35,7 +35,11 @@ field is the raw last-error snapshot and may be stale after a successful call.
 GET requests retain only the report ID, never the uninitialized caller tail.
 
 The DLL queue holds 256 records and the shared ring holds 32. Each request or
-response is bounded at 4096 bytes. Overflows increment a dropped-record counter.
+response is bounded at 4096 bytes. A full shared ring leaves records queued in
+the engine rather than discarding them. Engine queue overflow increments the
+dropped-record counter. During stop, the managed reader stays active while the
+native worker drains for up to one second; an absent reader causes the remaining
+queued records to be counted as dropped at that deadline.
 Up to eight feature collections from one laptop may be observed for five minutes.
 Event timestamps use QueryPerformanceCounter; managed relative time starts before
 attachment. Each event keeps call entry and API-return completion separately;
@@ -75,6 +79,9 @@ dotnet test tests/SynapseObserver.Backend.Tests/SynapseObserver.Backend.Tests.cs
 The first test executable installs real MinHook detours around owned synthetic
 functions and exercises status/error preservation, nested suppression, bounds,
 pending gaps, descriptor-tail exclusion, queue overflow, and final draining.
+The same shared-ring drain used by the DLL preserves an owned 128-event burst
+through a 32-slot ring during stop; a missing-reader fixture verifies bounded
+and counted loss.
 The second loads the actual DLL into its own process and exercises the startup
 handshake and bounded stop with no device calls. Managed tests cover event
 parsing, forged target rejection, cancellation, and physical-parent policy.

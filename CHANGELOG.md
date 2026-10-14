@@ -17,6 +17,16 @@
 
 ### Fixed
 
+- Preserve selected activities and reported key behavior, associate keyboard input
+  with the exact laptop, and keep declarations separate from setting changes
+  ([#2](https://github.com/OpenBladeProject/synapse-observer/pull/2)).
+- Distinguish setter acknowledgements from query responses; preserve the laptop's
+  USB parent when it is connected through a hub
+  ([#2](https://github.com/OpenBladeProject/synapse-observer/pull/2)).
+- Join concurrent recording cleanup, drain queued observations during stop,
+  handle full marker sessions, and save large evidence ZIPs without blocking
+  the window ([#2](https://github.com/OpenBladeProject/synapse-observer/pull/2)).
+
 - Remove internal keyboard-mode questions from the guide and key check, and let
   maximization fill the screen's usable area
   ([#2](https://github.com/OpenBladeProject/synapse-observer/pull/2)).

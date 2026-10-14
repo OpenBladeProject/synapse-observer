@@ -15,17 +15,6 @@ extern "C" __declspec(dllexport) DWORD WINAPI ObserverStart(LPVOID argument) {
     if (!mapping) return GetLastError();
     auto shared = static_cast<SharedState*>(MapViewOfFile(mapping, FILE_MAP_READ | FILE_MAP_WRITE, 0, 0, sizeof(SharedState)));
     if (!shared) { DWORD error = GetLastError(); CloseHandle(mapping); return error; }
-    auto drain = [&]() {
-            Event e{};
-            while (Poll(e)) {
-                LONG write = InterlockedCompareExchange(&shared->writeIndex, 0, 0);
-                LONG read = InterlockedCompareExchange(&shared->readIndex, 0, 0);
-                if (write < 0 || read < 0 || read > write || write == LONG_MAX) { InterlockedExchange(&shared->failure, ERROR_INVALID_DATA); InterlockedExchange(&shared->stop, 1); break; }
-                if (write - read >= SharedSlots) { InterlockedIncrement(&shared->dropped); continue; }
-                shared->events[write % SharedSlots] = e;
-                InterlockedExchange(&shared->writeIndex, write + 1);
-            }
-    };
     if (!StartLive(config.selectedObjectNames, config.featureBytes, config.interfaceCount)) {
         InterlockedExchange(&shared->failure, ERROR_NOT_SUPPORTED);
         if (!Stop()) InterlockedExchange(&shared->failure, ERROR_BUSY);
@@ -34,11 +23,11 @@ extern "C" __declspec(dllexport) DWORD WINAPI ObserverStart(LPVOID argument) {
         InterlockedExchange(&shared->ready, 1);
         ULONGLONG deadline = GetTickCount64() + config.durationSeconds * 1000ULL;
         do {
-            drain();
+            DrainShared(*shared);
             Sleep(10);
         } while (!InterlockedCompareExchange(&shared->stop, 0, 0) && GetTickCount64() < deadline);
         bool detached = Stop();
-        drain(); // retain the final completed calls before advertising finished
+        FinishSharedDrain(*shared); // reader remains active until this completes
         InterlockedExchangeAdd(&shared->dropped, static_cast<LONG>(std::min<uint64_t>(Dropped(), LONG_MAX)));
         if (!detached) InterlockedExchange(&shared->failure, ERROR_BUSY);
         InterlockedExchange(&shared->finished, 1);

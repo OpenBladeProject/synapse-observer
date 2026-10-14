@@ -19,7 +19,11 @@ Raw instance paths, process IDs, command lines, user names, and serial-number
 inventory fields are not exported.
 
 Local interface paths and USB ancestry exist only in memory to identify the
-same physical laptop during attachment. They are not bundle DTOs. Enumeration
+same physical laptop during attachment. The nearest matching physical USB parent
+is retained even when the laptop is behind a hub. Keyboard-class Raw Input names
+are associated with selected HID candidates through exact SetupAPI device-instance
+identity; unmatched and ambiguous names are excluded. These paths and identities
+are not bundle DTOs. Enumeration
 does not borrow a known model's commands, and a matching descriptor does not
 admit a write.
 
@@ -30,7 +34,9 @@ entry and API-return timing, status/error metadata, and payload disposition.
 Input call records and returned-buffer records are separate. Actual output-buffer
 capacity is recorded independently of the request length. Pending native
 I/O has no completed response. `HidD_GetFeature` does not return an actual byte
-count; that uncertainty remains explicit.
+count; that uncertainty remains explicit. GET_FEATURE can return a setter
+acknowledgement as well as a query response. Annotation roles and getter coverage
+use the report's command identity, not the transport API name.
 
 Only reviewed numeric thermal, fan, battery, performance, keyboard behavior,
 adapter-power, and bounded numeric or RGB lighting envelopes that pass
@@ -60,11 +66,16 @@ are user reports. A prompted event is exported under a generic input-evidence
 leaf unless the observed Windows key or reviewed signal independently identifies
 the signal. Ordinary typing and macros are omitted, and a P event during an Fn+P
 prompt does not prove that Fn was held or that the key controls performance.
+Probe results remain separate from declarations of key behavior; no input signal
+never replaces an earlier report or marks the declared key unavailable.
 
 Queues, report bodies, record counts, text, and total manifest size are bounded.
 Omitted payloads, rejected records, queue loss, and incomplete restoration remain
 visible. ZIP writing uses a private temporary file and an atomic final rename;
-closing the GUI waits for an active export to complete.
+closing the GUI waits for an active export to complete. Export freezes the session
+before dispatching draft preparation and serialization off the UI thread. All
+draft files share one set of action windows. Concurrent stop and close join one
+cleanup, with one observation reader kept active through native final draining.
 
 See `EvidenceLimits` and `FeaturePayloadPrivacy` in `src/SynapseObserver.Core`
 for the exact limits and privacy classifier. Maintainers should review the

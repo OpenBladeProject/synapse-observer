@@ -416,6 +416,196 @@ public sealed class EvidenceBundleWriterTests
         Assert.DoesNotContain("FFFF", draft.Device.ProductIds);
     }
 
+    [Theory]
+    [InlineData("HidD_GetFeature")]
+    [InlineData("DeviceIoControl.HID_GET_FEATURE")]
+    public void SetterAckReceivedThroughGetFeatureDoesNotBecomeQueryReadback(string api)
+    {
+        using var session = new EvidenceSession(SyntheticPreview.CreateInventory());
+        AddCompleteMarkers(session, "performance", 1, 5);
+        session.AddObservation(new ControlObservation(
+            "op-ack", 3, ObservationSource.ReturnedBuffer, api,
+            ObservationDirection.Output, ObservationStatus.Succeeded, 0, null,
+            0x1532, 0xFFFF, "hid-preview-01", 1, 2, 0,
+            FeatureReportTestData.Create(0x0D, 0x02, [0x01, 0x01, 0x05, 0x00], ObservationDirection.Output),
+            PayloadDisposition.ProvenFeatureControl, 3.1, 91, 91, 91));
+
+        var drafts = ContributionDraftBuilder.CreateDrafts(session.Snapshot());
+
+        var observation = Assert.Single(Assert.Single(drafts.Annotation.ActionWindows).Observations);
+        Assert.Equal(ContributionObservationRole.FeatureSetResponse, observation.Role);
+        Assert.False(observation.FirmwareReadback);
+        Assert.Equal(ContributionCoverageStatus.NotInvestigated,
+            Assert.Single(drafts.Coverage.Coverage, item => item.Capability == "performance.externalPower.readback").Status);
+    }
+
+    [Theory]
+    [InlineData(7, 0x12, new byte[] { 80 }, "battery.limitQuery", FeaturePayloadProjectionKind.ReviewedBatterySetting)]
+    [InlineData(3, 3, new byte[] { 1, 5, 197 }, "keyboardLighting.brightnessQuery", FeaturePayloadProjectionKind.ReviewedKeyboardBrightness)]
+    public void BatteryAndBrightnessSetterAcksDoNotClaimGetterCoverage(byte commandClass, byte commandId,
+        byte[] payload, string getter, FeaturePayloadProjectionKind projection)
+    {
+        using var session = new EvidenceSession(SyntheticPreview.CreateInventory());
+        AddCompleteMarkers(session, "setting", 1, 5);
+        session.AddObservation(new ControlObservation("op-ack", 3, ObservationSource.ReturnedBuffer, "HidD_GetFeature",
+            ObservationDirection.Output, ObservationStatus.Succeeded, 0, null, 0x1532, 0xFFFF, "hid-preview-01", 1, 2, 0,
+            FeatureReportTestData.Create(commandClass, commandId, payload, ObservationDirection.Output),
+            PayloadDisposition.ProvenFeatureControl, 3.1, 91, 91, null));
+        Assert.Equal(projection, Assert.Single(session.Snapshot().Observations).PayloadProjectionKind);
+        var drafts = ContributionDraftBuilder.CreateDrafts(session.Snapshot());
+        Assert.Equal(ContributionObservationRole.FeatureSetResponse,
+            Assert.Single(Assert.Single(drafts.Annotation.ActionWindows).Observations).Role);
+        Assert.Equal(ContributionCoverageStatus.NotInvestigated,
+            Assert.Single(drafts.Coverage.Coverage, item => item.Capability == getter).Status);
+    }
+
+    [Theory]
+    [InlineData(EvidenceMarkerKind.UserReportedCurrentState)]
+    [InlineData(EvidenceMarkerKind.ItemSkipped)]
+    [InlineData(EvidenceMarkerKind.UserReportedFeatureDefinition)]
+    [InlineData(EvidenceMarkerKind.SpecialKeyProbeStarted)]
+    public void ContextMarkersDoNotCreateIncompleteSettingWindows(EvidenceMarkerKind kind)
+    {
+        using var session = new EvidenceSession(SyntheticPreview.CreateInventory());
+        session.AddMarker(new EvidenceMarker(1, kind, "performance", "Reported", EvidenceProvenance.UserReported));
+
+        var drafts = ContributionDraftBuilder.CreateDrafts(session.Snapshot());
+
+        Assert.Empty(drafts.Annotation.ActionWindows);
+        Assert.Contains(drafts.Annotation.ContextMarkers, item => item.Marker.Kind == kind);
+        Assert.DoesNotContain(drafts.Quality.Gaps, item => item.Code == "IncompleteActionMarkers");
+    }
+
+    [Theory]
+    [InlineData(EvidenceMarkerKind.UserReportedCurrentState, EvidenceMarkerKind.SpecialKeyProbeStarted)]
+    [InlineData(EvidenceMarkerKind.UserReportedStartingValue, EvidenceMarkerKind.UserActionConfirmed)]
+    public void KeyDeclarationAndLaterProbeDoNotEncloseUnrelatedFeatureTraffic(
+        EvidenceMarkerKind declaration, EvidenceMarkerKind probe)
+    {
+        using var session = new EvidenceSession(SyntheticPreview.CreateInventory());
+        session.AddMarker(new EvidenceMarker(1, declaration, "special-key-m1", "M1 assignment", EvidenceProvenance.UserReported, "Page Up"));
+        session.AddObservation(new ControlObservation(
+            "op-unrelated", 50, ObservationSource.UserModeCall, "HidD_SetFeature",
+            ObservationDirection.Input, ObservationStatus.Succeeded, 0, null,
+            0x1532, 0xFFFF, "hid-preview-01", 1, 2, 0,
+            FeatureReportTestData.Create(0x0D, 0x02, [0x01, 0x01, 0x05, 0x00]),
+            PayloadDisposition.ProvenFeatureControl, 50.1));
+        session.AddMarker(new EvidenceMarker(100, probe, "special-key-m1", "M1 probe", EvidenceProvenance.UserReported));
+
+        var drafts = ContributionDraftBuilder.CreateDrafts(session.Snapshot());
+
+        Assert.Empty(drafts.Annotation.ActionWindows);
+        Assert.Equal(2, drafts.Annotation.ContextMarkers.Count);
+        Assert.Equal(1, drafts.Quality.Counts.UnassociatedControlObservations);
+        Assert.DoesNotContain(drafts.Quality.Gaps, item => item.Code == "IncompleteActionMarkers");
+    }
+
+    [Fact]
+    public void SettingStartWithoutTargetStillReportsIncompleteAction()
+    {
+        using var session = new EvidenceSession(SyntheticPreview.CreateInventory());
+        session.AddMarker(new EvidenceMarker(1, EvidenceMarkerKind.UserReportedStartingValue,
+            "performance", "Start", EvidenceProvenance.UserReported, "Balanced"));
+
+        var drafts = ContributionDraftBuilder.CreateDrafts(session.Snapshot());
+
+        Assert.False(Assert.Single(drafts.Annotation.ActionWindows).CompleteUserReportedSequence);
+        Assert.Contains(drafts.Quality.Gaps, item => item.Code == "IncompleteActionMarkers");
+    }
+
+    [Theory]
+    [InlineData(EvidenceMarkerKind.UserReportedCurrentState)]
+    [InlineData(EvidenceMarkerKind.SpecialKeyProbeStarted)]
+    public void ReportAndProbeMarkersRequireUserProvenance(EvidenceMarkerKind kind)
+    {
+        using var session = new EvidenceSession(SyntheticPreview.CreateInventory());
+        Assert.Equal(EvidenceAddResult.RejectedInvalid, session.AddMarker(new EvidenceMarker(
+            1, kind, "report", "Report", EvidenceProvenance.Observer)));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task WriteSnapshotAsync_ReturnsWhileDraftWorkIsBlockedAndObservesCancellation(bool cancel)
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"synapse-observer-tests-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        using var session = new EvidenceSession(SyntheticPreview.CreateInventory());
+        using var release = new ManualResetEventSlim();
+        using var cancellation = new CancellationTokenSource();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var returned = new TaskCompletionSource<Task>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var snapshot = session.Snapshot() with { Markers = new GatedMarkers(entered, release) };
+        var destination = Path.Combine(directory, "evidence.zip");
+        var caller = Task.Factory.StartNew(() =>
+        {
+            try { returned.SetResult(EvidenceBundleWriter.WriteSnapshotAsync(snapshot, destination, cancellation.Token)); }
+            catch (Exception error) { returned.SetException(error); }
+        }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            var export = await returned.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.False(export.IsCompleted);
+            if (cancel) cancellation.Cancel();
+            release.Set();
+            if (cancel)
+            {
+                await Assert.ThrowsAnyAsync<OperationCanceledException>(() => export);
+                Assert.False(File.Exists(destination));
+            }
+            else
+            {
+                await export;
+                Assert.True(File.Exists(destination));
+            }
+        }
+        finally
+        {
+            release.Set();
+            await caller;
+            if (returned.Task.IsCompletedSuccessfully)
+            {
+                try { await (await returned.Task); } catch (OperationCanceledException) { }
+            }
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task WriteAsync_FreezesSessionBeforeReturning()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"synapse-observer-tests-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            using var session = new EvidenceSession(SyntheticPreview.CreateInventory());
+            var destination = Path.Combine(directory, "evidence.zip");
+            var export = EvidenceBundleWriter.WriteAsync(session, destination);
+            session.AddMarker(new EvidenceMarker(1, EvidenceMarkerKind.ItemSkipped,
+                "after-export", "Added after export began", EvidenceProvenance.UserReported));
+            await export;
+            using var archive = ZipFile.OpenRead(destination);
+            using var manifest = await ReadJsonAsync(archive, "manifest.json");
+            Assert.DoesNotContain("after-export", manifest.RootElement.GetRawText(), StringComparison.Ordinal);
+        }
+        finally { Directory.Delete(directory, recursive: true); }
+    }
+
+    private sealed class GatedMarkers(TaskCompletionSource entered, ManualResetEventSlim release)
+        : IReadOnlyList<EvidenceMarker>
+    {
+        public int Count => 0;
+        public EvidenceMarker this[int index] => throw new ArgumentOutOfRangeException(nameof(index));
+        public IEnumerator<EvidenceMarker> GetEnumerator()
+        {
+            entered.TrySetResult();
+            if (!release.Wait(TimeSpan.FromSeconds(20))) throw new TimeoutException("Draft work was not released.");
+            return Enumerable.Empty<EvidenceMarker>().GetEnumerator();
+        }
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+    }
+
     private static async Task<JsonDocument> ReadJsonAsync(ZipArchive archive, string name)
     {
         var entry = Assert.Single(archive.Entries, item => item.FullName == name);

@@ -66,6 +66,10 @@ public sealed class SpecialKeyProbe : IDisposable
         candidates = inputCandidates.Where(SpecialKeyProbeParser.IsInputCandidate)
             .DistinctBy(c => c.InterfacePath, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(c => c.InterfacePath, StringComparer.OrdinalIgnoreCase);
+        foreach (var (aliasPath, candidate) in RawInputDeviceAliasResolver.ResolveKeyboardAliases(candidates.Values))
+        {
+            candidates.TryAdd(aliasPath, candidate);
+        }
         registrations = candidates.Values.Select(c => new RawInputDevice
         {
             UsagePage = c.UsagePage!.Value, Usage = c.Usage!.Value, Target = hwnd,

@@ -48,7 +48,12 @@ internal sealed partial class CollectorViewModel
         probeOrigin = RelativeMilliseconds;
         probingSpecialKey = true;
         specialKeyStatus = $"Press only {expectedSpecialKey} now. Keep this window active for five seconds. Ordinary typing is omitted.";
-        Marker(EvidenceMarkerKind.UserActionConfirmed, SpecialKeyActivity(expectedSpecialKey), "Special-key probe requested", EvidenceProvenance.UserReported);
+        if (!Marker(EvidenceMarkerKind.SpecialKeyProbeStarted, SpecialKeyActivity(expectedSpecialKey), "Special-key probe requested", EvidenceProvenance.UserReported))
+        {
+            probingSpecialKey = false;
+            RefreshSpecialKeyProbe();
+            return Task.CompletedTask;
+        }
         RefreshSpecialKeyProbe();
         try
         {
@@ -70,16 +75,14 @@ internal sealed partial class CollectorViewModel
         return Task.CompletedTask;
     }
 
-    private void CompleteSpecialKeyProbe(SpecialKeyProbeSummary summary)
+    internal void CompleteSpecialKeyProbe(SpecialKeyProbeSummary summary)
     {
         probingSpecialKey = false;
         if (session is not null)
         {
             session.AddSpecialKeyProbe(summary with { ProbeLabel = activeProbeLabel, RelativeMilliseconds = probeOrigin });
-            var state = summary.ObservationCount > 0 ? CoverageState.CompletedWithGaps : CoverageState.Unavailable;
-            session.SetCoverage(new CoverageItem(SpecialKeyActivity(summary.ExpectedKey), summary.ExpectedKey.ToString(),
-                state, summary.ObservationCount > 0 ? CoverageReason.None : CoverageReason.NoMatchingEvents));
-            Activities.FirstOrDefault(item => item.Id == SpecialKeyActivity(summary.ExpectedKey))?.SetState(state);
+            // A probe is separate evidence. It never replaces a declaration
+            // or treats missing input as proof that the key is unavailable.
         }
         specialKeyStatus = $"{summary.ExpectedKey}: {summary.ObservationCount} input observations · {summary.EndReason}. " +
             "The key check has finished. No signal does not prove that the key is unavailable.";

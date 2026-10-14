@@ -27,11 +27,14 @@ Each leaf is `NotInvestigated` or `Captured`, with references to the supporting
 Windows inventory, feature call, or prompted key observation.
 `Captured` identifies evidence to review. It does not mean the full range was
 captured or that a query, setter, restore path, lifecycle path, or production
-admission passed.
+admission passed. A setter acknowledgement read through GET_FEATURE does not
+create getter coverage; command identity distinguishes it from a query response.
 
 ## `annotation-draft.json`
 
 This file groups action markers and observations into bounded action windows.
+Current-state reports, skips, definitions, and probe intent remain separate
+`contextMarkers`; they do not create setting-change or restoration windows.
 It also keeps special-key probe summaries and observations. Its layer labels are
 `UserModeFeatureApi`, `WindowsRawInput`, and `WindowsInventory`.
 
@@ -62,7 +65,8 @@ with the JSON files when attaching the ZIP to a support request.
 - Feature reports are bounded to 4,096 bytes per observation, 4 MiB of retained
   bodies per session, 4,096 observations, and 16 KiB per native observer event.
 - The session accepts up to 512 markers and 128 guided coverage items. The
-  independent coverage draft still contains the complete maintained capability
+  Reaching the marker limit preserves earlier evidence, counts rejected markers,
+  and leaves stop/export available. The independent coverage draft still contains the complete maintained capability
   universe; it is not limited by the guided-item bound.
 - Special-key evidence is bounded to 256 observations, 32 observations per
   prompted probe, and 64 probe summaries.

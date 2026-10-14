@@ -292,7 +292,7 @@ public sealed class CollectorWorkflowTests
     [Theory]
     [InlineData(1)]
     [InlineData(4)]
-    public async Task AnotherRecordingStartsWithFreshPerformanceChoices(int skippedSteps)
+    public async Task AnotherRecordingPreservesSelectedPendingActivity(int skippedSteps)
     {
         var model = await RecordingAsync();
         for (var i = 0; i < skippedSteps; i++) await Run(model.SkipCommand);
@@ -302,12 +302,143 @@ public sealed class CollectorWorkflowTests
         model.AttachConsent = true;
         await Run(model.StartCommand);
         Assert.True(model.ShowStartingValue);
-        Assert.Contains("Performance mode", model.StepTitle);
-        Assert.Contains(model.StartingEntry.Choices, c => c.Label == "Balanced");
+        Assert.Equal(skippedSteps, model.SelectedActivityIndex);
+        Assert.Equal(CoverageState.Skipped, model.Activities[0].State);
         Assert.Null(model.StartingEntry.SelectedChoice);
         Assert.Null(model.ChangedEntry.SelectedChoice);
         Assert.Equal(string.Empty, model.StartingEntry.Details);
         Assert.False(model.MarkCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public async Task StartingRecordingPreservesSelectionAndEnteredState()
+    {
+        var model = new CollectorViewModel(true);
+        await Run(model.CollectCommand);
+        var selected = model.Activities.ToList().FindIndex(activity => activity.Id == "charge-limit");
+        model.SelectedActivityIndex = selected;
+        model.StartingSetting = "80%";
+        model.AttachConsent = true;
+        await Run(model.StartCommand);
+        Assert.Equal(selected, model.SelectedActivityIndex);
+        Assert.Equal("80%", model.StartingSetting);
+        Assert.Equal(CoverageState.Pending, model.Activities[0].State);
+        await Run(model.StopCommand);
+    }
+
+    [Theory]
+    [InlineData(0, SpecialKeyProbeEndReason.Timeout)]
+    [InlineData(1, SpecialKeyProbeEndReason.Timeout)]
+    [InlineData(0, SpecialKeyProbeEndReason.Unavailable)]
+    public async Task ProbeNeverOverwritesCompletedDeclaration(int observations, SpecialKeyProbeEndReason reason)
+    {
+        var model = new CollectorViewModel(true);
+        await Run(model.CollectCommand);
+        var selected = model.Activities.ToList().FindIndex(activity => activity.Id == "special-key-m1");
+        model.SelectedActivityIndex = selected;
+        model.StartingSetting = "Opens Calculator";
+        await Run(model.MarkCommand);
+        typeof(CollectorViewModel).GetField("activeProbeLabel", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.SetValue(model, "probe-001");
+        model.CompleteSpecialKeyProbe(new(SpecialKeyExpectedKey.M1, SpecialKeyModeContext.Unknown, reason, observations, 0, 0, ""));
+        var coverage = Assert.Single(model.Evidence!.Coverage, item => item.ActivityId == "special-key-m1");
+        Assert.Equal(CoverageState.Completed, coverage.State);
+        Assert.Equal(model.Activities[selected].Title, coverage.Label);
+        Assert.Single(model.Evidence.SpecialKeyProbes);
+        Assert.Equal(EvidenceMarkerKind.UserReportedCurrentState, Assert.Single(model.Evidence.Markers, item => item.ActivityId == "special-key-m1").Kind);
+    }
+
+    [Fact]
+    public async Task NoInputProbeLeavesUnreportedDeclarationPending()
+    {
+        var model = new CollectorViewModel(true);
+        await Run(model.CollectCommand);
+        typeof(CollectorViewModel).GetField("activeProbeLabel", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.SetValue(model, "probe-001");
+        model.CompleteSpecialKeyProbe(new(SpecialKeyExpectedKey.M1, SpecialKeyModeContext.Unknown, SpecialKeyProbeEndReason.Timeout, 0, 0, 0, ""));
+        Assert.Equal(CoverageState.Pending, Assert.Single(model.Evidence!.Coverage, item => item.ActivityId == "special-key-m1").State);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    public async Task StopAndCloseJoinOneCleanupAndContinuePollingWhileStopping(int failure)
+    {
+        var model = await RecordingAsync();
+        var observer = new GatedOwnedObserver(failure: failure);
+        model.SetOwnedTestObserver(observer, startPump: true);
+        model.StopCommand.Execute(null);
+        await observer.StopEntered.Task;
+        var close = model.CloseAsync();
+        Assert.False(close.IsCompleted);
+        await observer.PolledDuringStop.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        observer.ReleaseStop.SetResult();
+        await Task.WhenAll(close, model.StopCommand.CurrentExecution);
+        Assert.Equal(1, observer.Stops);
+        Assert.Equal(1, observer.Disposals);
+        Assert.Equal(1, observer.MaximumConcurrentPolls);
+        Assert.Single(model.Evidence!.Markers, item => item.Kind == EvidenceMarkerKind.RecordingStopped);
+        Assert.Equal(failure != 0, model.Status.Contains("ended with a gap"));
+    }
+
+    [Fact]
+    public async Task MarkerQuotaDoesNotFaultPumpOrPreventFinalDrain()
+    {
+        var model = await RecordingAsync();
+        var session = (EvidenceSession)typeof(CollectorViewModel).GetField("session", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(model)!;
+        while (session.Snapshot().Markers.Count < EvidenceLimits.MaxMarkers)
+            Assert.Equal(EvidenceAddResult.Added, session.AddMarker(new(0, EvidenceMarkerKind.Failure, "owned-fixture", "Owned quota fixture", EvidenceProvenance.Collector)));
+        model.StartingSetting = "Balanced";
+        await Run(model.MarkCommand);
+        Assert.True(model.ShowStartingValue);
+        Assert.Contains("session is full", model.Status);
+        var observer = new GatedOwnedObserver(dropped: 1);
+        model.SetOwnedTestObserver(observer, startPump: true);
+        model.StopCommand.Execute(null);
+        await observer.PolledDuringStop.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        observer.ReleaseStop.SetResult();
+        await model.StopCommand.CurrentExecution;
+        Assert.Equal(1, observer.Stops);
+        Assert.Equal(1, observer.Disposals);
+        Assert.True(model.Evidence!.RejectedMarkerCount >= 3);
+        Assert.Contains("1 recording gaps", model.ObservationSummary);
+        Assert.DoesNotContain("ended with a gap", model.Status);
+        Assert.Contains("action-marker limit", model.CollectionDetails);
+    }
+
+    private sealed class GatedOwnedObserver(int dropped = 0, int failure = 0) : INativeObservationSession
+    {
+        public TaskCompletionSource StopEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource ReleaseStop { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource PolledDuringStop { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public int Stops { get; private set; }
+        public int Disposals { get; private set; }
+        public int MaximumConcurrentPolls { get; private set; }
+        private int polling;
+        private bool finished;
+        public long OriginTimestampTicks => System.Diagnostics.Stopwatch.GetTimestamp();
+        public NativeSessionStatus GetStatus() => new(true, finished, 0, dropped, "Owned stop fixture");
+        public async Task<IReadOnlyList<NativeObservationEvent>> PollAsync(CancellationToken cancellationToken = default)
+        {
+            MaximumConcurrentPolls = Math.Max(MaximumConcurrentPolls, Interlocked.Increment(ref polling));
+            try
+            {
+                if (Stops > 0 && !finished) PolledDuringStop.TrySetResult();
+                await Task.Yield();
+                return [];
+            }
+            finally { Interlocked.Decrement(ref polling); }
+        }
+        public async Task<NativeSessionStatus> StopAsync(CancellationToken cancellationToken = default)
+        {
+            Stops++;
+            StopEntered.TrySetResult();
+            await ReleaseStop.Task;
+            if (failure == 1) throw new System.IO.IOException("Owned stop failure");
+            if (failure == 2) throw new OperationCanceledException("Owned stop cancellation");
+            finished = true;
+            return GetStatus();
+        }
+        public ValueTask DisposeAsync() { Disposals++; return ValueTask.CompletedTask; }
     }
 
     private static async Task<CollectorViewModel> RecordingAsync()

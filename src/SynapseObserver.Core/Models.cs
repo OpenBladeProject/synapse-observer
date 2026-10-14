@@ -124,6 +124,8 @@ public enum EvidenceMarkerKind
     ItemSkipped,
     Failure,
     CancellationRequested,
+    UserReportedCurrentState,
+    SpecialKeyProbeStarted,
 }
 
 public enum EvidenceProvenance

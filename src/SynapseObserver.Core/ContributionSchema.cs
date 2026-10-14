@@ -24,6 +24,7 @@ public enum ContributionObservationRole
     FeatureQueryRequest,
     FeatureQueryResponse,
     UnclassifiedFeatureCall,
+    FeatureSetResponse,
 }
 
 public sealed record ContributionEvidenceReference(
@@ -89,6 +90,10 @@ public sealed record ContributionSpecialKeyDraft(
     ContributionObservationLayer Layer,
     SpecialKeyObservation Observation);
 
+public sealed record ContributionContextMarkerDraft(
+    string ActivityId,
+    ContributionMarkerDraft Marker);
+
 public sealed record ContributionAnnotationDraft(
     string SchemaVersion,
     string SourceSessionSchemaVersion,
@@ -99,6 +104,8 @@ public sealed record ContributionAnnotationDraft(
     string EvidenceBoundary)
 {
     public const string CurrentSchemaVersion = "synapse-observer.annotation-draft.v1";
+
+    public IReadOnlyList<ContributionContextMarkerDraft> ContextMarkers { get; init; } = [];
 }
 
 public sealed record ContributionQualityCounts(

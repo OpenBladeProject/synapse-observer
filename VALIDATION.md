@@ -132,6 +132,44 @@ small difference is Windows' outside resize border. The window fills the work
 area instead of being limited to 640 pixels. No Synapse attachment or input
 probe occurred during these layout checks.
 
+## Claude review corrections, 2026-10-14
+
+Claude reviewed source `433f413b3bda034def84c380180a700413fa3adb` (0.2.1)
+and reported ten defects. Each was independently checked against source or an
+owned fixture. Version 0.2.2 fixes all ten; no second Claude approval is claimed.
+
+- HID and keyboard-class Raw Input paths resolve through exact SetupAPI device
+  instance identity. A read-only check on this laptop found two selected Blade
+  keyboard HID candidates, two verified keyboard aliases, and two matching Raw
+  Input keyboard names. No input was registered or read, and no paths exported.
+- USB ancestry retains the nearest matching physical laptop parent through hubs.
+- Setter acknowledgements received through GET_FEATURE remain setter responses;
+  thermal, battery, and brightness ACKs do not establish getter coverage.
+- Concurrent Stop and Close join one cleanup. Polling continues during native
+  stopping, with one final drain after the reader has joined. Owned tests cover
+  success, failure, cancellation, and a full marker quota.
+- Full marker sessions count rejected markers and keep stop/export available.
+  Rejected user actions do not advance the guide. Starting a recording preserves
+  the chosen pending activity and entered state.
+- Key-probe results preserve user declarations and leave unreported key behavior
+  pending. Current-state reports, skips, definitions, and probe intent remain
+  context markers rather than incomplete setting/restoration windows.
+- Shared-ring pressure keeps events in the larger engine queue. The owned native
+  fixture passes a 128-event completed-response burst through the actual 32-slot
+  shared drain during stop without additional loss. A missing consumer verifies
+  the one-second bound and explicitly counted loss. The actual DLL fixture also
+  passes its owned startup/stop handshake; no device calls occur in either test.
+- Export freezes the session, prepares drafts and JSON off the caller thread,
+  and reuses action windows across drafts. A deterministic blocked-work fixture
+  verifies that the caller returns while preparation is still pending; another
+  verifies cancellation leaves no destination ZIP.
+
+All 338 Release managed tests pass (Core 217, Backend 55, App 66), along with
+both native owned-process fixtures. Native dependency warnings remain visible.
+These corrections do not extend the earlier live thermal trial to lighting,
+logo, key probes, other Blade models, or the revised native drain. The final
+package source revision and executable hash are recorded in build-manifest.json.
+
 ## Pending before public release
 
 - Typed setting-change response payloads: the observed returned bodies remain

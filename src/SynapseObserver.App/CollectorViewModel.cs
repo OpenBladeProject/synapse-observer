@@ -23,6 +23,8 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
     private INativeObservationSession? observer;
     private CancellationTokenSource? pumpCancellation;
     private Task? pump;
+    private Task? stopTask;
+    private bool closing;
     private double observerOrigin;
     private int stepStartCount;
     private int observedCalls;
@@ -53,10 +55,10 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
         ChangedEntry.Reset(0);
         StartingEntry.PropertyChanged += (_, _) => RefreshCommands();
         ChangedEntry.PropertyChanged += (_, _) => RefreshCommands();
-        CollectCommand = new AsyncCommand(() => GuardAsync(CollectAsync), () => !busy && !collecting && !recording && !IsProbingSpecialKey);
-        StartCommand = new AsyncCommand(() => GuardAsync(StartAsync), () => !busy && !IsProbingSpecialKey && HasInventory && consent && !recording && (preview || backendCandidate is not null));
-        StopCommand = new AsyncCommand(() => GuardAsync(StopAsync), () => recording);
-        MarkCommand = new AsyncCommand(() => GuardAsync(MarkAsync), () => !busy && !IsProbingSpecialKey && HasInventory && HasCurrentStep
+        CollectCommand = new AsyncCommand(() => GuardAsync(CollectAsync), () => !closing && !busy && !collecting && !recording && !IsProbingSpecialKey);
+        StartCommand = new AsyncCommand(() => GuardAsync(StartAsync), () => !closing && !busy && !IsProbingSpecialKey && HasInventory && consent && !recording && (preview || backendCandidate is not null));
+        StopCommand = new AsyncCommand(() => GuardAsync(StopAsync), () => recording && !busy && !closing);
+        MarkCommand = new AsyncCommand(() => GuardAsync(MarkAsync), () => !closing && !busy && !IsProbingSpecialKey && HasInventory && HasCurrentStep
             && (CurrentActivity.IsReadOnly || (recording && !observerEnded))
             && (stepPhase == 2 || (stepPhase == 0 ? StartingEntry.HasValue : ChangedEntry.HasValue)));
         SkipCommand = new AsyncCommand(() => GuardAsync(() => SkipAsync(false)), () => CanSelectActivity && HasCurrentStep);
@@ -76,17 +78,22 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
     public bool IsCollecting => collecting;
     public bool IsBusy => busy;
     internal EvidenceSessionSnapshot? Evidence => session?.Snapshot();
-    internal void SetOwnedTestObserver(INativeObservationSession syntheticObserver, IReadOnlyList<LocalHidCandidate>? syntheticCandidates = null)
+    internal void SetOwnedTestObserver(INativeObservationSession syntheticObserver, IReadOnlyList<LocalHidCandidate>? syntheticCandidates = null, bool startPump = false)
     {
         observer = syntheticObserver;
         if (syntheticCandidates is not null) controlCandidates = syntheticCandidates;
+        if (startPump)
+        {
+            pumpCancellation = new CancellationTokenSource();
+            pump = PumpAsync(pumpCancellation.Token);
+        }
     }
     public bool HasInventory => session is not null;
     public bool ShowInventoryScreen => !HasInventory;
     public bool ShowExport => HasInventory && !recording;
     public bool IsRecording => recording;
     public bool HasCurrentStep => step >= 0 && step < Activities.Count;
-    public bool CanSelectActivity => HasInventory && !busy && !IsProbingSpecialKey && (!recording || !observerEnded) && stepPhase == 0;
+    public bool CanSelectActivity => !closing && HasInventory && !busy && !IsProbingSpecialKey && (!recording || !observerEnded) && stepPhase == 0;
     public int SelectedActivityIndex
     {
         get => HasCurrentStep ? step : -1;
@@ -253,6 +260,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
                 observerOrigin = (observer.OriginTimestampTicks - sessionOriginTicks) * 1000.0 / Stopwatch.Frequency;
             }
 
+            stopTask = null;
             recording = true;
             observerEnded = false;
         }
@@ -262,11 +270,10 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
             Refresh();
         }
 
-        step = 0;
-        stepPhase = 0;
-        startingSetting = string.Empty;
-        StartingEntry.Reset(0);
-        ChangedEntry.Reset(0);
+        if (!HasCurrentStep || CurrentActivity.State != CoverageState.Pending)
+        {
+            NextStep();
+        }
         Marker(EvidenceMarkerKind.RecordingStarted, "session", "Recording started", EvidenceProvenance.Observer);
         recorderStatus = preview ? "Recording selected laptop feature calls. Preview data only." : "Recording feature calls for this laptop. Change one setting at a time in Synapse.";
         if (observer is not null)
@@ -282,7 +289,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
     {
         if (CurrentActivity.IsReadOnly)
         {
-            Marker(EvidenceMarkerKind.UserReportedStartingValue, CurrentActivity.Id, "User reported current state or known behavior", EvidenceProvenance.UserReported, StartingEntry.Value);
+            if (!Marker(EvidenceMarkerKind.UserReportedCurrentState, CurrentActivity.Id, "User reported current state or known behavior", EvidenceProvenance.UserReported, StartingEntry.Value)) return Task.CompletedTask;
             SetCurrentCoverage(CoverageState.Completed, CoverageReason.None);
             NextStep();
             Refresh();
@@ -292,20 +299,20 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
         if (stepPhase == 0)
         {
             startingSetting = StartingEntry.Value;
-            Marker(EvidenceMarkerKind.UserReportedStartingValue, CurrentActivity.Id, "Starting setting reported", EvidenceProvenance.UserReported, startingSetting);
+            if (!Marker(EvidenceMarkerKind.UserReportedStartingValue, CurrentActivity.Id, "Starting setting reported", EvidenceProvenance.UserReported, startingSetting)) return Task.CompletedTask;
             stepStartCount = observedCalls;
             stepStartGaps = gaps;
             stepPhase = 1;
         }
         else if (stepPhase == 1)
         {
-            Marker(EvidenceMarkerKind.UserReportedTargetValue, CurrentActivity.Id, "Changed setting reported", EvidenceProvenance.UserReported, ChangedEntry.Value);
-            Marker(EvidenceMarkerKind.UserActionConfirmed, CurrentActivity.Id, "User marked the setting change", EvidenceProvenance.UserReported);
+            if (!Marker(EvidenceMarkerKind.UserReportedTargetValue, CurrentActivity.Id, "Changed setting reported", EvidenceProvenance.UserReported, ChangedEntry.Value)) return Task.CompletedTask;
+            if (!Marker(EvidenceMarkerKind.UserActionConfirmed, CurrentActivity.Id, "User marked the setting change", EvidenceProvenance.UserReported)) return Task.CompletedTask;
             stepPhase = 2;
         }
         else
         {
-            Marker(EvidenceMarkerKind.UserReportedRestoration, CurrentActivity.Id, "User reported restoration of starting setting", EvidenceProvenance.UserReported, startingSetting);
+            if (!Marker(EvidenceMarkerKind.UserReportedRestoration, CurrentActivity.Id, "User reported restoration of starting setting", EvidenceProvenance.UserReported, startingSetting)) return Task.CompletedTask;
             SetCurrentCoverage(observedCalls > stepStartCount && gaps == stepStartGaps ? CoverageState.Completed : CoverageState.CompletedWithGaps,
                 observedCalls <= stepStartCount ? CoverageReason.NoMatchingEvents : gaps > stepStartGaps ? CoverageReason.CaptureFailed : CoverageReason.None);
             NextStep();
@@ -317,7 +324,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
 
     private Task SkipAsync(bool unavailable)
     {
-        Marker(EvidenceMarkerKind.ItemSkipped, CurrentActivity.Id, unavailable ? "User reported this item unavailable" : "User skipped this item", EvidenceProvenance.UserReported);
+        if (!Marker(EvidenceMarkerKind.ItemSkipped, CurrentActivity.Id, unavailable ? "User reported this item unavailable" : "User skipped this item", EvidenceProvenance.UserReported)) return Task.CompletedTask;
         SetCurrentCoverage(unavailable ? CoverageState.Unavailable : CoverageState.Skipped, CoverageReason.UserSkipped);
         NextStep();
         Refresh();
@@ -346,23 +353,23 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
         ChangedEntry.Reset(step);
     }
 
-    private async Task StopAsync()
+    private Task StopAsync() => stopTask ??= StopCoreAsync();
+
+    private async Task StopCoreAsync()
     {
+        busy = true;
+        Refresh();
         NativeSessionStatus? nativeStatus = null;
         Exception? stopFailure = null;
         try
         {
             if (observer is not null)
             {
-                // Stop the single reader before the final drain, preserving a
-                // response completed while native hooks were being disabled.
-                pumpCancellation?.Cancel();
-                if (pump is not null)
-                {
-                    await pump;
-                }
-
+                // Keep the one reader running while native hooks stop and the
+                // engine queue drains into the smaller shared ring.
                 nativeStatus = await observer.StopAsync();
+                pumpCancellation?.Cancel();
+                if (pump is not null) await pump;
                 await PollOnceAsync();
             }
         }
@@ -374,6 +381,12 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
         }
         finally
         {
+            pumpCancellation?.Cancel();
+            if (pump is not null)
+            {
+                try { await pump; }
+                catch (Exception ex) when (ex is not OutOfMemoryException and not StackOverflowException) { stopFailure ??= ex; }
+            }
             if (observer is not null)
             {
                 try
@@ -392,6 +405,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
             pumpCancellation = null;
             pump = null;
             recording = false;
+            busy = false;
             consent = false;
             backendCandidate = null;
 
@@ -438,7 +452,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
                 {
                     observerEnded = true;
                     recorderStatus = "The native observer has stopped. Restore the starting setting in Synapse if needed, then stop and save this session.";
-                    Marker(EvidenceMarkerKind.RecordingStopped, "observer", "Native observer reached its bounded lifetime", EvidenceProvenance.Observer);
+                    // StopCoreAsync owns the single RecordingStopped marker.
                     status = "The recording time limit was reached. Stop and save the evidence. Restore the starting setting in Synapse if this step is unfinished.";
                     Refresh();
                     return;
@@ -579,6 +593,8 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
 
     public async Task CloseAsync()
     {
+        closing = true;
+        RefreshCommands();
         await CollectCommand.CurrentExecution;
         await StartCommand.CurrentExecution;
         await SaveCommand.CurrentExecution;
@@ -589,12 +605,21 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
         session?.Dispose();
     }
 
-    private void Marker(EvidenceMarkerKind kind, string activity, string label, EvidenceProvenance provenance, string? value = null)
+    private bool Marker(EvidenceMarkerKind kind, string activity, string label, EvidenceProvenance provenance, string? value = null)
     {
-        if (session?.AddMarker(new EvidenceMarker(RelativeMilliseconds, kind, activity, label, provenance, value)) is EvidenceAddResult.RejectedInvalid or EvidenceAddResult.RejectedLimit)
+        var result = session?.AddMarker(new EvidenceMarker(RelativeMilliseconds, kind, activity, label, provenance, value));
+        if (result == EvidenceAddResult.RejectedInvalid)
         {
             throw new InvalidDataException("The marker was rejected. Use a short setting value without personal details or paths.");
         }
+        if (result == EvidenceAddResult.RejectedLimit)
+        {
+            retentionGapDetails = $"The session reached its {EvidenceLimits.MaxMarkers} action-marker limit. Further markers are counted as rejected in the ZIP. Stop and save this evidence, then reopen the collector to report more items.";
+            status = "This action could not be recorded because the session is full. Stop and save the evidence.";
+            Refresh();
+            return false;
+        }
+        return result == EvidenceAddResult.Added;
     }
 
     private async Task GuardAsync(Func<Task> operation)
