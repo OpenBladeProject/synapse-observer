@@ -17,6 +17,12 @@
 
 ### Fixed
 
+- Count drops correctly across successive recordings, show cleanup failures in
+  the gap total, and keep exact restoration instructions after polling failure
+  ([#2](https://github.com/OpenBladeProject/synapse-observer/pull/2)).
+- Identify native buffer-copy and size loss separately from privacy redaction
+  in the quality receipt ([#2](https://github.com/OpenBladeProject/synapse-observer/pull/2)).
+
 - Preserve reviewed successful HID responses while labeling unknown returned
   lengths separately; distinguish observed API failures from recording loss
   ([#2](https://github.com/OpenBladeProject/synapse-observer/pull/2)).

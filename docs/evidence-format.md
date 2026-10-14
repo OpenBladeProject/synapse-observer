@@ -75,7 +75,11 @@ never replaces an earlier report or marks the declared key unavailable.
 
 Queues, report bodies, record counts, text, and total manifest size are bounded.
 Omitted payloads, rejected records, queue loss, and incomplete restoration remain
-visible. ZIP writing uses a private temporary file and an atomic final rename;
+visible. Native drop counters restart with each recording, while session loss
+and earlier evidence remain accumulated. A native failure contributes one gap
+whether polling or stop first detects it. If polling fails during a setting
+change, status and step instructions retain the exact starting-setting reminder.
+ZIP writing uses a private temporary file and an atomic final rename;
 closing the GUI waits for an active export to complete. Export freezes the session
 before dispatching draft preparation and serialization off the UI thread. All
 draft files share one set of action windows. Concurrent stop and close join one

@@ -48,7 +48,9 @@ The receipt counts captured and not-investigated coverage leaves, inventory
 gaps, complete action windows, reviewed reports, redacted bodies, unassociated
 observations, special-key observations, and rejected records. It distinguishes
 `ObservedApiFailure`, `CompletionNotObserved`, and the informational
-`ReturnedLengthNotProvided` caveat. An observed API failure is independent of
+`ReturnedLengthNotProvided` caveat. `CapturePayloadLoss` identifies native
+unreadable-buffer or bounded-size copy loss, including when the API succeeded;
+it remains separate from deliberate privacy redaction. An observed API failure is independent of
 collector data loss. It names partial,
 skipped, unavailable, failed, cancelled,
 redacted, and incomplete results. It also records the maintainer stages still

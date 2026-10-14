@@ -30,6 +30,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
     private int observedCalls;
     private int failedCalls;
     private bool stopping;
+    private bool nativeFailureGapCounted;
     private int gaps;
     private int droppedEvents;
     private int stepStartGaps;
@@ -125,12 +126,16 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
     public string StepInstructions => HasCurrentStep
         ? CurrentActivity.IsReadOnly ? "Report the current state or behavior you have already observed. Save the report without changing a setting."
         : !recording ? "Start recording before changing this setting, or choose a current-state report to continue without recording."
+        : observerEnded ? stepPhase > 0
+            ? $"Restore the starting setting: {startingSetting}. Then stop recording and save the partial evidence."
+            : "The observer has stopped. Stop recording and save the evidence."
         : stepPhase == 0 ? "Select the setting currently shown. Then begin this step."
         : stepPhase == 1 ? "Change one available setting in its usual controls. Select its new value below, then mark the change."
         : $"Restore the starting setting: {startingSetting}. Mark restoration after the controls show that value."
         : "Stop recording and save the evidence ZIP.";
     public string StepStatus => !HasCurrentStep ? "Your setting changes and restoration markers are recorded." : CurrentActivity.IsReadOnly ? "This is your report, not a hardware measurement or firmware confirmation."
         : !recording ? "Current-state reports are available without observing Synapse. Setting changes need a recording."
+        : observerEnded ? "This recording has ended. Stop and save the evidence after restoring any unfinished setting."
         : stepPhase == 0 ? "Examples are suggestions, not confirmed support. Skip or mark unavailable if needed."
         : stepPhase == 1 ? "The collector observes Synapse. It does not change a setting for you."
         : "Restoration will be recorded as your observation of the displayed setting.";
@@ -263,6 +268,10 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
             }
 
             stopTask = null;
+            // Native counters belong to each observer instance; session evidence
+            // and accumulated loss remain intact across successive recordings.
+            droppedEvents = 0;
+            nativeFailureGapCounted = false;
             recording = true;
             observerEnded = false;
         }
@@ -400,6 +409,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
                 }
                 catch (Exception ex) when (ex is not OutOfMemoryException and not StackOverflowException)
                 {
+                    if (stopFailure is null) gaps++;
                     stopFailure ??= ex;
                 }
 
@@ -423,6 +433,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
 
             session?.AddMarker(new EvidenceMarker(RelativeMilliseconds, EvidenceMarkerKind.RecordingStopped, "session", "Recording stopped", EvidenceProvenance.Observer));
             recorderStatus = nativeStatus?.Diagnostic ?? "Recording stopped. Gaps and user-reported restoration remain labeled in the evidence.";
+            if (nativeStatus is { Failure: not 0 }) CountNativeFailureGap();
             if (nativeStatus is { Failure: not 0 } || stopFailure is not null)
             {
                 session?.AddMarker(new EvidenceMarker(RelativeMilliseconds, EvidenceMarkerKind.Failure, "observer", "Recording cleanup has a gap", EvidenceProvenance.Observer));
@@ -433,10 +444,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
                 status = "Recording stopped. Save the evidence ZIP when ready.";
             }
 
-            if (unfinished)
-            {
-                status = $"Restore {startingSetting} in Synapse before leaving this setting. " + status;
-            }
+            status = WithRestorationReminder(status);
 
             // Preserve the incomplete-restoration evidence and reminder, but
             // permit subsequent inventory-only reports after recording ends.
@@ -463,7 +471,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
                     {
                         if (nativeStatus.Failure != 0)
                         {
-                            gaps++;
+                            CountNativeFailureGap();
                             Marker(EvidenceMarkerKind.Failure, "observer", "Native observer failed", EvidenceProvenance.Observer);
                             recorderStatus = nativeStatus.Diagnostic;
                             status = "The observer encountered an error. Stop and save the partial evidence; restart Synapse manually before another recording.";
@@ -473,8 +481,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
                             recorderStatus = "The native observer reached the recording time limit.";
                             status = "The recording time limit was reached. Stop and save the evidence.";
                         }
-                        if (HasCurrentStep && stepPhase > 0)
-                            status = $"Restore {startingSetting} in Synapse before leaving this setting. " + status;
+                        status = WithRestorationReminder(status);
                         // StopCoreAsync owns the single RecordingStopped marker.
                         Refresh();
                     }
@@ -493,9 +500,20 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
             observerEnded = true;
             gaps++;
             Marker(EvidenceMarkerKind.Failure, "observer", "Observer polling failed", EvidenceProvenance.Observer, ex.GetType().Name);
-            status = "Recording encountered a gap. Stop recording and save the partial evidence.";
+            status = WithRestorationReminder("Recording encountered a gap. Stop recording and save the partial evidence.");
             Refresh();
         }
+    }
+
+    private string WithRestorationReminder(string message) => HasCurrentStep && stepPhase > 0
+        ? $"Restore {startingSetting} in Synapse before leaving this setting. " + message
+        : message;
+
+    private void CountNativeFailureGap()
+    {
+        if (nativeFailureGapCounted) return;
+        nativeFailureGapCounted = true;
+        gaps++;
     }
 
     private async Task PollOnceAsync()
@@ -569,7 +587,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
         var visibleStateChanged = batch.Count > 0;
         if (dropped > droppedEvents)
         {
-            collectionDetails = $"{dropped} events were dropped by the bounded observer queue. Completed-call observations cannot establish firmware application. Pending asynchronous completions were not observed.";
+            collectionDetails = $"{dropped} events were dropped by the bounded observer queue during this recording. Completed-call observations cannot establish firmware application. Pending asynchronous completions were not observed.";
             visibleStateChanged = true;
             gaps += dropped - droppedEvents;
             droppedEvents = dropped;

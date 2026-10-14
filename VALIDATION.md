@@ -201,6 +201,33 @@ No new vendor-process attachment, device command, or keyboard input recording
 occurred. Earlier live thermal results remain limited to their recorded sources.
 The final package source revision and executable hash are in build-manifest.json.
 
+## Recording-lifetime and copy-loss corrections, 2026-10-14
+
+Claude's completed Opus high review of `d904655...f6275b6` produced three confirmed
+runtime issues and one narrower receipt diagnostic issue. Version 0.2.4 corrects
+those four findings. The newly requested review runs against the committed fixes;
+its outcome is recorded separately with the exact revision in the PR description.
+
+Owned regressions verify that recordings dropping five then three events produce
+eight session gaps, preserve both drop markers and earlier evidence, and label
+the second changed activity CaptureFailed. Each recording gets a fresh native
+counter baseline while accumulated evidence remains intact. Manual and autonomous
+native failures each add one gap; stop after autonomous failure does not count
+it again, and a new recording can count its own failure. Dispose failure is also
+visible in the cleanup gap total.
+
+Polling failure in both change and restoration phases preserves the exact saved
+baseline in status and instructions, removes the obsolete change/mark prompt,
+and keeps Mark disabled until the recording is stopped. The quality receipt's
+CapturePayloadLoss code identifies unreadable-buffer and buffer-exceeds-limit
+without confusing API failure, returned-length uncertainty, pending completion,
+or privacy-only redaction. A ZIP regression checks that the code is exported.
+
+All 378 Release tests pass (Core 241, Backend 55, App 82). The package build also
+runs both unchanged native owned-process fixtures. No new live attachment,
+setting change, input recording, or physical-model validation occurred. Package
+revision and hashes remain in build-manifest.json.
+
 ## Pending before public release
 
 - Typed setting-change response payloads: the observed returned bodies remain

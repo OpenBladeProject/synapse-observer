@@ -897,6 +897,15 @@ public static class ContributionDraftBuilder
                 "One or more control observations could not be associated with a prompted action window."));
         }
 
+        if (snapshot.Observations.Any(static item =>
+                item.ErrorCategory is "unreadable-buffer" or "buffer-exceeds-limit"))
+        {
+            gaps.Add(new ContributionQualityGap(
+                "observations",
+                "CapturePayloadLoss",
+                "One or more native observations could not retain a call payload because the source buffer was unreadable or exceeded the bounded copy limit."));
+        }
+
         if (snapshot.Observations.Any(static item => !item.CompletePayloadRetained))
         {
             gaps.Add(new ContributionQualityGap(
