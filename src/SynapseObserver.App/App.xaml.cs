@@ -16,7 +16,8 @@ public partial class App : Application
             try
             {
                 var inventory = await Task.Run(() => new InventoryCollector().CollectAsync());
-                await EvidenceBundleWriter.WriteAsync(new EvidenceSession(inventory), Path.GetFullPath(e.Args[exportIndex + 1]));
+                using var session = new EvidenceSession(inventory);
+                await EvidenceBundleWriter.WriteAsync(session, Path.GetFullPath(e.Args[exportIndex + 1]));
                 Shutdown(0);
             }
             catch (Exception ex) when (ex is not OutOfMemoryException and not StackOverflowException)

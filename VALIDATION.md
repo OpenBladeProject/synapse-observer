@@ -89,6 +89,32 @@ renders cover inventory, recording, Custom details, and the narrow window;
 keyboard navigation, disabled states, and automatic Save-card visibility were
 checked in the real preview without attaching to Synapse.
 
+## Expanded support collection, 2026-10-14
+
+Version 0.2.0 adds the full-support requirements catalog, 42 guided activities,
+reviewed lighting and keyboard report grammars, prompted special-key input,
+Windows support inventory, and the schema-v2 contribution ZIP. Synthetic
+regressions exercise complete frame retention, unknown-buffer privacy, bounds,
+ordinary-typing exclusion, duplicate request/response operation IDs, ordered
+and repeated action windows, and conservative feature coverage.
+
+An inventory-only run on the RZ09-0581 collected ten Blade HID descriptor
+records, six driver ancestry records, two graphics adapters, one internal panel,
+brightness, and Windows/CPU details. Windows returned HDR capability and active
+color state, DRR state, and available display modes. Thermal zones, LampArrays,
+and running Synapse provenance were absent during this run; EC/MCU commands,
+current LampArray frames, VRR range, and unreviewed report bodies remain explicit
+gaps. A null WMI thermal row exposed a collection fault; the fix skips null rows
+and isolates each support section so a failed section preserves earlier data.
+
+The saved local ZIP has five entries and 170 coverage leaves. It contains no
+feature observations or special-key events from this inventory-only run.
+Disconnected renders cover the dark OpenBlade palette, branding, version badge,
+activity picker, Custom details, and narrow width. These checks did not attach
+to Synapse or change laptop settings. Lighting, logo, keyboard mode, M/Fn input,
+and the additional tuning workflows still need contributor or attended trials;
+previous thermal trials do not validate them or other Blade models.
+
 ## Pending before public release
 
 - Typed setting-change response payloads: the observed returned bodies remain

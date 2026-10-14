@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.IO;
 using System.Windows;
 using System.Windows.Media;
+using System.Windows.Interop;
 using System.Windows.Media.Imaging;
 
 namespace SynapseObserver.App;
@@ -11,6 +12,7 @@ public partial class MainWindow : Window
     private readonly CollectorViewModel viewModel;
     private bool closing;
     private bool wasRecording;
+    private SpecialKeyProbe? specialKeyProbe;
 
     public MainWindow(bool preview)
     {
@@ -18,6 +20,18 @@ public partial class MainWindow : Window
         viewModel = new CollectorViewModel(preview);
         DataContext = viewModel;
         Closing += HandleClosing;
+        SourceInitialized += (_, _) =>
+        {
+            if (preview) return;
+            specialKeyProbe = new SpecialKeyProbe(new WindowInteropHelper(this).Handle);
+            viewModel.ConfigureSpecialKeyProbe(specialKeyProbe, () => IsActive && IsEnabled);
+        };
+        Deactivated += (_, _) => viewModel.CancelSpecialKeyProbe();
+        Closed += async (_, _) =>
+        {
+            specialKeyProbe?.Dispose();
+            await viewModel.CloseAsync();
+        };
         viewModel.PropertyChanged += (_, _) =>
         {
             var finished = wasRecording && !viewModel.IsRecording;
@@ -61,6 +75,7 @@ public partial class MainWindow : Window
 
     private async void HandleClosing(object? sender, CancelEventArgs e)
     {
+        viewModel.CancelSpecialKeyProbe();
         if (closing || (!viewModel.IsRecording && !viewModel.IsBusy))
         {
             return;

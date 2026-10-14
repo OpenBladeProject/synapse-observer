@@ -38,24 +38,17 @@ internal sealed class SettingEntry : INotifyPropertyChanged
         : ShowDetails && !string.IsNullOrWhiteSpace(details) ? $"{selectedChoice.Label}: {details.Trim()}"
         : selectedChoice.Label;
     public bool HasValue => selectedChoice is not null && (!ShowDetails || !string.IsNullOrWhiteSpace(details)) && Value.Length <= 80;
-    public string ValidationHint => selectedChoice is null ? "Choose the setting shown in Synapse."
-        : ShowDetails && string.IsNullOrWhiteSpace(details) ? "Add the details shown in Synapse."
+    public string ValidationHint => selectedChoice is null ? "Choose the current setting or observed state."
+        : ShowDetails && string.IsNullOrWhiteSpace(details) ? "Add the displayed value or observed details."
         : Value.Length > 80 ? "Keep the setting and details within 80 characters."
         : string.Empty;
 
     public void Reset(int activity)
     {
-        Choices = activity switch
-        {
-            0 => [new("Balanced"), new("Silent"), new("Performance"), new("Gaming"), new("Creator"), new("HyperBoost"),
-                new("Custom", "CPU and GPU levels (required)", "For example: CPU Boost, GPU High")],
-            1 => [new("Automatic"), new("Fixed", "Fan speed (required)", "For example: 4200 RPM, or CPU 4200 RPM, GPU 4000 RPM"),
-                new("Manual curve", "Curve points (required)", "Record the temperatures and speeds needed to restore your curve.")],
-            2 => [new("Off"), new("50%"), new("60%"), new("70%"), new("80%"), new("90%"), new("100%")],
-            3 => [new("Off"), Lighting("Static"), Lighting("Breathing"), Lighting("Spectrum cycling"), Lighting("Wave"), Lighting("Reactive"), Lighting("Starlight")],
-            _ => [],
-        };
-        Choices = [.. Choices, new("Other state…", "Setting shown in Synapse (required)", "Use the name and any details needed to restore it. No personal information.", true)];
+        var activities = CaptureActivityCatalog.Create();
+        Choices = activity >= 0 && activity < activities.Length
+            ? activities[activity].Choices
+            : [new("Other state…", "State or value shown (required)", "Use a short description without personal information.", true)];
         selectedChoice = null;
         details = string.Empty;
         Notify();
@@ -69,6 +62,5 @@ internal sealed class SettingEntry : INotifyPropertyChanged
         Notify();
     }
 
-    private static SettingChoice Lighting(string name) => new(name, "Effect details (required)", "Include brightness, colors, speed or direction as shown in Synapse.");
     private void Notify() => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(string.Empty));
 }

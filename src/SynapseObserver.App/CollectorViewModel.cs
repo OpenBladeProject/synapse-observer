@@ -2,21 +2,23 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.CompilerServices;
+using System.Reflection;
+using System.Security.Cryptography;
 using Microsoft.Win32;
 using SynapseObserver.Core;
 using SynapseObserver.Backend;
 
 namespace SynapseObserver.App;
 
-internal sealed class CollectorViewModel : INotifyPropertyChanged
+internal sealed partial class CollectorViewModel : INotifyPropertyChanged
 {
-    private static readonly string[] Activities = ["performance", "fans", "charge-limit", "lighting"];
-    private static readonly string[] Titles = ["Performance mode", "Fan setting", "Battery charge limit", "Keyboard lighting"];
+    public IReadOnlyList<CaptureActivity> Activities { get; } = CaptureActivityCatalog.Create();
     private readonly bool preview;
     private long sessionOriginTicks = Stopwatch.GetTimestamp();
     private double RelativeMilliseconds => (Stopwatch.GetTimestamp() - sessionOriginTicks) * 1000.0 / Stopwatch.Frequency;
     private readonly WindowsInventorySource inventorySource = new();
     private IReadOnlyList<LocalHidCandidate> controlCandidates = [];
+    private IReadOnlyList<LocalHidCandidate> inputCandidates = [];
     private BackendCandidate? backendCandidate;
     private INativeObservationSession? observer;
     private CancellationTokenSource? pumpCancellation;
@@ -27,6 +29,7 @@ internal sealed class CollectorViewModel : INotifyPropertyChanged
     private int gaps;
     private int droppedEvents;
     private int stepStartGaps;
+    private string retentionGapDetails = string.Empty;
     private bool observerEnded;
     private bool busy;
     private EvidenceSession? session;
@@ -50,13 +53,15 @@ internal sealed class CollectorViewModel : INotifyPropertyChanged
         ChangedEntry.Reset(0);
         StartingEntry.PropertyChanged += (_, _) => RefreshCommands();
         ChangedEntry.PropertyChanged += (_, _) => RefreshCommands();
-        CollectCommand = new AsyncCommand(() => GuardAsync(CollectAsync), () => !busy && !collecting && !recording);
-        StartCommand = new AsyncCommand(() => GuardAsync(StartAsync), () => !busy && HasInventory && consent && !recording && (preview || backendCandidate is not null));
+        CollectCommand = new AsyncCommand(() => GuardAsync(CollectAsync), () => !busy && !collecting && !recording && !IsProbingSpecialKey);
+        StartCommand = new AsyncCommand(() => GuardAsync(StartAsync), () => !busy && !IsProbingSpecialKey && HasInventory && consent && !recording && (preview || backendCandidate is not null));
         StopCommand = new AsyncCommand(() => GuardAsync(StopAsync), () => recording);
-        MarkCommand = new AsyncCommand(() => GuardAsync(MarkAsync), () => recording && !observerEnded && step < Activities.Length && (stepPhase == 2 || (stepPhase == 0 ? StartingEntry.HasValue : ChangedEntry.HasValue)));
-        SkipCommand = new AsyncCommand(() => GuardAsync(() => SkipAsync(false)), () => recording && !observerEnded && step < Activities.Length && stepPhase == 0);
-        UnavailableCommand = new AsyncCommand(() => GuardAsync(() => SkipAsync(true)), () => recording && !observerEnded && step < Activities.Length && stepPhase == 0);
-        SaveCommand = new AsyncCommand(() => GuardAsync(SaveAsync), () => !preview && !busy && HasInventory && !recording);
+        MarkCommand = new AsyncCommand(() => GuardAsync(MarkAsync), () => !busy && !IsProbingSpecialKey && HasInventory && HasCurrentStep
+            && (CurrentActivity.IsReadOnly || (recording && !observerEnded))
+            && (stepPhase == 2 || (stepPhase == 0 ? StartingEntry.HasValue : ChangedEntry.HasValue)));
+        SkipCommand = new AsyncCommand(() => GuardAsync(() => SkipAsync(false)), () => CanSelectActivity && HasCurrentStep);
+        UnavailableCommand = new AsyncCommand(() => GuardAsync(() => SkipAsync(true)), () => CanSelectActivity && HasCurrentStep);
+        SaveCommand = new AsyncCommand(() => GuardAsync(SaveAsync), () => !preview && !busy && !IsProbingSpecialKey && HasInventory && !recording);
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -80,25 +85,47 @@ internal sealed class CollectorViewModel : INotifyPropertyChanged
     public bool ShowInventoryScreen => !HasInventory;
     public bool ShowExport => HasInventory && !recording;
     public bool IsRecording => recording;
-    public bool HasCurrentStep => step < Titles.Length;
+    public bool HasCurrentStep => step >= 0 && step < Activities.Count;
+    public bool CanSelectActivity => HasInventory && !busy && !IsProbingSpecialKey && (!recording || !observerEnded) && stepPhase == 0;
+    public int SelectedActivityIndex
+    {
+        get => HasCurrentStep ? step : -1;
+        set
+        {
+            if (!CanSelectActivity || value < 0 || value >= Activities.Count || value == step) return;
+            step = value;
+            ResetEntries();
+            Refresh();
+        }
+    }
+    private CaptureActivity CurrentActivity => Activities[step];
+    public string CoverageSummary => $"{Activities.Count(activity => activity.State != CoverageState.Pending)} of {Activities.Count} items handled. Choose any item; stop and save whenever you are ready.";
+    public string StartingValueLabel => HasCurrentStep && CurrentActivity.IsReadOnly ? "Current state or known behavior" : "Starting setting";
+    public string ActivityGuidance => HasCurrentStep ? CurrentActivity.Guidance : string.Empty;
     public bool ShowStartingValue => HasCurrentStep && stepPhase == 0;
     public bool ShowChangedValue => HasCurrentStep && stepPhase == 1;
     public bool ShowAttach => !recording;
     public string CollectButtonText => HasInventory ? "Refresh device information" : "Collect device information";
+    public string VersionLabel => "v" + BuildVersion.Split('+')[0];
+    public string BuildVersion => typeof(CollectorViewModel).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "Unknown";
     public string DeviceSummary => deviceSummary;
     public string RecorderStatus => recorderStatus;
-    public string CollectionDetails => collectionDetails;
+    public string CollectionDetails => string.IsNullOrEmpty(retentionGapDetails) ? collectionDetails : $"{collectionDetails}\n{retentionGapDetails}";
     public string Status => status;
-    public string StepTitle => step < Titles.Length ? $"{step + 1} of {Titles.Length} · {Titles[step]}" : "Recording steps finished";
-    public string StepInstructions => step < Titles.Length
-        ? stepPhase == 0 ? "Select the setting currently shown in Synapse. Then begin this step."
-        : stepPhase == 1 ? "Change one available setting in Synapse. Select its new value below, then mark the change."
-        : $"Restore the starting setting in Synapse: {startingSetting}. Mark restoration after Synapse shows that value."
+    public string StepTitle => HasCurrentStep ? $"{step + 1} of {Activities.Count} · {CurrentActivity.Title}" : "Checklist finished";
+    public string StepInstructions => HasCurrentStep
+        ? CurrentActivity.IsReadOnly ? "Report the current state or behavior you have already observed. Save the report without changing a setting."
+        : !recording ? "Start recording before changing this setting, or choose a current-state report to continue without recording."
+        : stepPhase == 0 ? "Select the setting currently shown. Then begin this step."
+        : stepPhase == 1 ? "Change one available setting in its usual controls. Select its new value below, then mark the change."
+        : $"Restore the starting setting: {startingSetting}. Mark restoration after the controls show that value."
         : "Stop recording and save the evidence ZIP.";
-    public string StepStatus => !HasCurrentStep ? "Your setting changes and restoration markers are recorded." : stepPhase == 0 ? "Skip any setting you do not want to change."
+    public string StepStatus => !HasCurrentStep ? "Your setting changes and restoration markers are recorded." : CurrentActivity.IsReadOnly ? "This is your report, not a hardware measurement or firmware confirmation."
+        : !recording ? "Current-state reports are available without observing Synapse. Setting changes need a recording."
+        : stepPhase == 0 ? "Examples are suggestions, not confirmed support. Skip or mark unavailable if needed."
         : stepPhase == 1 ? "The collector observes Synapse. It does not change a setting for you."
-        : "Restoration will be recorded as your observation of Synapse's display.";
-    public string MarkButtonText => stepPhase == 0 ? "Begin this step" : stepPhase == 1 ? "I changed it" : "I restored it";
+        : "Restoration will be recorded as your observation of the displayed setting.";
+    public string MarkButtonText => HasCurrentStep && CurrentActivity.IsReadOnly ? "Save current state" : stepPhase == 0 ? "Begin this step" : stepPhase == 1 ? "I changed it" : "I restored it";
     public string ObservationSummary => $"{observedCalls} observed calls · {gaps} recording gaps";
     public string ExportSummary => $"The ZIP contains device information, {observedCalls} observed calls, recording coverage, and your action markers. Unproven or sensitive payloads are omitted. Review it before sharing.";
 
@@ -141,9 +168,9 @@ internal sealed class CollectorViewModel : INotifyPropertyChanged
             var identity = identities.FirstOrDefault();
             deviceSummary = $"{identity?.ProductName ?? "Laptop identity unavailable"} · BIOS {identity?.BiosVersion ?? "unavailable"}\n{inventory.RazerHidInterfaces.Value.Count} Razer HID interfaces · {inventory.SynapseProcesses.Value.Count} related software processes";
             Marker(EvidenceMarkerKind.SessionStarted, "session", "Device information collected", EvidenceProvenance.Collector);
-            foreach (var id in Activities)
+            foreach (var activity in Activities)
             {
-                session.SetCoverage(new CoverageItem(id, Titles[Array.IndexOf(Activities, id)], CoverageState.Pending, CoverageReason.None));
+                session.SetCoverage(new CoverageItem(activity.Id, activity.Title, CoverageState.Pending, CoverageReason.None));
             }
 
             await DiscoverRecorderAsync();
@@ -160,6 +187,7 @@ internal sealed class CollectorViewModel : INotifyPropertyChanged
     private async Task DiscoverRecorderAsync()
     {
         backendCandidate = null;
+        inputCandidates = [];
         if (preview)
         {
             recorderStatus = "Synapse is ready. Start a short recording when you are ready to change settings.";
@@ -168,6 +196,9 @@ internal sealed class CollectorViewModel : INotifyPropertyChanged
 
         recorderStatus = "Checking the native observer's availability.";
         var candidates = await Task.Run(() => inventorySource.DiscoverLocalControlCandidates());
+        var eligibleInputs = candidates.Value.Where(candidate => SpecialKeyProbeParser.IsInputCandidate(candidate)
+            && candidate.UsbParentProductName?.Contains("Blade", StringComparison.OrdinalIgnoreCase) == true).ToArray();
+        if (SpecialKeyProbeParser.IsSingleBladeRoot(eligibleInputs)) inputCandidates = eligibleInputs;
         controlCandidates = candidates.Value.Where(BackendDiscovery.IsEligibleControlCandidate).ToArray();
         if (controlCandidates.Count is < 1 or > 8
             || controlCandidates.Select(c => c.UsbParentDeviceInstanceId).Distinct(StringComparer.OrdinalIgnoreCase).Count() != 1)
@@ -187,10 +218,11 @@ internal sealed class CollectorViewModel : INotifyPropertyChanged
         {
             recorderStatus = processes.Count == 0 ? "Start Synapse normally and open your laptop's controls. Then check recording availability. You can save device information now."
                 : eligible.Length > 1 ? "More than one verified Synapse engine is running. Close duplicate Synapse instances, then check recording availability."
-                : processes[0].Diagnostic;
+                : processes.Select(candidate => candidate.Diagnostic).Distinct(StringComparer.Ordinal).ToArray() is [var onlyReason] ? onlyReason
+                : "No recording target was verified. Open your laptop's controls in Synapse, start both apps normally, then refresh. See collection details.";
         }
 
-        collectionDetails = string.Join("\n", processes.Select(candidate => candidate.Diagnostic));
+        collectionDetails = RecorderDiscoveryDiagnostics.Format(processes);
         if (backendCandidate is null)
         {
             Marker(EvidenceMarkerKind.Failure, "observer", "Native observer unavailable", EvidenceProvenance.Collector);
@@ -248,24 +280,34 @@ internal sealed class CollectorViewModel : INotifyPropertyChanged
 
     private Task MarkAsync()
     {
+        if (CurrentActivity.IsReadOnly)
+        {
+            Marker(EvidenceMarkerKind.UserReportedStartingValue, CurrentActivity.Id, "User reported current state or known behavior", EvidenceProvenance.UserReported, StartingEntry.Value);
+            SetCurrentCoverage(CoverageState.Completed, CoverageReason.None);
+            NextStep();
+            Refresh();
+            return Task.CompletedTask;
+        }
+
         if (stepPhase == 0)
         {
             startingSetting = StartingEntry.Value;
-            Marker(EvidenceMarkerKind.UserReportedStartingValue, Activities[step], "Starting setting reported", EvidenceProvenance.UserReported, startingSetting);
+            Marker(EvidenceMarkerKind.UserReportedStartingValue, CurrentActivity.Id, "Starting setting reported", EvidenceProvenance.UserReported, startingSetting);
             stepStartCount = observedCalls;
             stepStartGaps = gaps;
             stepPhase = 1;
         }
         else if (stepPhase == 1)
         {
-            Marker(EvidenceMarkerKind.UserReportedTargetValue, Activities[step], "Changed setting reported", EvidenceProvenance.UserReported, ChangedEntry.Value);
-            Marker(EvidenceMarkerKind.UserActionConfirmed, Activities[step], "User marked the Synapse change", EvidenceProvenance.UserReported);
+            Marker(EvidenceMarkerKind.UserReportedTargetValue, CurrentActivity.Id, "Changed setting reported", EvidenceProvenance.UserReported, ChangedEntry.Value);
+            Marker(EvidenceMarkerKind.UserActionConfirmed, CurrentActivity.Id, "User marked the setting change", EvidenceProvenance.UserReported);
             stepPhase = 2;
         }
         else
         {
-            Marker(EvidenceMarkerKind.UserReportedRestoration, Activities[step], "User reported restoration in Synapse", EvidenceProvenance.UserReported, startingSetting);
-            session!.SetCoverage(new CoverageItem(Activities[step], Titles[step], observedCalls > stepStartCount && gaps == stepStartGaps ? CoverageState.Completed : CoverageState.CompletedWithGaps, observedCalls > stepStartCount ? CoverageReason.None : CoverageReason.NoMatchingEvents));
+            Marker(EvidenceMarkerKind.UserReportedRestoration, CurrentActivity.Id, "User reported restoration of starting setting", EvidenceProvenance.UserReported, startingSetting);
+            SetCurrentCoverage(observedCalls > stepStartCount && gaps == stepStartGaps ? CoverageState.Completed : CoverageState.CompletedWithGaps,
+                observedCalls <= stepStartCount ? CoverageReason.NoMatchingEvents : gaps > stepStartGaps ? CoverageReason.CaptureFailed : CoverageReason.None);
             NextStep();
         }
 
@@ -275,8 +317,8 @@ internal sealed class CollectorViewModel : INotifyPropertyChanged
 
     private Task SkipAsync(bool unavailable)
     {
-        Marker(EvidenceMarkerKind.ItemSkipped, Activities[step], unavailable ? "User could not find the setting in Synapse" : "User skipped this item", EvidenceProvenance.UserReported);
-        session!.SetCoverage(new CoverageItem(Activities[step], Titles[step], unavailable ? CoverageState.Unavailable : CoverageState.Skipped, CoverageReason.UserSkipped));
+        Marker(EvidenceMarkerKind.ItemSkipped, CurrentActivity.Id, unavailable ? "User reported this item unavailable" : "User skipped this item", EvidenceProvenance.UserReported);
+        SetCurrentCoverage(unavailable ? CoverageState.Unavailable : CoverageState.Skipped, CoverageReason.UserSkipped);
         NextStep();
         Refresh();
         return Task.CompletedTask;
@@ -284,7 +326,20 @@ internal sealed class CollectorViewModel : INotifyPropertyChanged
 
     private void NextStep()
     {
-        step++;
+        var next = Enumerable.Range(1, Activities.Count).Select(offset => (step + offset) % Activities.Count)
+            .FirstOrDefault(index => Activities[index].State == CoverageState.Pending, -1);
+        step = next;
+        ResetEntries();
+    }
+
+    private void SetCurrentCoverage(CoverageState state, CoverageReason reason)
+    {
+        session!.SetCoverage(new CoverageItem(CurrentActivity.Id, CurrentActivity.Title, state, reason));
+        CurrentActivity.SetState(state);
+    }
+
+    private void ResetEntries()
+    {
         stepPhase = 0;
         startingSetting = string.Empty;
         StartingEntry.Reset(step);
@@ -340,10 +395,10 @@ internal sealed class CollectorViewModel : INotifyPropertyChanged
             consent = false;
             backendCandidate = null;
 
-            var unfinished = step < Activities.Length && stepPhase > 0;
+            var unfinished = HasCurrentStep && stepPhase > 0;
             if (unfinished)
             {
-                session!.SetCoverage(new CoverageItem(Activities[step], Titles[step], CoverageState.CompletedWithGaps, CoverageReason.IncompleteRestoration));
+                SetCurrentCoverage(CoverageState.CompletedWithGaps, CoverageReason.IncompleteRestoration);
             }
 
             session?.AddMarker(new EvidenceMarker(RelativeMilliseconds, EvidenceMarkerKind.RecordingStopped, "session", "Recording stopped", EvidenceProvenance.Observer));
@@ -362,6 +417,10 @@ internal sealed class CollectorViewModel : INotifyPropertyChanged
             {
                 status = $"Restore {startingSetting} in Synapse before leaving this setting. " + status;
             }
+
+            // Preserve the incomplete-restoration evidence and reminder, but
+            // permit subsequent inventory-only reports after recording ends.
+            ResetEntries();
 
             Refresh();
         }
@@ -385,7 +444,10 @@ internal sealed class CollectorViewModel : INotifyPropertyChanged
                     return;
                 }
 
-                await Task.Delay(100, cancellationToken);
+                // The shared ring has 32 slots. Multi-row lighting frames can
+                // exhaust it within 100 ms; drain at 20 ms while keeping the
+                // native five-minute bound and explicit dropped-event accounting.
+                await Task.Delay(20, cancellationToken);
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
@@ -406,38 +468,57 @@ internal sealed class CollectorViewModel : INotifyPropertyChanged
             return;
         }
 
-        foreach (var observed in await observer.PollAsync())
+        var batch = await observer.PollAsync();
+        try
         {
-            if (observed.InterfaceIndex >= controlCandidates.Count)
+            foreach (var observed in batch)
             {
-                throw new InvalidDataException("Observer interface index is outside the selected device scope.");
-            }
+                if (observed.InterfaceIndex >= controlCandidates.Count)
+                {
+                    throw new InvalidDataException("Observer interface index is outside the selected device scope.");
+                }
 
-            var device = controlCandidates[(int)observed.InterfaceIndex];
-            var callStatus = observed.CompletionGap == "pending-completion-not-observed" ? ObservationStatus.Pending
-                : observed.Result ? ObservationStatus.Succeeded : ObservationStatus.Failed;
-            var operationId = $"op-{observed.Sequence}";
-            var at = observerOrigin + observed.RelativeMilliseconds;
-            var completedAt = observerOrigin + observed.CompletionRelativeMilliseconds;
-            var error = observed.CompletionGap;
-            session!.AddObservation(new ControlObservation(operationId, at, ObservationSource.UserModeCall, observed.Api, ObservationDirection.Input,
-                callStatus, unchecked((int)observed.NativeError), error, device.VendorId, device.ProductId, device.InterfaceLabel,
-                device.UsagePage, device.Usage, observed.RequestBytes.Length > 0 ? observed.RequestBytes[0] : null,
-                observed.RequestBytes, PayloadDisposition.ProvenFeatureControl, completedAt, observed.OutputBufferCapacity));
-            if (observed.ResponseBytes.Length > 0)
-            {
-                session.AddObservation(new ControlObservation(operationId, completedAt, ObservationSource.ReturnedBuffer, observed.Api, ObservationDirection.Output,
+                var device = controlCandidates[(int)observed.InterfaceIndex];
+                var callStatus = observed.CompletionGap == "pending-completion-not-observed" ? ObservationStatus.Pending
+                    : observed.Result ? ObservationStatus.Succeeded : ObservationStatus.Failed;
+                var operationId = $"op-{observed.Sequence}";
+                var at = observerOrigin + observed.RelativeMilliseconds;
+                var completedAt = observerOrigin + observed.CompletionRelativeMilliseconds;
+                var error = observed.CompletionGap;
+                // HidD_GetFeature returns BOOL, not an output byte count. Only
+                // DeviceIoControl supplies an actual returned-length value.
+                uint? actualReturnedBytes = observed.Api.StartsWith("DeviceIoControl.", StringComparison.Ordinal)
+                    ? observed.ReturnedBytes : null;
+                AddControlObservation(new ControlObservation(operationId, at, ObservationSource.UserModeCall, observed.Api, ObservationDirection.Input,
                     callStatus, unchecked((int)observed.NativeError), error, device.VendorId, device.ProductId, device.InterfaceLabel,
-                    device.UsagePage, device.Usage,
-                    observed.Api == "DeviceIoControl.HID_GET_FEATURE" && observed.ReturnedBytes == 90
-                        && observed.ResponseBytes.Length == 90 && observed.OutputBufferCapacity >= 91
-                        && device.ReportGeometry?.FeatureBytes == 91 ? null : observed.ResponseBytes[0], observed.ResponseBytes, PayloadDisposition.ProvenFeatureControl, completedAt, observed.OutputBufferCapacity));
-            }
+                    device.UsagePage, device.Usage, observed.RequestBytes.Length > 0 ? observed.RequestBytes[0] : null,
+                    observed.RequestBytes, PayloadDisposition.ProvenFeatureControl, completedAt, observed.OutputBufferCapacity,
+                    observed.RequestedBytes, actualReturnedBytes));
+                if (observed.ResponseBytes.Length > 0)
+                {
+                    AddControlObservation(new ControlObservation(operationId, completedAt, ObservationSource.ReturnedBuffer, observed.Api, ObservationDirection.Output,
+                        callStatus, unchecked((int)observed.NativeError), error, device.VendorId, device.ProductId, device.InterfaceLabel,
+                        device.UsagePage, device.Usage,
+                        observed.Api == "DeviceIoControl.HID_GET_FEATURE" && observed.ReturnedBytes == 90
+                            && observed.ResponseBytes.Length == 90 && observed.OutputBufferCapacity >= 91
+                            && device.ReportGeometry?.FeatureBytes == 91 ? null : observed.ResponseBytes[0], observed.ResponseBytes, PayloadDisposition.ProvenFeatureControl, completedAt, observed.OutputBufferCapacity,
+                        observed.RequestedBytes, actualReturnedBytes));
+                }
 
-            observedCalls++;
-            if (error is not null || !observed.Result)
+                observedCalls++;
+                if (error is not null || !observed.Result)
+                {
+                    gaps++;
+                }
+            }
+        }
+        finally
+        {
+            // Include unprocessed records when scope or projection fails.
+            foreach (var observed in batch)
             {
-                gaps++;
+                CryptographicOperations.ZeroMemory(observed.RequestBytes);
+                CryptographicOperations.ZeroMemory(observed.ResponseBytes);
             }
         }
 
@@ -454,6 +535,16 @@ internal sealed class CollectorViewModel : INotifyPropertyChanged
         }
 
         Refresh();
+    }
+
+    private void AddControlObservation(ControlObservation observation)
+    {
+        var result = session!.AddObservation(observation);
+        if (result is not (EvidenceAddResult.RejectedInvalid or EvidenceAddResult.RejectedLimit)) return;
+        gaps++;
+        retentionGapDetails = result == EvidenceAddResult.RejectedLimit
+            ? $"The session reached its {EvidenceLimits.MaxObservations} observation limit. Further observations are counted as gaps. Save this evidence, then reopen the collector to record more settings."
+            : "An invalid observation could not be retained. Its rejection is counted as a recording gap in the evidence.";
     }
 
     private async Task SaveAsync()
@@ -495,6 +586,7 @@ internal sealed class CollectorViewModel : INotifyPropertyChanged
         {
             await GuardAsync(StopAsync);
         }
+        session?.Dispose();
     }
 
     private void Marker(EvidenceMarkerKind kind, string activity, string label, EvidenceProvenance provenance, string? value = null)
@@ -565,6 +657,7 @@ internal sealed class CollectorViewModel : INotifyPropertyChanged
 
     private void RefreshCommands()
     {
+        ProbeSpecialKeyCommand?.Refresh(); CancelSpecialKeyProbeCommand?.Refresh();
         CollectCommand.Refresh(); StartCommand.Refresh(); StopCommand.Refresh(); MarkCommand.Refresh();
         SkipCommand.Refresh(); UnavailableCommand.Refresh(); SaveCommand.Refresh();
     }

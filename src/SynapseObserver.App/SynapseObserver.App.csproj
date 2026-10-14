@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net10.0-windows</TargetFramework>
+    <TargetFramework>net10.0-windows10.0.22621.0</TargetFramework>
     <UseWPF>true</UseWPF>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <PlatformTarget>x64</PlatformTarget>
@@ -10,10 +10,13 @@
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <IncludeAllContentForSelfExtract>true</IncludeAllContentForSelfExtract>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets/Brand/OpenBlade.ico</ApplicationIcon>
     <AssemblyName>SynapseObserver</AssemblyName>
   </PropertyGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="SynapseObserver.App.Tests" />
+    <Resource Include="Assets/Brand/OpenBlade.ico" />
+    <Resource Include="Assets/Brand/OpenBlade.png" />
     <ProjectReference Include="../SynapseObserver.Core/SynapseObserver.Core.csproj" />
     <ProjectReference Include="../SynapseObserver.Backend/SynapseObserver.Backend.csproj" />
   </ItemGroup>

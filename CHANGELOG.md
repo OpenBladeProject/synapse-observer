@@ -7,6 +7,12 @@
 - Add the guided device inventory, passive Synapse observer, and local evidence
   ZIP export prototype, with discovery fixtures across Blade families and
   unfamiliar PIDs and report sizes ([#2](https://github.com/OpenBladeProject/synapse-observer/pull/2)).
+- Add Windows support inventory, prompted special-key evidence, and a complete
+  OpenBlade coverage draft with action-window and quality receipts
+  ([#2](https://github.com/OpenBladeProject/synapse-observer/pull/2)).
+- Add dark and high-contrast presentation, an in-app version badge, the
+  OpenBlade tray icon, and clearer recorder-discovery diagnostics
+  ([#2](https://github.com/OpenBladeProject/synapse-observer/pull/2)).
 
 ### Fixed
 
