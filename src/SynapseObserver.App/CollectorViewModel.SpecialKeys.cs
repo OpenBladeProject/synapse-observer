@@ -11,12 +11,10 @@ internal sealed partial class CollectorViewModel
     private string activeProbeLabel = string.Empty;
     private double probeOrigin;
     private SpecialKeyExpectedKey expectedSpecialKey = SpecialKeyExpectedKey.M1;
-    private SpecialKeyModeContext reportedKeyboardMode = SpecialKeyModeContext.Unknown;
     private string specialKeyStatus = "Optional: identify one M or Fn key. Keep this window active and press only the selected key for five seconds.";
     public sealed record SpecialKeyChoice(SpecialKeyExpectedKey Key, string Label);
     public IReadOnlyList<SpecialKeyChoice> SpecialKeyChoices { get; } = Enum.GetValues<SpecialKeyExpectedKey>()
         .Select(key => new SpecialKeyChoice(key, key == SpecialKeyExpectedKey.FnP ? "Fn + P" : key.ToString())).ToArray();
-    public IReadOnlyList<SpecialKeyModeContext> KeyboardModeChoices { get; } = Enum.GetValues<SpecialKeyModeContext>();
     public bool IsProbingSpecialKey => probingSpecialKey;
     public bool ShowSpecialKeyProbe => HasInventory;
     public bool CanProbeSpecialKeys => HasInventory && !busy && !probingSpecialKey && !preview
@@ -29,11 +27,6 @@ internal sealed partial class CollectorViewModel
     {
         get => expectedSpecialKey;
         set { if (probingSpecialKey || !Enum.IsDefined(value)) return; expectedSpecialKey = value; Changed(); }
-    }
-    public SpecialKeyModeContext ReportedKeyboardMode
-    {
-        get => reportedKeyboardMode;
-        set { if (probingSpecialKey || !Enum.IsDefined(value)) return; reportedKeyboardMode = value; Changed(); }
     }
     public AsyncCommand? ProbeSpecialKeyCommand { get; private set; }
     public AsyncCommand? CancelSpecialKeyProbeCommand { get; private set; }
@@ -55,7 +48,7 @@ internal sealed partial class CollectorViewModel
         probeOrigin = RelativeMilliseconds;
         probingSpecialKey = true;
         specialKeyStatus = $"Press only {expectedSpecialKey} now. Keep this window active for five seconds. Ordinary typing is omitted.";
-        Marker(EvidenceMarkerKind.UserActionConfirmed, SpecialKeyActivity(expectedSpecialKey), "Special-key probe requested", EvidenceProvenance.UserReported, reportedKeyboardMode.ToString());
+        Marker(EvidenceMarkerKind.UserActionConfirmed, SpecialKeyActivity(expectedSpecialKey), "Special-key probe requested", EvidenceProvenance.UserReported);
         RefreshSpecialKeyProbe();
         try
         {
@@ -65,7 +58,7 @@ internal sealed partial class CollectorViewModel
                 { RelativeMilliseconds = probeOrigin + item.RelativeMilliseconds, ProbeLabel = activeProbeLabel });
                 if (result is EvidenceAddResult.RejectedInvalid or EvidenceAddResult.RejectedLimit)
                     specialKeyStatus = "Some input evidence was rejected by the privacy or size limits.";
-            }, probeForeground, reportedKeyboardMode);
+            }, probeForeground, SpecialKeyModeContext.Unknown);
         }
         catch
         {
@@ -89,7 +82,7 @@ internal sealed partial class CollectorViewModel
             Activities.FirstOrDefault(item => item.Id == SpecialKeyActivity(summary.ExpectedKey))?.SetState(state);
         }
         specialKeyStatus = $"{summary.ExpectedKey}: {summary.ObservationCount} input observations · {summary.EndReason}. " +
-            "Expected key and keyboard mode are your reports; input is not firmware readback. No event does not prove absence.";
+            "The key check has finished. No signal does not prove that the key is unavailable.";
         RefreshSpecialKeyProbe();
     }
 

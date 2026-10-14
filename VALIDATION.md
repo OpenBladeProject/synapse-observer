@@ -115,6 +115,23 @@ to Synapse or change laptop settings. Lighting, logo, keyboard mode, M/Fn input,
 and the additional tuning workflows still need contributor or attended trials;
 previous thermal trials do not validate them or other Blade models.
 
+## Window and key-check correction, 2026-10-14
+
+Version 0.2.1 removes the contributor-facing keyboard-mode declaration and
+mode picker. The guide now has 41 activities; its independent support draft
+still tracks mode requirements. Passive mode reports remain available, and
+key probes retain Unknown mode context without asking owners to infer it.
+
+The fixed 640-pixel maximum height caused Windows maximization to occupy only
+part of the screen. The window now has no height ceiling, starts compact, and
+expands once after inventory unless the user already resized it. Disconnected
+previews use a real maximized WPF window and record its measured bounds beside
+the image. On this 150-percent-scale display, maximized outer bounds measured
+1721.33 by 1033.33 logical pixels against a 1706.67 by 1018.67 work area; the
+small difference is Windows' outside resize border. The window fills the work
+area instead of being limited to 640 pixels. No Synapse attachment or input
+probe occurred during these layout checks.
+
 ## Pending before public release
 
 - Typed setting-change response payloads: the observed returned bodies remain

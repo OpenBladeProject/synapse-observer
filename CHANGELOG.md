@@ -17,6 +17,10 @@
 
 ### Fixed
 
+- Remove internal keyboard-mode questions from the guide and key check, and let
+  maximization fill the screen's usable area
+  ([#2](https://github.com/OpenBladeProject/synapse-observer/pull/2)).
+
 - Identify laptop USB parents by their bus-reported product description when
   Windows displays a generic composite-device label ([#2](https://github.com/OpenBladeProject/synapse-observer/pull/2)).
 - Accept signed Razer Synapse engine updates without per-version approval; keep

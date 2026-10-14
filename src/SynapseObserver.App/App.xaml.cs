@@ -40,6 +40,7 @@ public partial class App : Application
             }
 
             new MainWindow(true) { Width = 560 }.RenderPreview(Path.Combine(output, "collector-narrow-custom.png"), 3);
+            new MainWindow(true) { WindowState = WindowState.Maximized }.RenderPreview(Path.Combine(output, "collector-maximized.png"), 1);
             Shutdown();
             return;
         }

@@ -93,3 +93,7 @@ families, unfamiliar numeric values are retained with
 length, checksum, padding, source and status checks still apply. Query input
 arguments must match the reviewed zero-valued shape. This permits new-model
 values to be investigated without pretending to understand or support them.
+
+Keyboard modes are internal evidence. Contributors are not asked to identify
+Normal or Driver mode. Mode feature reports remain in passive observation;
+prompted key checks use Unknown mode context rather than guessing from keys.

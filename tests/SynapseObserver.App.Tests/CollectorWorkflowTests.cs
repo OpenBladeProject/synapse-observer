@@ -260,8 +260,9 @@ public sealed class CollectorWorkflowTests
         Assert.Equal(new[] { "performance", "fans", "charge-limit", "lighting" }, catalog.Take(4).Select(activity => activity.Id));
         Assert.Equal(catalog.Length, catalog.Select(activity => activity.Id).Distinct().Count());
         Assert.All(catalog, activity => Assert.Single(activity.Choices, choice => choice.IsOther));
+        Assert.DoesNotContain(catalog, activity => activity.Id == "keyboard-mode");
         foreach (var id in new[] { "custom-cpu-level", "custom-gpu-level", "hyperboost", "cooling-pad", "battery-protection", "full-charge",
-                     "keyboard-brightness", "lighting-frames", "lighting-key-map", "keyboard-layout", "logo-lighting", "mute-indicator", "keyboard-mode", "function-row",
+                     "keyboard-brightness", "lighting-frames", "lighting-key-map", "keyboard-layout", "logo-lighting", "mute-indicator", "function-row",
                      "gaming-mode", "startup-lighting", "special-key-m1", "special-key-m2", "special-key-m3", "special-key-m4", "special-key-m5",
                      "special-key-fn", "special-key-fn-p", "power-source", "adapter-rating", "gpu-core-offset", "gpu-memory-offset", "cpu-power-limits",
                      "cpu-optimizer", "display-refresh", "display-hdr", "display-vrr", "display-drr", "display-color", "display-brightness", "sensor-telemetry", "ec-mcu", "other-feature" })

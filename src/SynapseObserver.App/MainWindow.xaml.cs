@@ -12,6 +12,7 @@ public partial class MainWindow : Window
     private readonly CollectorViewModel viewModel;
     private bool closing;
     private bool wasRecording;
+    private bool hadInventory;
     private SpecialKeyProbe? specialKeyProbe;
 
     public MainWindow(bool preview)
@@ -34,6 +35,14 @@ public partial class MainWindow : Window
         };
         viewModel.PropertyChanged += (_, _) =>
         {
+            if (!hadInventory && viewModel.HasInventory)
+            {
+                hadInventory = true;
+                // Expand the initial compact window once when evidence becomes
+                // available. Preserve a height the user has already chosen.
+                if (WindowState == WindowState.Normal && Math.Abs(Height - 420) < 0.5)
+                    Height = 640;
+            }
             var finished = wasRecording && !viewModel.IsRecording;
             wasRecording = viewModel.IsRecording;
             if (finished)
@@ -55,6 +64,14 @@ public partial class MainWindow : Window
         viewModel.SetPreviewStage(stage);
         Show();
         UpdateLayout();
+        // The preview uses a real maximized window; record dimensions to catch
+        // restored-size caps that also restrict Windows maximization.
+        File.WriteAllText(Path.ChangeExtension(path, ".layout.json"), System.Text.Json.JsonSerializer.Serialize(new
+        {
+            State = WindowState.ToString(), ActualWidth, ActualHeight,
+            RestoreWidth = RestoreBounds.Width, RestoreHeight = RestoreBounds.Height,
+            WorkAreaWidth = SystemParameters.WorkArea.Width, WorkAreaHeight = SystemParameters.WorkArea.Height,
+        }));
         var content = (FrameworkElement)Content;
         var contentOffset = VisualTreeHelper.GetOffset(content);
         var image = new RenderTargetBitmap((int)content.ActualWidth, (int)content.ActualHeight, 96, 96, PixelFormats.Pbgra32);
