@@ -17,6 +17,11 @@
 
 ### Fixed
 
+- Retain valid events after an invalid interface record, keep the reader draining
+  during recoverable errors, preserve queue-drop counts after polling faults,
+  and clarify cleanup guidance and rejected-record receipts
+  ([#2](https://github.com/OpenBladeProject/synapse-observer/pull/2)).
+
 - Preserve valid events around malformed ring records, stop observation after
   reader failure, retain partial-recording warnings, include recording loss in
   quality receipts, and distinguish call IDs across recordings

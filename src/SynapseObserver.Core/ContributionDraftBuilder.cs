@@ -954,7 +954,7 @@ public static class ContributionDraftBuilder
             gaps.Add(new ContributionQualityGap(
                 "session",
                 "RejectedRecords",
-                "One or more records were rejected by a documented privacy or size bound."));
+                "One or more records were rejected by a documented validation, privacy, or size bound."));
         }
 
         foreach (var probe in snapshot.SpecialKeyProbes.Where(static probe => probe.ObservationCount == 0 || probe.RejectedPacketCount > 0))

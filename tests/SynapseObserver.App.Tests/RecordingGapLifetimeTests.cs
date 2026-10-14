@@ -103,6 +103,8 @@ public sealed class RecordingGapLifetimeTests
         Assert.False(model.MarkCommand.CanExecute(null));
         Assert.True(model.IsBusy);
         Assert.Contains("Stopping", model.RecorderStatus);
+        Assert.Contains("Wait for recording cleanup", model.StepInstructions);
+        Assert.DoesNotContain("Then stop recording", model.StepInstructions);
         observer.ReleaseStop.SetResult();
         await Cleanup(model);
         Assert.Contains("Restore Silent", model.Status);

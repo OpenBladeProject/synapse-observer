@@ -128,13 +128,15 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
     public string StepInstructions => HasCurrentStep
         ? CurrentActivity.IsReadOnly ? "Report the current state or behavior you have already observed. Save the report without changing a setting."
         : !recording ? "Start recording before changing this setting, or choose a current-state report to continue without recording."
-        : observerEnded ? stepPhase > 0
-            ? $"Restore the starting setting: {startingSetting}. Then stop recording and save the partial evidence."
-            : "Recording is unavailable. Save the evidence after recording cleanup finishes."
+        : observerEnded ? EndedRecordingInstructions
         : stepPhase == 0 ? "Select the setting currently shown. Then begin this step."
         : stepPhase == 1 ? "Change one available setting in its usual controls. Select its new value below, then mark the change."
         : $"Restore the starting setting: {startingSetting}. Mark restoration after the controls show that value."
         : "Stop recording and save the evidence ZIP.";
+    private string EndedRecordingInstructions => (stepPhase > 0
+        ? $"Restore the starting setting: {startingSetting}. " : "Recording is unavailable. ")
+        + (stopping ? "Wait for recording cleanup, then save the partial evidence."
+            : "Stop recording and save the partial evidence.");
     public string StepStatus => !HasCurrentStep ? "Your setting changes and restoration markers are recorded." : CurrentActivity.IsReadOnly ? "This is your report, not a hardware measurement or firmware confirmation."
         : !recording ? "Current-state reports are available without observing Synapse. Setting changes need a recording."
         : observerEnded ? "Recording is unavailable. Restore any unfinished setting and save the evidence after cleanup."
@@ -386,6 +388,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
                 // Keep the one reader running while native hooks stop and the
                 // engine queue drains into the smaller shared ring.
                 nativeStatus = await observer.StopAsync();
+                if (UpdateDroppedEvents(nativeStatus)) NotifyObservationSummaries();
                 pumpCancellation?.Cancel();
                 if (pump is not null) await pump;
                 await PollOnceAsync();
@@ -464,28 +467,46 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
 
     private void StartPump()
     {
-        var reader = PumpAsync(pumpCancellation!.Token);
+        var stopRequested = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reader = PumpAsync(pumpCancellation!.Token, () => stopRequested.TrySetResult());
         pump = reader;
-        // Cleanup starts only after the reader task completes, so StopCoreAsync
-        // can join that reader without ever waiting on itself.
-        _ = StopAfterReaderFailureAsync(reader);
+        // A recoverable rejection requests cleanup while this sole reader keeps
+        // draining. A fatal fault requests cleanup after the reader completes.
+        _ = StopAfterReaderFailureAsync(reader, stopRequested.Task);
     }
 
-    private async Task StopAfterReaderFailureAsync(Task<bool> reader)
+    private async Task StopAfterReaderFailureAsync(Task<bool> reader, Task stopRequested)
     {
-        var failed = await reader;
+        await Task.WhenAny(reader, stopRequested);
+        var failed = stopRequested.IsCompleted || await reader;
         if (failed && ReferenceEquals(pump, reader) && recording && !stopping) await GuardAsync(StopAsync);
     }
 
-    private async Task<bool> PumpAsync(CancellationToken cancellationToken)
+    private async Task<bool> PumpAsync(CancellationToken cancellationToken, Action requestStop)
     {
         try
         {
             while (!cancellationToken.IsCancellationRequested)
             {
-                await PollOnceAsync();
-                var nativeStatus = observer!.GetStatus();
-                if (nativeStatus.Finished)
+                NativeSessionStatus? nativeStatus;
+                try { nativeStatus = await PollOnceAsync(); }
+                catch (NativeObservationPollException)
+                {
+                    // Rejected slots have been released and valid events retained.
+                    // The ring remains readable; keep one reader through stop so
+                    // buffered events do not overflow its smaller shared ring.
+                    observerEnded = true;
+                    Marker(EvidenceMarkerKind.Failure, "observer", "Malformed observer records rejected", EvidenceProvenance.Observer);
+                    if (!stopping)
+                    {
+                        recorderStatus = "Recording had malformed records. Requesting observer cleanup.";
+                        status = WithRestorationReminder("Recording encountered a gap. The observer is stopping; save the partial evidence after cleanup.");
+                        Refresh();
+                    }
+                    requestStop();
+                    nativeStatus = observer!.GetStatus();
+                }
+                if (nativeStatus is { Finished: true })
                 {
                     observerEnded = true;
                     // A requested stop owns its status until cleanup completes.
@@ -521,7 +542,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
         catch (Exception ex) when (ex is not OutOfMemoryException and not StackOverflowException)
         {
             observerEnded = true;
-            if (ex is not NativeObservationPollException) gaps++;
+            gaps++;
             Marker(EvidenceMarkerKind.Failure, "observer", "Observer polling failed", EvidenceProvenance.Observer, ex.GetType().Name);
             recorderStatus = "The recording reader failed. Requesting observer cleanup.";
             status = WithRestorationReminder("Recording encountered a gap. The observer is stopping; save the partial evidence after cleanup.");
@@ -542,31 +563,39 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
         gaps++;
     }
 
-    private async Task PollOnceAsync()
+    private async Task<NativeSessionStatus?> PollOnceAsync()
     {
         if (observer is null)
         {
-            return;
+            return null;
         }
 
-        IReadOnlyList<NativeObservationEvent> batch;
+        var nativeStatus = observer.GetStatus();
+        var visibleStateChanged = UpdateDroppedEvents(nativeStatus);
+        IReadOnlyList<NativeObservationEvent> batch = [];
         NativeObservationPollException? parseLoss = null;
-        try { batch = await observer.PollAsync(); }
-        catch (NativeObservationPollException ex)
-        {
-            // The ring reader has already released rejected slots. Retain every
-            // valid event in its batch before stopping this partial recording.
-            batch = ex.Events;
-            parseLoss = ex;
-            gaps += ex.RejectedRecords;
-        }
+        var scopeRejections = 0;
         try
         {
+            try { batch = await observer.PollAsync(); }
+            catch (NativeObservationPollException ex)
+            {
+                // The ring reader has already released rejected slots. Retain every
+                // valid event in its batch before stopping this partial recording.
+                batch = ex.Events;
+                parseLoss = ex;
+                gaps += ex.RejectedRecords;
+            }
+            visibleStateChanged |= batch.Count > 0 || parseLoss is not null;
             foreach (var observed in batch)
             {
                 if (observed.InterfaceIndex >= controlCandidates.Count)
                 {
-                    throw new InvalidDataException("Observer interface index is outside the selected device scope.");
+                    // Reject only this out-of-scope record; preserve valid events
+                    // elsewhere in the already-consumed batch.
+                    gaps++;
+                    scopeRejections++;
+                    continue;
                 }
 
                 var device = controlCandidates[(int)observed.InterfaceIndex];
@@ -617,28 +646,31 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
                 CryptographicOperations.ZeroMemory(observed.RequestBytes);
                 CryptographicOperations.ZeroMemory(observed.ResponseBytes);
             }
+            if (visibleStateChanged) NotifyObservationSummaries();
         }
 
-        var dropped = observer.GetStatus().DroppedEvents;
-        var visibleStateChanged = batch.Count > 0 || parseLoss is not null;
-        if (dropped > droppedEvents)
-        {
-            collectionDetails = $"{dropped} events were dropped by the bounded observer queue during this recording. Completed-call observations cannot establish firmware application. Pending asynchronous completions were not observed.";
-            visibleStateChanged = true;
-            gaps += dropped - droppedEvents;
-            droppedEvents = dropped;
-            Marker(EvidenceMarkerKind.Failure, "observer", "Observer queue dropped events", EvidenceProvenance.Observer, $"count-{dropped}");
-        }
-
-        if (visibleStateChanged)
-        {
-            // Polling changes these summaries, not the activity editors or
-            // command availability. Empty unchanged polls need no UI work.
-            Changed(nameof(ObservationSummary));
-            Changed(nameof(CollectionDetails));
-            Changed(nameof(ExportSummary));
-        }
         if (parseLoss is not null) throw parseLoss;
+        if (scopeRejections > 0) throw new NativeObservationPollException([], scopeRejections);
+        return nativeStatus;
+    }
+
+    private bool UpdateDroppedEvents(NativeSessionStatus nativeStatus)
+    {
+        var dropped = nativeStatus.DroppedEvents;
+        if (dropped <= droppedEvents) return false;
+        collectionDetails = $"{dropped} events were dropped by the bounded observer queue during this recording. Completed-call observations cannot establish firmware application. Pending asynchronous completions were not observed.";
+        gaps += dropped - droppedEvents;
+        droppedEvents = dropped;
+        Marker(EvidenceMarkerKind.Failure, "observer", "Observer queue dropped events", EvidenceProvenance.Observer, $"count-{dropped}");
+        return true;
+    }
+
+    private void NotifyObservationSummaries()
+    {
+        // Empty unchanged polls need no binding or command notifications.
+        Changed(nameof(ObservationSummary));
+        Changed(nameof(CollectionDetails));
+        Changed(nameof(ExportSummary));
     }
 
     private void AddControlObservation(ControlObservation observation)

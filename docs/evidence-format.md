@@ -87,8 +87,10 @@ ZIP writing uses a private temporary file and an atomic final rename;
 closing the GUI waits for an active export to complete. Export freezes the session
 before dispatching draft preparation and serialization off the UI thread. All
 draft files share one set of action windows. Concurrent stop and close join one
-cleanup. During an ordinary stop, one reader remains active through native final
-draining; after reader failure, cleanup performs a final drain and reports loss.
+cleanup. During ordinary stop and recoverable malformed-record rejection, one
+reader remains active through native final draining. A fatal reader fault stops
+that reader; cleanup performs a final drain and reports loss. Queue-drop counts
+are checked independently of record parsing and again from the stop result.
 
 See `EvidenceLimits` and `FeaturePayloadPrivacy` in `src/SynapseObserver.Core`
 for the exact limits and privacy classifier. Maintainers should review the
