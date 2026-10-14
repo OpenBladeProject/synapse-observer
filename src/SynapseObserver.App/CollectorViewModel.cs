@@ -71,7 +71,11 @@ internal sealed class CollectorViewModel : INotifyPropertyChanged
     public bool IsCollecting => collecting;
     public bool IsBusy => busy;
     internal EvidenceSessionSnapshot? Evidence => session?.Snapshot();
-    internal void SetOwnedTestObserver(INativeObservationSession syntheticObserver) => observer = syntheticObserver;
+    internal void SetOwnedTestObserver(INativeObservationSession syntheticObserver, IReadOnlyList<LocalHidCandidate>? syntheticCandidates = null)
+    {
+        observer = syntheticObserver;
+        if (syntheticCandidates is not null) controlCandidates = syntheticCandidates;
+    }
     public bool HasInventory => session is not null;
     public bool ShowInventoryScreen => !HasInventory;
     public bool ShowExport => HasInventory && !recording;
@@ -228,6 +232,9 @@ internal sealed class CollectorViewModel : INotifyPropertyChanged
 
         step = 0;
         stepPhase = 0;
+        startingSetting = string.Empty;
+        StartingEntry.Reset(0);
+        ChangedEntry.Reset(0);
         Marker(EvidenceMarkerKind.RecordingStarted, "session", "Recording started", EvidenceProvenance.Observer);
         recorderStatus = preview ? "Recording selected laptop feature calls. Preview data only." : "Recording feature calls for this laptop. Change one setting at a time in Synapse.";
         if (observer is not null)
@@ -416,14 +423,15 @@ internal sealed class CollectorViewModel : INotifyPropertyChanged
             session!.AddObservation(new ControlObservation(operationId, at, ObservationSource.UserModeCall, observed.Api, ObservationDirection.Input,
                 callStatus, unchecked((int)observed.NativeError), error, device.VendorId, device.ProductId, device.InterfaceLabel,
                 device.UsagePage, device.Usage, observed.RequestBytes.Length > 0 ? observed.RequestBytes[0] : null,
-                observed.RequestBytes, PayloadDisposition.ProvenFeatureControl, completedAt));
+                observed.RequestBytes, PayloadDisposition.ProvenFeatureControl, completedAt, observed.OutputBufferCapacity));
             if (observed.ResponseBytes.Length > 0)
             {
                 session.AddObservation(new ControlObservation(operationId, completedAt, ObservationSource.ReturnedBuffer, observed.Api, ObservationDirection.Output,
                     callStatus, unchecked((int)observed.NativeError), error, device.VendorId, device.ProductId, device.InterfaceLabel,
                     device.UsagePage, device.Usage,
                     observed.Api == "DeviceIoControl.HID_GET_FEATURE" && observed.ReturnedBytes == 90
-                        && observed.ResponseBytes.Length == 90 && device.ReportGeometry?.FeatureBytes == 91 ? null : observed.ResponseBytes[0], observed.ResponseBytes, PayloadDisposition.ProvenFeatureControl, completedAt));
+                        && observed.ResponseBytes.Length == 90 && observed.OutputBufferCapacity >= 91
+                        && device.ReportGeometry?.FeatureBytes == 91 ? null : observed.ResponseBytes[0], observed.ResponseBytes, PayloadDisposition.ProvenFeatureControl, completedAt, observed.OutputBufferCapacity));
             }
 
             observedCalls++;

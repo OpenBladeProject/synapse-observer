@@ -202,6 +202,27 @@ public sealed class CollectorWorkflowTests
         Assert.Contains("80", entry.ValidationHint);
     }
 
+    [Theory]
+    [InlineData(1)]
+    [InlineData(4)]
+    public async Task AnotherRecordingStartsWithFreshPerformanceChoices(int skippedSteps)
+    {
+        var model = await RecordingAsync();
+        for (var i = 0; i < skippedSteps; i++) await Run(model.SkipCommand);
+        model.StartingEntry.SelectedChoice = model.StartingEntry.Choices.Last();
+        model.StartingEntry.Details = "Previously reported state";
+        await Run(model.StopCommand);
+        model.AttachConsent = true;
+        await Run(model.StartCommand);
+        Assert.True(model.ShowStartingValue);
+        Assert.Contains("Performance mode", model.StepTitle);
+        Assert.Contains(model.StartingEntry.Choices, c => c.Label == "Balanced");
+        Assert.Null(model.StartingEntry.SelectedChoice);
+        Assert.Null(model.ChangedEntry.SelectedChoice);
+        Assert.Equal(string.Empty, model.StartingEntry.Details);
+        Assert.False(model.MarkCommand.CanExecute(null));
+    }
+
     private static async Task<CollectorViewModel> RecordingAsync()
     {
         var model = new CollectorViewModel(true);
@@ -217,6 +238,44 @@ public sealed class CollectorWorkflowTests
         Assert.True(command.CanExecute(null));
         command.Execute(null);
         await command.CurrentExecution;
+    }
+
+    [Theory]
+    [InlineData(90, 91, false)]
+    [InlineData(91, 91, true)]
+    [InlineData(91, 375, false)]
+    public async Task ReturnedPacketMappingRequiresActualOutputCapacityAndDescriptor(uint capacity, ushort featureBytes, bool bare)
+    {
+        var model = await RecordingAsync();
+        var candidate = new LocalHidCandidate("owned-fixture", "fixture-interface", "Blade fixture", 0x1532, 0xAAAA, null,
+            1, 2, new HidReportGeometry(0, 0, featureBytes), CollectionState.Collected, null, null, null, null, null, null, null);
+        var buffer = new byte[90];
+        buffer[0] = 2;
+        model.SetOwnedTestObserver(new ReturnedOwnedObserver(new NativeObservationEvent(1, 100, "DeviceIoControl.HID_GET_FEATURE", "get-feature", true, 0,
+            [2], buffer, null, 1, 90, 0, 101, capacity)), [candidate]);
+        await Run(model.StopCommand);
+        var response = Assert.Single(model.Evidence!.Observations, o => o.Source == ObservationSource.ReturnedBuffer);
+        Assert.Equal(capacity, response.OutputBufferCapacity);
+        Assert.Equal(bare ? null : (byte?)2, response.ReportId);
+        Assert.Equal(90, response.BufferLength);
+        Assert.Equal(101, response.CompletedRelativeMilliseconds);
+        // The owned preview has no admitted interface or valid privacy envelope.
+        Assert.Null(response.PayloadHex);
+    }
+
+    private sealed class ReturnedOwnedObserver(NativeObservationEvent observation) : INativeObservationSession
+    {
+        private bool delivered;
+        public long OriginTimestampTicks => System.Diagnostics.Stopwatch.GetTimestamp();
+        public NativeSessionStatus GetStatus() => new(true, true, 0, 0, "Owned fixture");
+        public Task<IReadOnlyList<NativeObservationEvent>> PollAsync(CancellationToken cancellationToken = default)
+        {
+            IReadOnlyList<NativeObservationEvent> records = delivered ? [] : [observation];
+            delivered = true;
+            return Task.FromResult(records);
+        }
+        public Task<NativeSessionStatus> StopAsync(CancellationToken cancellationToken = default) => Task.FromResult(GetStatus());
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
     private sealed class MalformedOwnedObserver : INativeObservationSession
