@@ -196,6 +196,12 @@ public sealed class EvidenceSession
             return false;
         }
 
+        var bareResponse = FeaturePayloadPrivacy.IsCompletedBareFeatureResponse(observation);
+        if (observation.Buffer.Length == 90 && !bareResponse)
+        {
+            return false;
+        }
+
         return Inventory.RazerHidInterfaces.Value.Any(candidate =>
             candidate.InterfaceLabel == observation.InterfaceLabel
             && candidate.VendorId == observation.VendorId
@@ -203,7 +209,7 @@ public sealed class EvidenceSession
             && candidate.UsagePage == observation.UsagePage
             && candidate.Usage == observation.Usage
             && candidate.ReportGeometry is not null
-            && candidate.ReportGeometry.FeatureBytes == observation.Buffer.Length);
+            && candidate.ReportGeometry.FeatureBytes == (bareResponse ? 91 : observation.Buffer.Length));
     }
 }
 

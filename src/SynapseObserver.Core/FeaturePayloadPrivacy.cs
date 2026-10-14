@@ -25,11 +25,10 @@ public static class FeaturePayloadPrivacy
             return MetadataOnly(null);
         }
 
-        var reportId = buffer[0];
         if (buffer.Length < 9)
         {
             return MetadataOnly(new FeatureReportHeaderHints(
-                reportId,
+                observation.ReportId,
                 0,
                 0,
                 0,
@@ -40,17 +39,26 @@ public static class FeaturePayloadPrivacy
                 false));
         }
 
-        var report = buffer[1..];
+        // A completed HID_GET_FEATURE IOCTL may return the logical packet
+        // without the HID report-ID envelope. Preserve its actual bytes and
+        // absent report ID; never manufacture a prefix to fit the grammar.
+        var bareResponse = IsCompletedBareFeatureResponse(observation);
+        if (!bareResponse && (buffer.Length != 91 || buffer[0] != 0))
+        {
+            return MetadataOnly(null);
+        }
+
+        byte? reportId = bareResponse ? null : buffer[0];
+        var report = bareResponse ? buffer : buffer[1..];
         var dataSize = report[5];
         var reservedBytesZero = report[2] == 0 && report[3] == 0 && report[4] == 0;
-        var checksumValid = buffer.Length == 91 && report[88] == CalculateChecksum(report);
-        var paddingZero = buffer.Length == 91
-            && dataSize <= 80
+        var checksumValid = report[88] == CalculateChecksum(report);
+        var paddingZero = dataSize <= 80
             && report[(8 + dataSize)..88].IndexOfAnyExcept((byte)0) < 0
             && report[89] == 0;
         // Header positions are meaningful only for a structurally identified
         // envelope. Do not reinterpret arbitrary opaque buffer bytes as hints.
-        if (buffer.Length != 91 || reportId != 0 || !reservedBytesZero || !checksumValid || dataSize > 80)
+        if (!reservedBytesZero || !checksumValid || dataSize > 80)
         {
             return MetadataOnly(null);
         }
@@ -66,8 +74,7 @@ public static class FeaturePayloadPrivacy
             checksumValid,
             paddingZero);
 
-        if (buffer.Length != 91
-            || observation.ReportId != reportId
+        if (observation.ReportId != reportId
             || !reservedBytesZero
             || !checksumValid
             || !paddingZero
@@ -82,6 +89,19 @@ public static class FeaturePayloadPrivacy
             ? MetadataOnly(hints)
             : new FeaturePayloadProjection(kind, hints, Convert.ToHexString(buffer));
     }
+
+    internal static bool IsCompletedBareFeatureResponse(ControlObservation observation) =>
+        observation.Buffer.Length == 90
+        && observation.VendorId == 0x1532
+        && observation.Api == "DeviceIoControl.HID_GET_FEATURE"
+        && observation.Source == ObservationSource.ReturnedBuffer
+        && observation.Direction == ObservationDirection.Output
+        && observation.Status == ObservationStatus.Succeeded
+        && observation.ErrorCategory is null
+        && observation.ReportId is null
+        && observation.CompletedRelativeMilliseconds is double completed
+        && double.IsFinite(completed)
+        && completed >= observation.RelativeMilliseconds;
 
     private static FeaturePayloadProjectionKind ClassifyReviewedPayload(
         byte commandClass,

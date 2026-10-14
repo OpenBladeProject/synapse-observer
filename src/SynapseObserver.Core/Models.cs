@@ -196,7 +196,7 @@ public enum FeaturePayloadProjectionKind
 }
 
 public sealed record FeatureReportHeaderHints(
-    byte FeatureReportId,
+    byte? FeatureReportId,
     byte Status,
     byte TransactionId,
     byte DataSize,
