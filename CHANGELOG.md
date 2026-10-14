@@ -17,6 +17,11 @@
 
 ### Fixed
 
+- Preserve valid events around malformed ring records, stop observation after
+  reader failure, retain partial-recording warnings, include recording loss in
+  quality receipts, and distinguish call IDs across recordings
+  ([#2](https://github.com/OpenBladeProject/synapse-observer/pull/2)).
+
 - Count drops correctly across successive recordings, show cleanup failures in
   the gap total, and keep exact restoration instructions after polling failure
   ([#2](https://github.com/OpenBladeProject/synapse-observer/pull/2)).

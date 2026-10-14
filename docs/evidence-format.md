@@ -78,12 +78,17 @@ Omitted payloads, rejected records, queue loss, and incomplete restoration remai
 visible. Native drop counters restart with each recording, while session loss
 and earlier evidence remain accumulated. A native failure contributes one gap
 whether polling or stop first detects it. If polling fails during a setting
-change, status and step instructions retain the exact starting-setting reminder.
+change, the collector requests a bounded stop of its own observer and retains
+the exact starting-setting reminder. Successful cleanup does not erase a partial
+recording warning. Observer-loss markers also appear in the quality receipt,
+even when no setting window contains observations. Call IDs include a recording
+prefix so request/response pairs remain distinct across successive recordings.
 ZIP writing uses a private temporary file and an atomic final rename;
 closing the GUI waits for an active export to complete. Export freezes the session
 before dispatching draft preparation and serialization off the UI thread. All
 draft files share one set of action windows. Concurrent stop and close join one
-cleanup, with one observation reader kept active through native final draining.
+cleanup. During an ordinary stop, one reader remains active through native final
+draining; after reader failure, cleanup performs a final drain and reports loss.
 
 See `EvidenceLimits` and `FeaturePayloadPrivacy` in `src/SynapseObserver.Core`
 for the exact limits and privacy classifier. Maintainers should review the

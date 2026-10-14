@@ -889,6 +889,17 @@ public static class ContributionDraftBuilder
                 $"The guided item ended as {item.State}."));
         }
 
+        if (snapshot.Markers.Any(static marker =>
+                marker.Kind == EvidenceMarkerKind.Failure
+                && marker.ActivityId == "observer"
+                && marker.Provenance == EvidenceProvenance.Observer))
+        {
+            gaps.Add(new ContributionQualityGap(
+                "recording.observer",
+                "RecordingObservationLoss",
+                "The observer reported that recording evidence may be incomplete."));
+        }
+
         if (snapshot.Observations.Select(ObservationReference).Any(reference => !associated.Contains(reference)))
         {
             gaps.Add(new ContributionQualityGap(

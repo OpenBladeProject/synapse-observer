@@ -4,6 +4,24 @@ namespace SynapseObserver.Backend;
 public sealed record BackendCandidate(int ProcessId, string Name, bool Eligible, string Diagnostic);
 public sealed record NativeObservationEvent(ulong Sequence, double RelativeMilliseconds, string Api, string Operation, bool Result, uint NativeError, byte[] RequestBytes, byte[] ResponseBytes, string? CompletionGap, uint RequestedBytes, uint ReturnedBytes, uint InterfaceIndex, double CompletionRelativeMilliseconds, uint OutputBufferCapacity = 0);
 public sealed record NativeSessionStatus(bool Started, bool Finished, int Failure, int DroppedEvents, string Diagnostic);
+/// <summary>
+/// Reports rejected observer records while transferring ownership of valid events from the same poll.
+/// The caller must clear each event's request and response byte arrays after processing them.
+/// </summary>
+public sealed class NativeObservationPollException : IOException
+{
+    public NativeObservationPollException(IReadOnlyList<NativeObservationEvent> events, int rejectedRecords)
+        : base($"{rejectedRecords} malformed observer {(rejectedRecords == 1 ? "record was" : "records were")} rejected.")
+    {
+        ArgumentNullException.ThrowIfNull(events);
+        if (rejectedRecords < 1) throw new ArgumentOutOfRangeException(nameof(rejectedRecords));
+        Events = Array.AsReadOnly(events.ToArray());
+        RejectedRecords = rejectedRecords;
+    }
+
+    public IReadOnlyList<NativeObservationEvent> Events { get; }
+    public int RejectedRecords { get; }
+}
 public static class BackendDiscovery
 {
     public static bool IsEligibleControlCandidate(SynapseObserver.Core.LocalHidCandidate candidate) =>

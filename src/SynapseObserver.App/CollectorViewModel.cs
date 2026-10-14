@@ -36,6 +36,8 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
     private int stepStartGaps;
     private string retentionGapDetails = string.Empty;
     private bool observerEnded;
+    private int recordingStartGaps;
+    private int recordingNumber;
     private bool busy;
     private EvidenceSession? session;
     private bool collecting;
@@ -88,7 +90,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
         if (startPump)
         {
             pumpCancellation = new CancellationTokenSource();
-            pump = PumpAsync(pumpCancellation.Token);
+            StartPump();
         }
     }
     public bool HasInventory => session is not null;
@@ -128,14 +130,14 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
         : !recording ? "Start recording before changing this setting, or choose a current-state report to continue without recording."
         : observerEnded ? stepPhase > 0
             ? $"Restore the starting setting: {startingSetting}. Then stop recording and save the partial evidence."
-            : "The observer has stopped. Stop recording and save the evidence."
+            : "Recording is unavailable. Save the evidence after recording cleanup finishes."
         : stepPhase == 0 ? "Select the setting currently shown. Then begin this step."
         : stepPhase == 1 ? "Change one available setting in its usual controls. Select its new value below, then mark the change."
         : $"Restore the starting setting: {startingSetting}. Mark restoration after the controls show that value."
         : "Stop recording and save the evidence ZIP.";
     public string StepStatus => !HasCurrentStep ? "Your setting changes and restoration markers are recorded." : CurrentActivity.IsReadOnly ? "This is your report, not a hardware measurement or firmware confirmation."
         : !recording ? "Current-state reports are available without observing Synapse. Setting changes need a recording."
-        : observerEnded ? "This recording has ended. Stop and save the evidence after restoring any unfinished setting."
+        : observerEnded ? "Recording is unavailable. Restore any unfinished setting and save the evidence after cleanup."
         : stepPhase == 0 ? "Examples are suggestions, not confirmed support. Skip or mark unavailable if needed."
         : stepPhase == 1 ? "The collector observes Synapse. It does not change a setting for you."
         : "Restoration will be recorded as your observation of the displayed setting.";
@@ -272,6 +274,8 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
             // and accumulated loss remain intact across successive recordings.
             droppedEvents = 0;
             nativeFailureGapCounted = false;
+            recordingStartGaps = gaps;
+            recordingNumber++;
             recording = true;
             observerEnded = false;
         }
@@ -290,7 +294,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
         if (observer is not null)
         {
             pumpCancellation = new CancellationTokenSource();
-            pump = PumpAsync(pumpCancellation.Token);
+            StartPump();
         }
 
         Refresh();
@@ -370,7 +374,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
     {
         stopping = true;
         busy = true;
-        status = "Stopping recording and retaining completed observations.";
+        status = WithRestorationReminder("Stopping recording and retaining completed observations.");
         recorderStatus = "Stopping recording.";
         Refresh();
         NativeSessionStatus? nativeStatus = null;
@@ -390,7 +394,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
         catch (Exception ex) when (ex is not OutOfMemoryException and not StackOverflowException)
         {
             stopFailure = ex;
-            gaps++;
+            if (ex is not NativeObservationPollException) gaps++;
             session?.AddMarker(new EvidenceMarker(RelativeMilliseconds, EvidenceMarkerKind.Failure, "observer", "Final observer drain failed", EvidenceProvenance.Observer, ex.GetType().Name));
         }
         finally
@@ -439,6 +443,10 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
                 session?.AddMarker(new EvidenceMarker(RelativeMilliseconds, EvidenceMarkerKind.Failure, "observer", "Recording cleanup has a gap", EvidenceProvenance.Observer));
                 status = "Recording ended with a gap. Save the partial evidence; restart Synapse manually before another session.";
             }
+            else if (gaps > recordingStartGaps)
+            {
+                status = "Recording stopped with gaps. Save the partial evidence ZIP when ready.";
+            }
             else
             {
                 status = "Recording stopped. Save the evidence ZIP when ready.";
@@ -454,7 +462,22 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
         }
     }
 
-    private async Task PumpAsync(CancellationToken cancellationToken)
+    private void StartPump()
+    {
+        var reader = PumpAsync(pumpCancellation!.Token);
+        pump = reader;
+        // Cleanup starts only after the reader task completes, so StopCoreAsync
+        // can join that reader without ever waiting on itself.
+        _ = StopAfterReaderFailureAsync(reader);
+    }
+
+    private async Task StopAfterReaderFailureAsync(Task<bool> reader)
+    {
+        var failed = await reader;
+        if (failed && ReferenceEquals(pump, reader) && recording && !stopping) await GuardAsync(StopAsync);
+    }
+
+    private async Task<bool> PumpAsync(CancellationToken cancellationToken)
     {
         try
         {
@@ -485,7 +508,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
                         // StopCoreAsync owns the single RecordingStopped marker.
                         Refresh();
                     }
-                    return;
+                    return false;
                 }
 
                 // The shared ring has 32 slots. Multi-row lighting frames can
@@ -498,11 +521,14 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
         catch (Exception ex) when (ex is not OutOfMemoryException and not StackOverflowException)
         {
             observerEnded = true;
-            gaps++;
+            if (ex is not NativeObservationPollException) gaps++;
             Marker(EvidenceMarkerKind.Failure, "observer", "Observer polling failed", EvidenceProvenance.Observer, ex.GetType().Name);
-            status = WithRestorationReminder("Recording encountered a gap. Stop recording and save the partial evidence.");
+            recorderStatus = "The recording reader failed. Requesting observer cleanup.";
+            status = WithRestorationReminder("Recording encountered a gap. The observer is stopping; save the partial evidence after cleanup.");
             Refresh();
+            return true;
         }
+        return false;
     }
 
     private string WithRestorationReminder(string message) => HasCurrentStep && stepPhase > 0
@@ -523,7 +549,17 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
             return;
         }
 
-        var batch = await observer.PollAsync();
+        IReadOnlyList<NativeObservationEvent> batch;
+        NativeObservationPollException? parseLoss = null;
+        try { batch = await observer.PollAsync(); }
+        catch (NativeObservationPollException ex)
+        {
+            // The ring reader has already released rejected slots. Retain every
+            // valid event in its batch before stopping this partial recording.
+            batch = ex.Events;
+            parseLoss = ex;
+            gaps += ex.RejectedRecords;
+        }
         try
         {
             foreach (var observed in batch)
@@ -536,7 +572,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
                 var device = controlCandidates[(int)observed.InterfaceIndex];
                 var callStatus = observed.CompletionGap == "pending-completion-not-observed" ? ObservationStatus.Pending
                     : observed.Result ? ObservationStatus.Succeeded : ObservationStatus.Failed;
-                var operationId = $"op-{observed.Sequence}";
+                var operationId = $"recording-{recordingNumber}-op-{observed.Sequence}";
                 var at = observerOrigin + observed.RelativeMilliseconds;
                 var completedAt = observerOrigin + observed.CompletionRelativeMilliseconds;
                 var returnedLengthUnknown = observed.Result && observed.Api == "HidD_GetFeature"
@@ -584,7 +620,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
         }
 
         var dropped = observer.GetStatus().DroppedEvents;
-        var visibleStateChanged = batch.Count > 0;
+        var visibleStateChanged = batch.Count > 0 || parseLoss is not null;
         if (dropped > droppedEvents)
         {
             collectionDetails = $"{dropped} events were dropped by the bounded observer queue during this recording. Completed-call observations cannot establish firmware application. Pending asynchronous completions were not observed.";
@@ -602,6 +638,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
             Changed(nameof(CollectionDetails));
             Changed(nameof(ExportSummary));
         }
+        if (parseLoss is not null) throw parseLoss;
     }
 
     private void AddControlObservation(ControlObservation observation)

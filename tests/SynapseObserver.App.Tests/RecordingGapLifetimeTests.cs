@@ -93,16 +93,18 @@ public sealed class RecordingGapLifetimeTests
             model.ChangedSetting = "Balanced";
             await Run(model.MarkCommand);
         }
-        var observer = new OwnedObserver { ThrowFirstPoll = true };
+        var observer = new OwnedObserver { ThrowFirstPoll = true, GateStop = true };
         model.SetOwnedTestObserver(observer, startPump: true);
-        await Pump(model);
+        await observer.StopEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Contains("Restore Silent", model.Status);
         Assert.Contains("Restore the starting setting: Silent", model.StepInstructions);
         Assert.DoesNotContain("Change one available setting", model.StepInstructions);
         Assert.DoesNotContain("Mark restoration", model.StepInstructions);
         Assert.False(model.MarkCommand.CanExecute(null));
-        Assert.True(model.StopCommand.CanExecute(null));
-        await Run(model.StopCommand);
+        Assert.True(model.IsBusy);
+        Assert.Contains("Stopping", model.RecorderStatus);
+        observer.ReleaseStop.SetResult();
+        await Cleanup(model);
         Assert.Contains("Restore Silent", model.Status);
         Assert.Contains("1 recording gaps", model.ObservationSummary);
         Assert.Equal(1, observer.Disposals);
@@ -131,6 +133,8 @@ public sealed class RecordingGapLifetimeTests
         .GetMethod("PollOnceAsync", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(model, null)!;
     private static Task Pump(CollectorViewModel model) => (Task)typeof(CollectorViewModel)
         .GetField("pump", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(model)!;
+    private static Task Cleanup(CollectorViewModel model) => (Task)typeof(CollectorViewModel)
+        .GetField("stopTask", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(model)!;
     private static async Task Run(AsyncCommand command)
     {
         Assert.True(command.CanExecute(null)); command.Execute(null); await command.CurrentExecution;
@@ -141,6 +145,9 @@ public sealed class RecordingGapLifetimeTests
         public bool Finished { get; set; }
         public bool ThrowFirstPoll { get; set; }
         public bool ThrowDispose { get; set; }
+        public bool GateStop { get; set; }
+        public TaskCompletionSource StopEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource ReleaseStop { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private bool polled;
         public int Stops { get; private set; }
         public int Disposals { get; private set; }
@@ -152,9 +159,11 @@ public sealed class RecordingGapLifetimeTests
             if (first && ThrowFirstPoll) throw new System.IO.InvalidDataException("Owned malformed record");
             return Task.FromResult(first ? events ?? [] : (IReadOnlyList<NativeObservationEvent>)[]);
         }
-        public Task<NativeSessionStatus> StopAsync(CancellationToken cancellationToken = default)
+        public async Task<NativeSessionStatus> StopAsync(CancellationToken cancellationToken = default)
         {
-            Stops++; Finished = true; return Task.FromResult(GetStatus());
+            Stops++; StopEntered.TrySetResult();
+            if (GateStop) await ReleaseStop.Task;
+            Finished = true; return GetStatus();
         }
         public ValueTask DisposeAsync()
         {

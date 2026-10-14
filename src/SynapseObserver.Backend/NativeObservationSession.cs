@@ -16,8 +16,8 @@ public interface INativeObservationSession : IAsyncDisposable
 
 public sealed class NativeObservationSession : INativeObservationSession
 {
-    private const int HeaderSize = 32;
-    private const int Slots = 32;
+    internal const int HeaderSize = 32;
+    internal const int Slots = 32;
     private readonly MemoryMappedFile mapping;
     private readonly MemoryMappedViewAccessor view;
     private readonly SafeProcessHandle process;
@@ -27,6 +27,8 @@ public sealed class NativeObservationSession : INativeObservationSession
     private bool disposed;
     private NativeObservationSession(MemoryMappedFile mapping, MemoryMappedViewAccessor view, SafeProcessHandle process, SafeFileHandle worker, long origin)
     { this.mapping = mapping; this.view = view; this.process = process; this.worker = worker; this.origin = origin; }
+    internal NativeObservationSession(MemoryMappedFile mapping, long origin)
+        : this(mapping, mapping.CreateViewAccessor(), new SafeProcessHandle(IntPtr.Zero, false), new SafeFileHandle(IntPtr.Zero, false), origin) { }
     private static readonly SemaphoreSlim StartGate = new(1, 1);
     public static Task<NativeObservationSession> StartAsync(BackendCandidate candidate, string selectedInterfacePath, CancellationToken cancellationToken = default) => StartAsync(candidate, new[] { selectedInterfacePath }, cancellationToken);
     public static Task<NativeObservationSession> StartAsync(BackendCandidate candidate, IReadOnlyList<string> selectedInterfacePaths, CancellationToken cancellationToken = default) => StartAsync(candidate, selectedInterfacePaths, 300, cancellationToken);
@@ -110,33 +112,45 @@ public sealed class NativeObservationSession : INativeObservationSession
         int read = view.ReadInt32(20), write = view.ReadInt32(16);
         Thread.MemoryBarrier();
         if (read < 0 || write < read || write - read > Slots) throw new InvalidDataException("Observer ring counters are invalid.");
-        while (read < write)
+        int rejected = 0;
+        try
         {
-            var bytes = new byte[NativeEventParser.RecordSize];
-            int offset = HeaderSize + (read % Slots) * NativeEventParser.RecordSize;
-            try
+            while (read < write)
             {
-                view.ReadArray(offset, bytes, 0, bytes.Length);
-                events.Add(NativeEventParser.Parse(bytes, origin, Stopwatch.Frequency));
-            }
-            catch
-            {
-                foreach (var item in events)
+                var bytes = new byte[NativeEventParser.RecordSize];
+                int offset = HeaderSize + (read % Slots) * NativeEventParser.RecordSize;
+                try
                 {
-                    CryptographicOperations.ZeroMemory(item.RequestBytes);
-                    CryptographicOperations.ZeroMemory(item.ResponseBytes);
+                    if (view.ReadArray(offset, bytes, 0, bytes.Length) != bytes.Length)
+                        throw new IOException("Observer ring slot could not be read completely.");
+                    try { events.Add(NativeEventParser.Parse(bytes, origin, Stopwatch.Frequency)); }
+                    catch (InvalidDataException) { rejected++; }
                 }
-                throw;
+                finally
+                {
+                    CryptographicOperations.ZeroMemory(bytes);
+                    // Clear every consumed or rejected slot before releasing it to the producer.
+                    view.WriteArray(offset, bytes, 0, bytes.Length);
+                }
+                Thread.MemoryBarrier(); view.Write(20, read + 1); read++;
             }
-            finally
-            {
-                CryptographicOperations.ZeroMemory(bytes);
-                // Clear the consumed slot before releasing it to the producer.
-                view.WriteArray(offset, bytes, 0, bytes.Length);
-            }
-            Thread.MemoryBarrier(); view.Write(20, ++read);
         }
+        catch
+        {
+            ClearEvents(events);
+            throw;
+        }
+        if (rejected != 0) throw new NativeObservationPollException(events, rejected);
         return Task.FromResult<IReadOnlyList<NativeObservationEvent>>(events);
+    }
+
+    private static void ClearEvents(IEnumerable<NativeObservationEvent> events)
+    {
+        foreach (var item in events)
+        {
+            CryptographicOperations.ZeroMemory(item.RequestBytes);
+            CryptographicOperations.ZeroMemory(item.ResponseBytes);
+        }
     }
     public async Task<NativeSessionStatus> StopAsync(CancellationToken cancellationToken = default)
     {
