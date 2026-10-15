@@ -254,10 +254,18 @@ separate operation IDs and the five expected evidence files. Local inspection
 checked ZIP structure and excluded local paths and device instance identifiers.
 The ZIP remains private.
 
-These were idle recordings. They validate resident reuse and export retention,
-not a new setting round trip, semantic acknowledgement correlation, firmware
-readback, prompted keys, or another Blade model. The current setting-change
-trial is pending an actual battery-power context: Windows still reported
-external power, and Synapse disabled the planned external-power preset choices.
-A later presentation fix clears the prior stop message when a new recording
-starts; it does not change the tested native or backend implementation.
+A third recording in the same process completed the reversible battery preset
+workflow and restored the starting selection in Synapse. The action markers
+used the actual battery context even though the inventory was collected while
+external power was present. Reviewed semantic acknowledgement summaries were
+linked to their prior requests; opaque bytes and incomplete payload envelopes
+remained omitted. No failed calls, recording drops, or rejected evidence were
+reported. Automatic fans remained selected in the vendor UI.
+
+This validates passive observation, guided restoration markers, conservative
+response summaries, resident reuse, and export retention on the exercised
+laptop. It does not establish independent firmware readback, prompted-key
+coverage, another feature's behavior, or physical compatibility with another
+Blade model. Later presentation changes improve recording status and recovery
+and add Battery Saver to the suggested presets; they do not change the tested
+native or backend implementation. Raw local evidence remains private.

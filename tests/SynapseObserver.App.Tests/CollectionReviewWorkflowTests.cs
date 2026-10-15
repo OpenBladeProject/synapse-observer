@@ -1,4 +1,5 @@
 using SynapseObserver.App;
+using SynapseObserver.Backend;
 using SynapseObserver.Core;
 
 namespace SynapseObserver.App.Tests;
@@ -64,8 +65,12 @@ public sealed class CollectionReviewWorkflowTests
         Assert.True(model.AttachConsent);
         Assert.True(model.StartCommand.CanExecute(null));
         Assert.False(model.IsRecording);
+        Assert.Contains("Recording stopped", model.Status);
         await Run(model.StartCommand);
         Assert.True(model.IsRecording);
+        Assert.Equal("Recording is active. Stop when ready.", model.Status);
+        Assert.DoesNotContain("Recording stopped", model.Status);
+        Assert.DoesNotContain("Save", model.Status);
         await Run(model.StopCommand);
         var second = model.Evidence!;
         Assert.Equal(first.Observations.Count, second.Observations.Count);
@@ -75,10 +80,72 @@ public sealed class CollectionReviewWorkflowTests
         await model.CloseAsync();
     }
 
+    [Fact]
+    public async Task FailedSecondStartClearsStaleFeedbackAndRequiresAvailabilityCheck()
+    {
+        var model = new CollectorViewModel(preview: false);
+        model.SetPreviewStage(1);
+        var candidate = new BackendCandidate(42, "Owned", true, "Owned fixture");
+        model.SetOwnedStartForTest(candidate, () => Task.FromResult<INativeObservationSession>(new CleanObserver()));
+        model.AttachConsent = true;
+        await Run(model.StartCommand);
+        await Run(model.StopCommand);
+        Assert.True(model.AttachConsent);
+        Assert.Contains("Recording stopped", model.Status);
+
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        model.SetOwnedStartForTest(
+            candidate,
+            async () =>
+            {
+                entered.SetResult();
+                await release.Task;
+                throw new InvalidOperationException(@"C:\private\observer.dll");
+            });
+        model.AttachConsent = true;
+
+        Assert.True(model.StartCommand.CanExecute(null));
+        model.StartCommand.Execute(null);
+        await entered.Task;
+        Assert.True(model.IsBusy);
+        Assert.Equal("Starting recording.", model.Status);
+        Assert.Equal("Checking the recording target and starting the observer.", model.RecorderStatus);
+
+        release.SetResult();
+        await model.StartCommand.CurrentExecution;
+
+        Assert.False(model.IsRecording);
+        Assert.False(model.AttachConsent);
+        Assert.Contains("Check recording availability", model.Status);
+        Assert.Contains("restart Synapse normally", model.RecorderStatus);
+        Assert.DoesNotContain("InvalidOperationException", model.Status);
+        Assert.DoesNotContain("private", model.RecorderStatus, StringComparison.OrdinalIgnoreCase);
+        Assert.Single(model.Evidence!.Markers, marker => marker.Label == "Recording start failed");
+        model.AttachConsent = true;
+        Assert.False(model.StartCommand.CanExecute(null));
+        await model.CloseAsync();
+    }
+
     private static async Task Run(AsyncCommand command)
     {
         Assert.True(command.CanExecute(null));
         command.Execute(null);
         await command.CurrentExecution;
+    }
+
+    private sealed class CleanObserver : INativeObservationSession
+    {
+        private bool stopped;
+        public long OriginTimestampTicks => System.Diagnostics.Stopwatch.GetTimestamp();
+        public NativeSessionStatus GetStatus() => new(true, stopped, 0, 0, stopped ? "Hooks stopped." : "Recording.", true);
+        public Task<IReadOnlyList<NativeObservationEvent>> PollAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<NativeObservationEvent>>([]);
+        public Task<NativeSessionStatus> StopAsync(CancellationToken cancellationToken = default)
+        {
+            stopped = true;
+            return Task.FromResult(GetStatus());
+        }
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 }

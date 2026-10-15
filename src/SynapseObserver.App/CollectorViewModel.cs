@@ -20,6 +20,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
     private IReadOnlyList<LocalHidCandidate> controlCandidates = [];
     private IReadOnlyList<LocalHidCandidate> inputCandidates = [];
     private BackendCandidate? backendCandidate;
+    private Func<Task<INativeObservationSession>>? startObserverForTest;
     private INativeObservationSession? observer;
     private CancellationTokenSource? pumpCancellation;
     private Task? pump;
@@ -116,6 +117,12 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
             pumpCancellation = new CancellationTokenSource();
             StartPump();
         }
+    }
+    internal void SetOwnedStartForTest(BackendCandidate syntheticCandidate, Func<Task<INativeObservationSession>> start)
+    {
+        backendCandidate = syntheticCandidate;
+        startObserverForTest = start;
+        RefreshCommands();
     }
     public bool HasInventory => session is not null;
     public bool ShowInventoryScreen => !HasInventory;
@@ -280,20 +287,38 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
         }
 
         busy = true;
+        status = "Starting recording.";
+        recorderStatus = "Checking the recording target and starting the observer.";
         Refresh();
         try
         {
-            if (!preview)
+            if (!preview || startObserverForTest is not null)
             {
                 // The backend performs fresh process, payload and device checks
                 // on every start. Reuse the UI candidate without another HID scan.
-                if (backendCandidate is null)
+                if (!preview && backendCandidate is null)
                 {
                     status = recorderStatus;
                     return;
                 }
 
-                observer = await NativeObservationSession.StartAsync(backendCandidate, controlCandidates.Select(candidate => candidate.InterfacePath).ToArray());
+                try
+                {
+                    observer = startObserverForTest is null
+                        ? await NativeObservationSession.StartAsync(backendCandidate!, controlCandidates.Select(candidate => candidate.InterfacePath).ToArray())
+                        : await startObserverForTest();
+                }
+                catch (Exception ex) when (ex is not OutOfMemoryException and not StackOverflowException)
+                {
+                    observer = null;
+                    consent = false;
+                    backendCandidate = null;
+                    startObserverForTest = null;
+                    session.AddMarker(new EvidenceMarker(RelativeMilliseconds, EvidenceMarkerKind.Failure, "observer", "Recording start failed", EvidenceProvenance.Collector));
+                    recorderStatus = "Recording could not start. Check recording availability. If an earlier observer cleanup failed, restart Synapse normally before trying again.";
+                    status = "Recording did not start. Collected information is still available. Check recording availability or restart Synapse normally.";
+                    return;
+                }
                 // Use the observer's actual QPC origin, not the time at which its
                 // Task.Run was queued. User markers and events share this clock.
                 observerOrigin = (observer.OriginTimestampTicks - sessionOriginTicks) * 1000.0 / Stopwatch.Frequency;
@@ -311,7 +336,8 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
             recordingNumber++;
             recording = true;
             observerEnded = false;
-            status = "Recording is active. Follow the selected item, or stop when ready.";
+            collectionDetails = "The observer collects selected laptop feature calls. An observed response is labeled as a user-mode returned buffer, not firmware confirmation.";
+            status = "Recording is active. Stop when ready.";
         }
         finally
         {

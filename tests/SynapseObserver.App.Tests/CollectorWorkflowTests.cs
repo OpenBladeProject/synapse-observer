@@ -124,6 +124,10 @@ public sealed class CollectorWorkflowTests
     public async Task PresetsNeedNoTypingAndRestoreFrozenStartingChoice()
     {
         var model = await RecordingAsync();
+        model.StartingEntry.SelectedChoice = model.StartingEntry.Choices.Single(c => c.Label == "Battery Saver");
+        Assert.False(model.StartingEntry.ShowDetails);
+        Assert.True(model.StartingEntry.HasValue);
+        Assert.Equal("Battery Saver", model.StartingEntry.Value);
         model.StartingEntry.SelectedChoice = model.StartingEntry.Choices.Single(c => c.Label == "Balanced");
         Assert.True(model.MarkCommand.CanExecute(null));
         await Run(model.MarkCommand);

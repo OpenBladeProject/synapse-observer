@@ -6,7 +6,8 @@
 
 - Start another recording in the same collector window after a confirmed clean
   stop, without restarting Synapse. Keep earlier evidence and recheck the current
-  process and laptop before every recording
+  process and laptop before every recording. Clarify start and failure guidance
+  and include Battery Saver among the suggested performance states
   ([#7](https://github.com/OpenBladeProject/synapse-observer/pull/7)).
 
 - Include independent Windows identity sources, per-action power context, parsed
