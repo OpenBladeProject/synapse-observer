@@ -370,3 +370,66 @@ The one-shot delayed test gate is intentional. Independent source triage also
 confirmed that nested draft versions are separate from the unchanged outer
 bundle format, and that a primary annotation summary need not duplicate every
 quality diagnostic. The missing format documentation was corrected.
+
+## AC controls follow-up, 2026-10-15
+
+Live runtime source: `7c0c8d794890d4bfb0549ccc8df9298e69205cdd`,
+using the executable hash recorded above. The same Blade 16 RZ09-0581,
+`1532:02E0`, BIOS 4.01 and Synapse 4.0.827.114 were used. Synapse now
+exposed its AC performance controls; connector type and wattage remain unknown.
+
+| Evidence item | Starting selection | Temporary selection | Restored selection |
+| --- | --- | --- | --- |
+| Performance mode | Balanced, Auto fans | Custom, CPU Medium, GPU High, GPU overclock Off | Balanced, Auto fans |
+| Fan mode | Automatic | Stored Manual Fan Curve, GPU source, percent display, use-both unchecked | Automatic |
+| Custom CPU level | Medium | Low | Medium |
+| Custom GPU level | High | Medium | High |
+
+No curve points were edited. Custom mode was entered to expose its level
+selectors; after restoring both stored levels, the overall mode was returned
+to the original Balanced selection. Restoration was checked in Synapse, not
+through independent firmware readback.
+
+The first recording reached its five-minute limit before the fan restoration
+marker could be saved. Automatic was restored in Synapse, but the incomplete
+window remains in the ZIP. A dedicated shorter fan recording completed all
+four markers. Separate CPU and GPU recordings also completed and stopped.
+
+The final private ZIP has SHA-256
+`CD13EAB2EB6C5F0A13A000F8F7606B24F03DB9E7A40F5C1C0499D73B64CE8F30`.
+It contains the five expected files, four paired recording starts/stops,
+five action windows (four complete and the retained incomplete fan attempt),
+3,150 successful observations, 1,194 complete reviewed input bodies, and ten
+semantic-only response summaries. All 978 output bodies remain excluded.
+There are no failed calls, rejected records, dropped-event or cleanup-failure
+markers. The checkpoint's observations, markers, and two action-window objects
+are unchanged prefixes of the final export. A bounded scan found no local
+paths, accounts, instance identifiers, serial fields, or email addresses.
+
+HyperBoost and cooling-pad state were marked unavailable for this session.
+CPU power-limit and optimizer controls were not exposed in the inspected
+Custom panel. GPU overclocking was Off; its offsets were not exercised.
+Local exact-PID runtime metadata contains tuning-related fields, but that
+neither establishes editable UI availability nor admits commands. These are
+session-level limits, not permanent model capability claims.
+
+The attempt to open Windows Settings through Computer Use timed out awaiting
+app approval. HDR, VRR, dynamic refresh, and Windows display-brightness changes
+remain untested. Physical M/Fn keys, keyboard legends, per-key color mapping,
+physical LED observations, EC/MCU versions, adapter rating, and cooling-pad
+behavior also remain unverified. No sleep/resume or startup hardware test was
+attempted. Prior unchanged shared-path evidence is reused; no all-model or
+complete-support claim is made.
+
+A later presentation correction names the review count "complete action
+sequence" because the public marker API accepts omitted values. Its focused
+regression uses accepted null values; whitespace-only values are rejected by
+the session API. This wording change does not alter the native observer,
+recording lifecycle, evidence decoder, or the live runtime identified above.
+
+The final summary wording package at source
+`4be4f49b8dd768108520aca3e46da3e8462fd917` passed 515 managed tests
+(312 Core, 118 App, 85 Backend) and both native owned-process fixtures.
+Its executable SHA-256 is
+`903C002F58A9E58036FA1B23D7C25ADEEF062B52F7346CB8BAC975CEF0B82F7A`.
+This package remains framework-dependent and does not bundle .NET.
