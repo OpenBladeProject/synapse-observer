@@ -14,7 +14,7 @@ framework-dependent single executable. The native DLL is embedded with the
 app and extracted by .NET when needed. It must match the hash compiled into
 the managed backend; there is no user-supplied DLL path.
 
-Output: `artifacts/SynapseObserver-win-x64-prototype.zip`. It includes the
+Output: `artifacts/SynapseObserver-win-x64-<version>.zip`. It includes the
 executable, licenses, and a source-commit/SHA-256 manifest. The .NET runtime is
 not included. Build output is ignored by Git.
 
@@ -48,7 +48,7 @@ and export path. It never starts the observer or applies a setting.
 Source tests do not establish successful attachment to Synapse. Obtain explicit
 approval immediately before a live prototype test. Run Synapse and the collector
 normally under the same account; do not use administrator launch or weaken
-security protections. The collector requires the reviewed engine/module hashes,
+security protections. The collector records engine/module hashes and requires
 a valid Razer signature, matching account/session/integrity/x64 identity, and
 fresh device-interface discovery before attachment.
 
