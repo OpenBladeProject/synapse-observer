@@ -41,7 +41,8 @@
 
 - Require a different reported value for a setting change and explain unchanged
   legacy sequences in exported evidence. Validate typed setting descriptions
-  before saving a marker
+  before saving a marker, and preserve the submitted value during power checks.
+  Version the corrected draft contracts and retain independent missing-call gaps
   ([#7](https://github.com/OpenBladeProject/synapse-observer/pull/7)).
 
 - Explain how to collect, review, and submit evidence for an existing or new

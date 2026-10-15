@@ -68,6 +68,73 @@ public sealed class CollectorWorkflowTests
     }
 
     [Fact]
+    public async Task StartingMarkerUsesValidatedValueCapturedBeforePowerQuery()
+    {
+        var model = await RecordingAsync();
+        model.StartingSetting = "Balanced";
+        var (powerRead, releasePower) = DelayActionPowerRead(model);
+
+        model.MarkCommand.Execute(null);
+        await powerRead;
+        model.StartingSetting = @"C:\private";
+        releasePower.SetResult(PowerSourceKind.Battery);
+        await model.MarkCommand.CurrentExecution;
+
+        var marker = Assert.Single(model.Evidence!.Markers, item => item.Kind == EvidenceMarkerKind.UserReportedStartingValue);
+        Assert.Equal("Balanced", marker.Value);
+        Assert.Equal(PowerSourceKind.Battery, marker.PowerSourceAtMarker);
+        Assert.Equal(marker.Value, typeof(CollectorViewModel).GetField("startingSetting",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(model));
+        Assert.Equal(0, model.Evidence.RejectedMarkerCount);
+        Assert.DoesNotContain(model.Evidence.Markers, item => item.Kind == EvidenceMarkerKind.Failure);
+    }
+
+    [Fact]
+    public async Task ReadOnlyMarkerUsesValidatedValueCapturedBeforePowerQuery()
+    {
+        var model = await RecordingAsync();
+        var powerSource = model.Activities.ToList().FindIndex(activity => activity.Id == "power-source");
+        model.SelectedActivityIndex = powerSource;
+        model.StartingSetting = "Battery";
+        var (powerRead, releasePower) = DelayActionPowerRead(model);
+
+        model.MarkCommand.Execute(null);
+        await powerRead;
+        model.StartingSetting = @"C:\private";
+        releasePower.SetResult(PowerSourceKind.Ac);
+        await model.MarkCommand.CurrentExecution;
+
+        var marker = Assert.Single(model.Evidence!.Markers, item => item.ActivityId == "power-source");
+        Assert.Equal(EvidenceMarkerKind.UserReportedCurrentState, marker.Kind);
+        Assert.Equal("Battery", marker.Value);
+        Assert.Equal(PowerSourceKind.Ac, marker.PowerSourceAtMarker);
+        Assert.Equal(CoverageState.Completed, model.Activities[powerSource].State);
+        Assert.Equal(0, model.Evidence.RejectedMarkerCount);
+    }
+
+    [Fact]
+    public async Task ChangedMarkerUsesDistinctValueCapturedBeforePowerQuery()
+    {
+        var model = await RecordingAsync();
+        model.StartingSetting = "Balanced";
+        await Run(model.MarkCommand);
+        model.ChangedSetting = "Silent";
+        var (powerRead, releasePower) = DelayActionPowerRead(model);
+
+        model.MarkCommand.Execute(null);
+        await powerRead;
+        model.ChangedSetting = "Balanced";
+        releasePower.SetResult(PowerSourceKind.Battery);
+        await model.MarkCommand.CurrentExecution;
+
+        var marker = Assert.Single(model.Evidence!.Markers, item => item.Kind == EvidenceMarkerKind.UserReportedTargetValue);
+        Assert.Equal("Silent", marker.Value);
+        Assert.Equal(PowerSourceKind.Battery, marker.PowerSourceAtMarker);
+        Assert.Contains("Balanced", model.StepInstructions);
+        Assert.Equal(0, model.Evidence.RejectedMarkerCount);
+    }
+
+    [Fact]
     public async Task RestorationUsesOriginalReportedValueAndRetainsMissingObservationGap()
     {
         var model = await RecordingAsync();
@@ -487,6 +554,18 @@ public sealed class CollectorWorkflowTests
         await Run(model.StartCommand);
         Assert.True(model.IsRecording);
         return model;
+    }
+
+    private static (Task PowerRead, TaskCompletionSource<PowerSourceKind> ReleasePower) DelayActionPowerRead(CollectorViewModel model)
+    {
+        var powerRead = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releasePower = new TaskCompletionSource<PowerSourceKind>(TaskCreationOptions.RunContinuationsAsynchronously);
+        model.ActionPowerSourceForTest = async () =>
+        {
+            powerRead.SetResult();
+            return await releasePower.Task;
+        };
+        return (powerRead.Task, releasePower);
     }
 
     private static async Task Run(AsyncCommand command)

@@ -69,6 +69,8 @@ public sealed class EvidenceBundleWriterTests
             Assert.DoesNotContain("payloadHex\": \"", manifest, StringComparison.Ordinal);
 
             using var coverage = await ReadJsonAsync(archive, "coverage-draft.json");
+            Assert.Equal("synapse-observer.coverage-draft.v2",
+                coverage.RootElement.GetProperty("schemaVersion").GetString());
             var coverageItems = coverage.RootElement.GetProperty("coverage");
             Assert.Contains(coverageItems.EnumerateArray(), item =>
                 item.GetProperty("capability").GetString() == "performance.externalPower.presets");
@@ -81,11 +83,15 @@ public sealed class EvidenceBundleWriterTests
             Assert.DoesNotContain("productionAdmitted", coverage.RootElement.GetRawText(), StringComparison.OrdinalIgnoreCase);
 
             using var annotations = await ReadJsonAsync(archive, "annotation-draft.json");
+            Assert.Equal("synapse-observer.annotation-draft.v2",
+                annotations.RootElement.GetProperty("schemaVersion").GetString());
             Assert.Contains("UserModeFeatureApi", annotations.RootElement.GetRawText(), StringComparison.Ordinal);
             Assert.Contains("WindowsRawInput", annotations.RootElement.GetRawText(), StringComparison.Ordinal);
             Assert.Contains("WindowsInventory", annotations.RootElement.GetRawText(), StringComparison.Ordinal);
 
             using var receipt = await ReadJsonAsync(archive, "quality-receipt.json");
+            Assert.Equal("synapse-observer.quality-receipt.v2",
+                receipt.RootElement.GetProperty("schemaVersion").GetString());
             Assert.False(receipt.RootElement.GetProperty("claimsQueryValidation").GetBoolean());
             Assert.False(receipt.RootElement.GetProperty("claimsSetterValidation").GetBoolean());
             Assert.False(receipt.RootElement.GetProperty("claimsProductionAdmission").GetBoolean());
@@ -331,8 +337,15 @@ public sealed class EvidenceBundleWriterTests
         Assert.Equal(expectedComplete, window.CompleteUserReportedSequence);
         Assert.Equal(!expectedComplete, window.UnchangedReportedValues);
         Assert.Equal(!expectedComplete, window.Gap?.Contains("unchanged", StringComparison.Ordinal));
-        Assert.Contains(drafts.Quality.Gaps, gap => gap.Area == "action.performance"
-            && gap.Code == (expectedComplete ? "NoMatchingObservation" : "UnchangedReportedValues"));
+        Assert.Single(drafts.Quality.Gaps, gap => gap.Area == "action.performance"
+            && gap.Code == "NoMatchingObservation");
+        Assert.Equal(!expectedComplete, drafts.Quality.Gaps.Any(gap => gap.Area == "action.performance"
+            && gap.Code == "UnchangedReportedValues"));
+        if (!expectedComplete)
+            Assert.Single(drafts.Quality.Gaps, gap => gap.Area == "action.performance"
+                && gap.Code == "UnchangedReportedValues");
+        Assert.DoesNotContain(drafts.Quality.Gaps, gap => gap.Area == "action.performance"
+            && gap.Code == "IncompleteActionMarkers");
     }
 
     [Fact]
@@ -653,7 +666,8 @@ public sealed class EvidenceBundleWriterTests
         var drafts = ContributionDraftBuilder.CreateDrafts(session.Snapshot());
 
         Assert.False(Assert.Single(drafts.Annotation.ActionWindows).CompleteUserReportedSequence);
-        Assert.Contains(drafts.Quality.Gaps, item => item.Code == "IncompleteActionMarkers");
+        Assert.Single(drafts.Quality.Gaps, item => item.Code == "IncompleteActionMarkers");
+        Assert.Single(drafts.Quality.Gaps, item => item.Code == "NoMatchingObservation");
     }
 
     [Theory]

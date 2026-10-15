@@ -961,13 +961,30 @@ public static class ContributionDraftBuilder
         foreach (var window in windows.Where(item => item.CompleteUserReportedSequence && item.PowerSourceAtAction == PowerSourceKind.Unknown))
             gaps.Add(new($"action.{window.ActivityId}", "ActionPowerContextUnknown", "Action power samples were missing, unknown, or changed; performance evidence is not assigned to a power context."));
 
-        foreach (var window in windows.Where(static item => item.Gap is not null))
+        foreach (var window in windows)
         {
-            gaps.Add(new ContributionQualityGap(
-                $"action.{window.ActivityId}",
-                window.UnchangedReportedValues ? "UnchangedReportedValues"
-                    : window.CompleteUserReportedSequence ? "NoMatchingObservation" : "IncompleteActionMarkers",
-                window.Gap!));
+            if (window.UnchangedReportedValues)
+            {
+                gaps.Add(new ContributionQualityGap(
+                    $"action.{window.ActivityId}",
+                    "UnchangedReportedValues",
+                    "The reported starting and target values are unchanged; this sequence does not establish a setting change."));
+            }
+            else if (!window.CompleteUserReportedSequence)
+            {
+                gaps.Add(new ContributionQualityGap(
+                    $"action.{window.ActivityId}",
+                    "IncompleteActionMarkers",
+                    "An ordered starting, target, action, and restoration sequence is not present."));
+            }
+
+            if (window.Observations.Count == 0)
+            {
+                gaps.Add(new ContributionQualityGap(
+                    $"action.{window.ActivityId}",
+                    "NoMatchingObservation",
+                    "No user-mode feature observation fell inside this action window."));
+            }
         }
 
         foreach (var item in snapshot.Coverage.Where(static item => item.State != CoverageState.Completed))

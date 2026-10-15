@@ -387,14 +387,36 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
 
     private async Task MarkAsync()
     {
+        var activity = CurrentActivity;
+        var phase = stepPhase;
+        var startingValue = StartingEntry.Value;
+        var startingValueIsValid = StartingEntry.HasValue;
+        var changedValue = ChangedEntry.Value;
+        var changedValueIsValid = ChangedEntry.HasValue;
+        var reportedStartingValue = startingSetting;
+
+        if ((activity.IsReadOnly || phase == 0) && !startingValueIsValid)
+        {
+            status = StartingEntry.ValidationHint;
+            Refresh();
+            return;
+        }
+        if (!activity.IsReadOnly && phase == 1
+            && (!changedValueIsValid || SettingValueComparison.AreEquivalent(reportedStartingValue, changedValue)))
+        {
+            status = "Choose a changed value that differs from the starting setting.";
+            Refresh();
+            return;
+        }
+
         busy = true;
         RefreshCommands();
         try
         {
             var actionPower = await ReadActionPowerSourceAsync();
-            if (CurrentActivity.IsReadOnly)
+            if (activity.IsReadOnly)
             {
-                if (!Marker(EvidenceMarkerKind.UserReportedCurrentState, CurrentActivity.Id, "User reported current state or known behavior", EvidenceProvenance.UserReported, StartingEntry.Value, actionPower)) return;
+                if (!Marker(EvidenceMarkerKind.UserReportedCurrentState, activity.Id, "User reported current state or known behavior", EvidenceProvenance.UserReported, startingValue, actionPower)) return;
                 SetCurrentCoverage(CoverageState.Completed, CoverageReason.None);
                 NextStep();
                 if (!recording) await UpdateCollectionReviewAsync();
@@ -402,28 +424,23 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
                 return;
             }
 
-            if (stepPhase == 0)
+            if (phase == 0)
             {
-                startingSetting = StartingEntry.Value;
-                if (!Marker(EvidenceMarkerKind.UserReportedStartingValue, CurrentActivity.Id, "Starting setting reported", EvidenceProvenance.UserReported, startingSetting, actionPower)) return;
+                if (!Marker(EvidenceMarkerKind.UserReportedStartingValue, activity.Id, "Starting setting reported", EvidenceProvenance.UserReported, startingValue, actionPower)) return;
+                startingSetting = startingValue;
                 stepStartCount = observedCalls;
                 stepStartGaps = gaps;
                 stepPhase = 1;
             }
-            else if (stepPhase == 1)
+            else if (phase == 1)
             {
-                if (!HasDistinctChangedSetting)
-                {
-                    status = "Choose a changed value that differs from the starting setting.";
-                    return;
-                }
-                if (!Marker(EvidenceMarkerKind.UserReportedTargetValue, CurrentActivity.Id, "Changed setting reported", EvidenceProvenance.UserReported, ChangedEntry.Value, actionPower)) return;
-                if (!Marker(EvidenceMarkerKind.UserActionConfirmed, CurrentActivity.Id, "User marked the setting change", EvidenceProvenance.UserReported, powerSource: actionPower)) return;
+                if (!Marker(EvidenceMarkerKind.UserReportedTargetValue, activity.Id, "Changed setting reported", EvidenceProvenance.UserReported, changedValue, actionPower)) return;
+                if (!Marker(EvidenceMarkerKind.UserActionConfirmed, activity.Id, "User marked the setting change", EvidenceProvenance.UserReported, powerSource: actionPower)) return;
                 stepPhase = 2;
             }
             else
             {
-                if (!Marker(EvidenceMarkerKind.UserReportedRestoration, CurrentActivity.Id, "User reported restoration of starting setting", EvidenceProvenance.UserReported, startingSetting, actionPower)) return;
+                if (!Marker(EvidenceMarkerKind.UserReportedRestoration, activity.Id, "User reported restoration of starting setting", EvidenceProvenance.UserReported, reportedStartingValue, actionPower)) return;
                 SetCurrentCoverage(observedCalls > stepStartCount && gaps == stepStartGaps ? CoverageState.Completed : CoverageState.CompletedWithGaps,
                     gaps > stepStartGaps ? CoverageReason.CaptureFailed : observedCalls <= stepStartCount ? CoverageReason.NoMatchingEvents : CoverageReason.None);
                 NextStep();

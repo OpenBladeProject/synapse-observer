@@ -329,3 +329,25 @@ versions, and cooling-pad behavior were not exercised. Manual fan-curve editing
 was not part of the Fixed fan-mode round trip. No model beyond this laptop,
 firmware readback, physical lighting observation, or signed-build antivirus
 compatibility is established by these results.
+The final frozen-package ZIP retained all nine earlier action-window objects
+unchanged and added the fan, refresh, and color windows. All twelve windows have
+exact restoration strings and no window gaps. Eleven recording start/stop pairs
+are present, all with clean-stop markers. The bundle contains 2,458 control
+observations, 2,182 reviewed input bodies, and four semantic-only returned
+summaries; all 132 output bodies remain excluded. The current-state resolution
+report is separate from action windows. The M1 timeout retains NoMatchingInput,
+and the rejected Gaming marker remains in global quality history. The same
+bounded privacy scan found no excluded identifiers or local paths.
+
+The framework-dependent `66b5dd6` package passed 511 managed tests and both native
+owned-process fixtures. Its disconnected preview showed the unchanged-value
+explanation beside a disabled change button and rejected `Windows/Copilot` with
+an explanatory hint. Preview evidence is separate from live Synapse evidence.
+Claude's follow-up review identified an additional editable-input race during
+the asynchronous power-context query. The follow-up fix snapshots and validates
+the submitted value before that query; three delayed-query regressions cover
+starting, changed, and report-only values. App tests pass 118 cases.
+Annotation, quality, and capability coverage draft schemas advance together to
+v2 for the corrected validity/count/promotion semantics; raw session and native
+protocol versions remain unchanged. Independent no-observation gaps survive
+alongside unchanged or incomplete marker diagnoses. Core tests pass 311 cases.

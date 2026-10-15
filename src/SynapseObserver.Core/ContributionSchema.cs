@@ -52,7 +52,7 @@ public sealed record ContributionCoverageDraft(
     IReadOnlyList<ContributionCoverageEntry> Coverage,
     string EvidenceBoundary)
 {
-    public const string CurrentSchemaVersion = "synapse-observer.coverage-draft.v1";
+    public const string CurrentSchemaVersion = "synapse-observer.coverage-draft.v2";
 }
 
 public sealed record ContributionMarkerDraft(
@@ -116,7 +116,7 @@ public sealed record ContributionAnnotationDraft(
     IReadOnlyList<SpecialKeyProbeSummary> SpecialKeyProbes,
     string EvidenceBoundary)
 {
-    public const string CurrentSchemaVersion = "synapse-observer.annotation-draft.v1";
+    public const string CurrentSchemaVersion = "synapse-observer.annotation-draft.v2";
 
     public IReadOnlyList<ContributionContextMarkerDraft> ContextMarkers { get; init; } = [];
 }
@@ -153,5 +153,5 @@ public sealed record ContributionQualityReceipt(
     bool ClaimsSetterValidation,
     bool ClaimsProductionAdmission)
 {
-    public const string CurrentSchemaVersion = "synapse-observer.quality-receipt.v1";
+    public const string CurrentSchemaVersion = "synapse-observer.quality-receipt.v2";
 }
