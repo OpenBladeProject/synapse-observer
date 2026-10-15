@@ -439,6 +439,70 @@ public sealed class EvidenceBundleWriterTests
             Assert.Single(drafts.Coverage.Coverage, item => item.Capability == "performance.externalPower.readback").Status);
     }
 
+    [Fact]
+    public void IncompleteThermalAck_CorrelatesUniqueReviewedSetterWithoutClaimingReadback()
+    {
+        using var session = new EvidenceSession(SyntheticPreview.CreateInventory());
+        AddCompleteMarkers(session, "performance", 1, 10);
+        session.AddObservation(new ControlObservation(
+            "op-set", 2, ObservationSource.UserModeCall, "HidD_SetFeature",
+            ObservationDirection.Input, ObservationStatus.Succeeded, 0, null,
+            0x1532, 0xFFFF, "hid-preview-01", 1, 2, 0,
+            FeatureReportTestData.Create(0x0D, 0x02, [0x01, 0x01, 0x05, 0x00],
+                transactionId: 0x42),
+            PayloadDisposition.ProvenFeatureControl, 2.1));
+        session.AddObservation(new ControlObservation(
+            "op-interleaved", 2.2, ObservationSource.UserModeCall, "HidD_SetFeature",
+            ObservationDirection.Input, ObservationStatus.Succeeded, 0, null,
+            0x1532, 0xFFFF, "hid-preview-01", 1, 2, 0,
+            FeatureReportTestData.Create(0x07, 0x8C, [0x00, 0x00], transactionId: 0x43),
+            PayloadDisposition.ProvenFeatureControl, 2.3));
+        session.AddObservation(CreateIncompleteThermalAck("op-get", 3, 0x42));
+
+        var drafts = ContributionDraftBuilder.CreateDrafts(session.Snapshot());
+
+        var observations = Assert.Single(drafts.Annotation.ActionWindows).Observations;
+        var request = Assert.Single(observations, item => item.OperationId == "op-set");
+        var response = Assert.Single(observations, item => item.OperationId == "op-get");
+        Assert.Equal(ContributionObservationRole.FeatureSetResponse, response.Role);
+        Assert.Equal(request.ReferenceId, response.CorrelatedRequestReferenceId);
+        Assert.NotNull(response.SemanticResponse);
+        Assert.False(response.CompletePayloadRetained);
+        Assert.False(response.FirmwareReadback);
+        Assert.Equal(1, drafts.Quality.Counts.ReviewedSemanticOnlyResponses);
+        Assert.Contains(EvidenceCollectionReview.Create(session.Snapshot()).Notes,
+            note => note.StartsWith("1 returned response summary retained", StringComparison.Ordinal));
+        Assert.Equal(ContributionCoverageStatus.NotInvestigated,
+            Assert.Single(drafts.Coverage.Coverage,
+                item => item.Capability == "performance.externalPower.readback").Status);
+    }
+
+    [Fact]
+    public void IncompleteThermalAck_DoesNotInventCorrelationForDuplicateMatchingRequests()
+    {
+        using var session = new EvidenceSession(SyntheticPreview.CreateInventory());
+        AddCompleteMarkers(session, "performance", 1, 10);
+        foreach (var (operation, time) in new[] { ("op-set-1", 2.0), ("op-set-2", 2.2) })
+        {
+            session.AddObservation(new ControlObservation(
+                operation, time, ObservationSource.UserModeCall, "HidD_SetFeature",
+                ObservationDirection.Input, ObservationStatus.Succeeded, 0, null,
+                0x1532, 0xFFFF, "hid-preview-01", 1, 2, 0,
+                FeatureReportTestData.Create(0x0D, 0x02, [0x01, 0x01, 0x05, 0x00],
+                    transactionId: 0x42),
+                PayloadDisposition.ProvenFeatureControl, time + 0.1));
+        }
+        session.AddObservation(CreateIncompleteThermalAck("op-get", 3, 0x42));
+
+        var response = Assert.Single(Assert.Single(
+                ContributionDraftBuilder.CreateAnnotationDraft(session.Snapshot()).ActionWindows)
+            .Observations, item => item.OperationId == "op-get");
+
+        Assert.Equal(ContributionObservationRole.FeatureSetResponse, response.Role);
+        Assert.Null(response.CorrelatedRequestReferenceId);
+        Assert.False(response.FirmwareReadback);
+    }
+
     [Theory]
     [InlineData(7, 0x12, new byte[] { 80 }, "battery.limitQuery", FeaturePayloadProjectionKind.ReviewedBatterySetting)]
     [InlineData(3, 3, new byte[] { 1, 5, 197 }, "keyboardLighting.brightnessQuery", FeaturePayloadProjectionKind.ReviewedKeyboardBrightness)]
@@ -623,5 +687,24 @@ public sealed class EvidenceBundleWriterTests
             activity, "Action", EvidenceProvenance.UserReported) { PowerSourceAtMarker = PowerSourceKind.Ac });
         session.AddMarker(new EvidenceMarker(end, EvidenceMarkerKind.UserReportedRestoration,
             activity, "Restore", EvidenceProvenance.UserReported, "Balanced") { PowerSourceAtMarker = PowerSourceKind.Ac });
+    }
+
+    private static ControlObservation CreateIncompleteThermalAck(
+        string operationId,
+        double time,
+        byte transactionId)
+    {
+        var bytes = FeatureReportTestData.Create(
+            0x0D,
+            0x02,
+            [0x01, 0x01, 0x05, 0x00],
+            ObservationDirection.Output,
+            transactionId: transactionId)[..90];
+        bytes[0] = 0xA5;
+        return new ControlObservation(
+            operationId, time, ObservationSource.ReturnedBuffer, "DeviceIoControl.HID_GET_FEATURE",
+            ObservationDirection.Output, ObservationStatus.Succeeded, 0, null,
+            0x1532, 0xFFFF, "hid-preview-01", 1, 2, null, bytes,
+            PayloadDisposition.ProvenFeatureControl, time, 91, 91, 90);
     }
 }

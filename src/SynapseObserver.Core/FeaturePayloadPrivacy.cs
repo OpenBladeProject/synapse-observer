@@ -1,7 +1,7 @@
 namespace SynapseObserver.Core;
 
 /// <summary>
-/// Projects only reviewed, structurally complete Razer feature reports. This is a
+/// Projects reviewed complete reports and strictly bounded incomplete response semantics. This is a
 /// privacy decision for evidence export and does not authorize a device or command.
 /// </summary>
 public static class FeaturePayloadPrivacy
@@ -48,6 +48,19 @@ public static class FeaturePayloadPrivacy
         if (buffer.Length == 375)
         {
             return ClassifyMatrixFrame(observation);
+        }
+
+        if (TryProjectIncompleteThermalAcknowledgement(
+                observation, structureDiagnostics, out var semanticResponse))
+        {
+            return new FeaturePayloadProjection(
+                FeaturePayloadProjectionKind.ReviewedThermalMode,
+                null,
+                null)
+            {
+                ResponseStructureDiagnostics = structureDiagnostics,
+                SemanticResponse = semanticResponse,
+            };
         }
 
         // A completed HID_GET_FEATURE IOCTL may return the logical packet
@@ -206,6 +219,86 @@ public static class FeaturePayloadPrivacy
         && observation.CompletedRelativeMilliseconds is double completed
         && double.IsFinite(completed)
         && completed >= observation.RelativeMilliseconds;
+
+    private static bool TryProjectIncompleteThermalAcknowledgement(
+        ControlObservation observation,
+        FeatureResponseStructureDiagnostics? diagnostics,
+        out ReviewedFeatureResponseProjection? projection)
+    {
+        projection = null;
+        if (observation.ReturnedLengthUnknown
+            || observation.ReturnedBytes != 90
+            || diagnostics?.ReportIdPrefixedPacket is not
+            {
+                Completeness: FeatureResponseCompleteness.MissingFinalPadding,
+                MatchesAvailableBytes: false,
+                Failures.Count: 1,
+            } shifted
+            || shifted.Failures[0] != FeatureResponseInvariantFailure.UnexpectedReportId)
+        {
+            return false;
+        }
+
+        // The leading byte is neither interpreted nor retained. Bytes 1..89
+        // independently contain the logical report through its checksum, but
+        // the final logical padding byte was not returned by the API.
+        var report = observation.Buffer.Span[1..];
+        if (report[0] != 0x02
+            || report[2] != 0 || report[3] != 0 || report[4] != 0
+            || report[5] != 4
+            || report[6] != 0x0D || report[7] != 0x02
+            || report[8] != 0x01
+            || !TryDecodeReviewedThermalChannel(report[9], out var channel)
+            || !TryDecodeReviewedThermalMode(report[10], report[11], out var mode)
+            || report[12..88].IndexOfAnyExcept((byte)0) >= 0
+            || report[88] != CalculateChecksum(report))
+        {
+            return false;
+        }
+
+        projection = new ReviewedFeatureResponseProjection(
+            ReviewedFeatureResponseKind.ThermalSetterAcknowledgement,
+            ReviewedFeatureResponseStatus.Successful,
+            report[1],
+            channel,
+            mode,
+            FeatureResponseCompleteness.MissingFinalPadding,
+            OpaquePrefixDisposition.Excluded);
+        return true;
+    }
+
+    private static bool TryDecodeReviewedThermalChannel(
+        byte value,
+        out ReviewedThermalChannel channel)
+    {
+        channel = value switch
+        {
+            0x01 => ReviewedThermalChannel.First,
+            0x02 => ReviewedThermalChannel.Second,
+            _ => default,
+        };
+        return value is 0x01 or 0x02;
+    }
+
+    private static bool TryDecodeReviewedThermalMode(
+        byte mode,
+        byte fanValue,
+        out ReviewedThermalMode thermalMode)
+    {
+        thermalMode = (mode, fanValue) switch
+        {
+            (0x00, 0x00) => ReviewedThermalMode.BalancedAutomatic,
+            (0x05, 0x00) => ReviewedThermalMode.SilentAutomatic,
+            (0x02, 0x00) => ReviewedThermalMode.PerformanceAutomatic,
+            (0x00, 0x01) or (0x04, 0x01) => ReviewedThermalMode.FixedMaximum,
+            (0x03, 0x00) => ReviewedThermalMode.BatterySaverAutomatic,
+            (0x06, 0x00) => ReviewedThermalMode.BatteryBalancedAutomatic,
+            (0x04, 0x00) => ReviewedThermalMode.CustomAutomatic,
+            (0x07, 0x00) => ReviewedThermalMode.HyperBoostObserved,
+            _ => default,
+        };
+        return IsKnownThermalValue([0x01, 0x01, mode, fanValue]);
+    }
 
     private static FeaturePayloadProjectionKind ClassifyReviewedPayload(
         byte commandClass,

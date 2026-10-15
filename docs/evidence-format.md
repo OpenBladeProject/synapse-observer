@@ -126,8 +126,16 @@ Completed 90-byte feature responses with capacity for 91 bytes may carry
 `responseStructureDiagnostics`. Fixed reason codes check both the bare-packet
 and report-ID-prefixed interpretations of the available bytes. A prefixed
 candidate explicitly lacks final padding. The diagnostics contain no opaque
-bytes or header values and do not change payload privacy or claim a decoded
-response. Consumers may ignore these optional fields.
+bytes or header values. A narrower `semanticResponse` is emitted only when the
+shifted logical bytes pass every available invariant, the sole layout failure
+is a nonzero opaque leading byte, and the body is a reviewed successful thermal
+setter acknowledgement with a known channel and mode. It retains the
+transaction and closed semantic fields while excluding the leading byte, the
+body, and the unavailable final padding. `completePayloadRetained` remains
+false and `headerHints` remains null. The annotation draft links this receipt
+to a setter request only when interface, transaction, command, semantic value,
+and ordering identify one unique unmatched request. This is acknowledgement
+evidence, not firmware readback or a complete HID envelope.
 
 The app and README.txt share a collection review showing retained bodies,
 unfinished actions, omitted response contents, and remaining evidence items.

@@ -77,7 +77,12 @@ public sealed record ContributionObservationDraft(
     FeaturePayloadProjectionKind ProjectionKind,
     PayloadDisposition PayloadDisposition,
     bool CompletePayloadRetained,
-    bool FirmwareReadback);
+    bool FirmwareReadback)
+{
+    public ReviewedFeatureResponseProjection? SemanticResponse { get; init; }
+
+    public string? CorrelatedRequestReferenceId { get; init; }
+}
 
 public sealed record ContributionActionWindowDraft(
     string ActivityId,
@@ -126,7 +131,10 @@ public sealed record ContributionQualityCounts(
     int RedactedControlBodies,
     int UnassociatedControlObservations,
     int SpecialKeyObservations,
-    int RejectedRecords);
+    int RejectedRecords)
+{
+    public int ReviewedSemanticOnlyResponses { get; init; }
+}
 
 public sealed record ContributionQualityGap(
     string Area,

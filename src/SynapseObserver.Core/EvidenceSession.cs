@@ -144,6 +144,7 @@ public sealed class EvidenceSession : IDisposable
                 ReturnedLengthUnknown = observation.ReturnedLengthUnknown,
                 HeaderHints = projection.HeaderHints,
                 ResponseStructureDiagnostics = projection.ResponseStructureDiagnostics,
+                SemanticResponse = projection.SemanticResponse,
                 PayloadComparison = scoped && observation.Buffer.Length <= EvidenceLimits.MaxPayloadBytesPerObservation
                     ? ComparePayload(observation) : null,
             });

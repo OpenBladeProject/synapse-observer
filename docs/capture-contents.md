@@ -29,6 +29,10 @@ Windows inventory, feature call, or prompted key observation.
 captured or that a query, setter, restore path, lifecycle path, or production
 admission passed. A setter acknowledgement read through GET_FEATURE does not
 create getter coverage; command identity distinguishes it from a query response.
+For a narrowly reviewed incomplete thermal acknowledgement, the draft may retain
+closed semantic fields and a unique preceding setter reference while the opaque
+leading byte and report body remain excluded. This still does not create getter
+or firmware-readback coverage.
 
 ## `annotation-draft.json`
 

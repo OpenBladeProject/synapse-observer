@@ -315,7 +315,11 @@ public static class ContributionDraftBuilder
                 redacted,
                 snapshot.Observations.Select(ObservationReference).Count(reference => !associated.Contains(reference)),
                 snapshot.SpecialKeyObservations.Count,
-                snapshot.RejectedMarkerCount + snapshot.RejectedObservationCount + snapshot.RejectedCoverageCount),
+                snapshot.RejectedMarkerCount + snapshot.RejectedObservationCount + snapshot.RejectedCoverageCount)
+            {
+                ReviewedSemanticOnlyResponses = snapshot.Observations.Count(static item =>
+                    item.SemanticResponse is not null && !item.CompletePayloadRetained),
+            },
             gaps,
             MaintainerStages,
             false,
@@ -394,10 +398,13 @@ public static class ContributionDraftBuilder
         var start = markers[0].RelativeMilliseconds;
         var end = markers[^1].RelativeMilliseconds;
         var complete = HasOrderedUserSequence(markers);
-        var observations = snapshot.Observations
-            .Select((item, index) => (Item: item, Reference: ObservationReference(item, index)))
+        var sourceObservations = snapshot.Observations
+            .Select((item, index) => (Item: item, Reference: ObservationReference(item, index), Index: index))
             .Where(item => item.Item.RelativeMilliseconds >= start && item.Item.RelativeMilliseconds <= end)
-            .Select(static item => new ContributionObservationDraft(
+            .ToArray();
+        var correlations = CorrelateReviewedSemanticResponses(sourceObservations);
+        var observations = sourceObservations
+            .Select(item => new ContributionObservationDraft(
                 ContributionObservationLayer.UserModeFeatureApi,
                 item.Reference,
                 item.Item.OperationId,
@@ -409,7 +416,11 @@ public static class ContributionDraftBuilder
                 item.Item.PayloadProjectionKind,
                 item.Item.PayloadDisposition,
                 item.Item.CompletePayloadRetained,
-                false))
+                false)
+            {
+                SemanticResponse = item.Item.SemanticResponse,
+                CorrelatedRequestReferenceId = correlations.GetValueOrDefault(item.Reference),
+            })
             .ToArray();
         var markerDrafts = markers.Select(CreateMarkerDraft).ToArray();
         labels.TryGetValue(activityId, out var label);
@@ -1044,6 +1055,12 @@ public static class ContributionDraftBuilder
 
     private static ContributionObservationRole GetObservationRole(SanitizedControlObservation observation)
     {
+        if (observation.SemanticResponse?.Kind
+            == ReviewedFeatureResponseKind.ThermalSetterAcknowledgement)
+        {
+            return ContributionObservationRole.FeatureSetResponse;
+        }
+
         // GET_FEATURE transports both setter ACKs and query responses.
         var query = observation.HeaderHints is { CommandId: var commandId } && (commandId & 0x80) != 0;
         if (observation.HeaderHints is null)
@@ -1060,6 +1077,92 @@ public static class ContributionDraftBuilder
             ? query ? ContributionObservationRole.FeatureQueryResponse : ContributionObservationRole.FeatureSetResponse
             : ContributionObservationRole.UnclassifiedFeatureCall;
     }
+
+    private static IReadOnlyDictionary<string, string> CorrelateReviewedSemanticResponses(
+        IReadOnlyList<(SanitizedControlObservation Item, string Reference, int Index)> observations)
+    {
+        var correlations = new Dictionary<string, string>(StringComparer.Ordinal);
+        var consumedRequests = new HashSet<string>(StringComparer.Ordinal);
+        var ordered = observations
+            .OrderBy(static item => item.Item.RelativeMilliseconds)
+            .ThenBy(static item => item.Index)
+            .ToArray();
+
+        foreach (var response in ordered.Where(static item => item.Item.SemanticResponse is not null))
+        {
+            var candidates = ordered.Where(request =>
+                    !consumedRequests.Contains(request.Reference)
+                    && IsMatchingReviewedThermalSetter(request, response))
+                .ToArray();
+            if (candidates.Length != 1)
+            {
+                continue;
+            }
+
+            correlations.Add(response.Reference, candidates[0].Reference);
+            consumedRequests.Add(candidates[0].Reference);
+        }
+
+        return correlations;
+    }
+
+    private static bool IsMatchingReviewedThermalSetter(
+        (SanitizedControlObservation Item, string Reference, int Index) request,
+        (SanitizedControlObservation Item, string Reference, int Index) response)
+    {
+        var semantic = response.Item.SemanticResponse;
+        if (semantic?.Kind != ReviewedFeatureResponseKind.ThermalSetterAcknowledgement
+            || request.Item.Source != ObservationSource.UserModeCall
+            || request.Item.Direction != ObservationDirection.Input
+            || request.Item.Status != ObservationStatus.Succeeded
+            || !request.Item.CompletePayloadRetained
+            || request.Item.PayloadProjectionKind != FeaturePayloadProjectionKind.ReviewedThermalMode
+            || request.Item.HeaderHints is not
+            {
+                Status: 0,
+                CommandClass: 0x0D,
+                CommandId: 0x02,
+            } header
+            || header.TransactionId != semantic.TransactionId
+            || request.Item.VendorId != response.Item.VendorId
+            || request.Item.ProductId != response.Item.ProductId
+            || !string.Equals(request.Item.InterfaceLabel, response.Item.InterfaceLabel, StringComparison.Ordinal)
+            || request.Item.UsagePage != response.Item.UsagePage
+            || request.Item.Usage != response.Item.Usage
+            || request.Item.RelativeMilliseconds > response.Item.RelativeMilliseconds
+            || (request.Item.CompletedRelativeMilliseconds ?? request.Item.RelativeMilliseconds)
+                > response.Item.RelativeMilliseconds)
+        {
+            return false;
+        }
+
+        var payload = TryGetPayload(request.Item);
+        return payload is { Length: 4 }
+            && payload[0] == 0x01
+            && MatchesThermalChannel(payload[1], semantic.ThermalChannel)
+            && MatchesThermalMode(payload[2], payload[3], semantic.ThermalMode);
+    }
+
+    private static bool MatchesThermalChannel(byte value, ReviewedThermalChannel channel) => channel switch
+    {
+        ReviewedThermalChannel.First => value == 0x01,
+        ReviewedThermalChannel.Second => value == 0x02,
+        _ => false,
+    };
+
+    private static bool MatchesThermalMode(byte mode, byte fanValue, ReviewedThermalMode thermalMode) =>
+        thermalMode switch
+        {
+            ReviewedThermalMode.BalancedAutomatic => (mode, fanValue) == (0x00, 0x00),
+            ReviewedThermalMode.SilentAutomatic => (mode, fanValue) == (0x05, 0x00),
+            ReviewedThermalMode.PerformanceAutomatic => (mode, fanValue) == (0x02, 0x00),
+            ReviewedThermalMode.FixedMaximum => (mode, fanValue) is (0x00, 0x01) or (0x04, 0x01),
+            ReviewedThermalMode.BatterySaverAutomatic => (mode, fanValue) == (0x03, 0x00),
+            ReviewedThermalMode.BatteryBalancedAutomatic => (mode, fanValue) == (0x06, 0x00),
+            ReviewedThermalMode.CustomAutomatic => (mode, fanValue) == (0x04, 0x00),
+            ReviewedThermalMode.HyperBoostObserved => (mode, fanValue) == (0x07, 0x00),
+            _ => false,
+        };
 
     private static IReadOnlyList<string> DistinctValues(IEnumerable<string?> values) =>
         values.OfType<string>()

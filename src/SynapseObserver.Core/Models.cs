@@ -244,6 +244,8 @@ public sealed record FeaturePayloadProjection(
 
     public FeatureResponseStructureDiagnostics? ResponseStructureDiagnostics { get; init; }
 
+    public ReviewedFeatureResponseProjection? SemanticResponse { get; init; }
+
     public bool IncludesPayload => PayloadHex is not null;
 }
 
@@ -281,6 +283,8 @@ public sealed record SanitizedControlObservation(
     public bool ReturnedLengthUnknown { get; init; }
 
     public FeatureResponseStructureDiagnostics? ResponseStructureDiagnostics { get; init; }
+
+    public ReviewedFeatureResponseProjection? SemanticResponse { get; init; }
 
     public bool CompletePayloadRetained => PayloadHex is not null;
 }

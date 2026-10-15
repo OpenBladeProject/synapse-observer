@@ -10,7 +10,9 @@
 - Retain up to 512 display modes per display so higher resolution and refresh
   choices are less likely to be clipped from device information
   ([#7](https://github.com/OpenBladeProject/synapse-observer/pull/7)).
-- Diagnose incomplete response layouts without exporting opaque response bodies
+- Preserve restricted summaries of reviewed thermal acknowledgements with
+  incomplete envelopes, while excluding opaque bytes and keeping them separate
+  from firmware readback
   ([#7](https://github.com/OpenBladeProject/synapse-observer/pull/7)).
 
 ### Added

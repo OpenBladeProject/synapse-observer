@@ -222,6 +222,83 @@ public sealed class BareFeatureResponseTests
     }
 
     [Theory]
+    [InlineData(0x01, 0x00, 0x00, ReviewedThermalChannel.First, ReviewedThermalMode.BalancedAutomatic)]
+    [InlineData(0x02, 0x05, 0x00, ReviewedThermalChannel.Second, ReviewedThermalMode.SilentAutomatic)]
+    [InlineData(0x01, 0x04, 0x01, ReviewedThermalChannel.First, ReviewedThermalMode.FixedMaximum)]
+    [InlineData(0x02, 0x07, 0x00, ReviewedThermalChannel.Second, ReviewedThermalMode.HyperBoostObserved)]
+    public void AddObservation_OpaquePrefixThermalAck_ExportsClosedSemanticsOnly(
+        byte channel,
+        byte mode,
+        byte fanValue,
+        ReviewedThermalChannel expectedChannel,
+        ReviewedThermalMode expectedMode)
+    {
+        var bytes = FeatureReportTestData.Create(
+            0x0D, 0x02, [0x01, channel, mode, fanValue], ObservationDirection.Output)[..90];
+        bytes[0] = 0xA5;
+        var session = SyntheticPreview.CreateSession();
+
+        Assert.Equal(EvidenceAddResult.AddedPayloadRedacted,
+            session.AddObservation(CreateObservation(bytes) with { ReturnedBytes = 90 }));
+
+        var stored = Assert.Single(session.Snapshot().Observations);
+        Assert.Null(stored.PayloadHex);
+        Assert.Null(stored.HeaderHints);
+        Assert.False(stored.CompletePayloadRetained);
+        Assert.Equal(PayloadDisposition.ExcludedSensitive, stored.PayloadDisposition);
+        Assert.Equal(FeaturePayloadProjectionKind.ReviewedThermalMode, stored.PayloadProjectionKind);
+        var semantic = Assert.IsType<ReviewedFeatureResponseProjection>(stored.SemanticResponse);
+        Assert.Equal(ReviewedFeatureResponseKind.ThermalSetterAcknowledgement, semantic.Kind);
+        Assert.Equal(ReviewedFeatureResponseStatus.Successful, semantic.Status);
+        Assert.Equal((byte)0x1F, semantic.TransactionId);
+        Assert.Equal(expectedChannel, semantic.ThermalChannel);
+        Assert.Equal(expectedMode, semantic.ThermalMode);
+        Assert.Equal(FeatureResponseCompleteness.MissingFinalPadding, semantic.Completeness);
+        Assert.Equal(OpaquePrefixDisposition.Excluded, semantic.OpaquePrefixDisposition);
+        var diagnostics = Assert.IsType<FeatureResponseStructureDiagnostics>(stored.ResponseStructureDiagnostics);
+        Assert.Equal([FeatureResponseInvariantFailure.UnexpectedReportId],
+            diagnostics.ReportIdPrefixedPacket.Failures);
+    }
+
+    [Theory]
+    [InlineData("returned-count-missing")]
+    [InlineData("returned-count-mismatch")]
+    [InlineData("query-command")]
+    [InlineData("unknown-mode")]
+    [InlineData("reserved")]
+    [InlineData("checksum")]
+    [InlineData("padding")]
+    [InlineData("status")]
+    public void AddObservation_IncompleteResponseOutsideExactThermalAckGrammar_RemainsMetadataOnly(
+        string defect)
+    {
+        var bytes = FeatureReportTestData.Create(
+            0x0D, 0x02, [0x01, 0x01, 0x05, 0x00], ObservationDirection.Output)[..90];
+        bytes[0] = 0xA5;
+        uint? returnedBytes = 90;
+        switch (defect)
+        {
+            case "returned-count-missing": returnedBytes = null; break;
+            case "returned-count-mismatch": returnedBytes = 89; break;
+            case "query-command": bytes[8] = 0x82; RecalculateShiftedChecksum(bytes); break;
+            case "unknown-mode": bytes[11] = 0x66; RecalculateShiftedChecksum(bytes); break;
+            case "reserved": bytes[3] = 1; RecalculateShiftedChecksum(bytes); break;
+            case "checksum": bytes[89] ^= 1; break;
+            case "padding": bytes[40] = 1; RecalculateShiftedChecksum(bytes); break;
+            case "status": bytes[1] = 0; break;
+            default: throw new ArgumentOutOfRangeException(nameof(defect));
+        }
+        var session = SyntheticPreview.CreateSession();
+
+        session.AddObservation(CreateObservation(bytes) with { ReturnedBytes = returnedBytes });
+
+        var stored = Assert.Single(session.Snapshot().Observations);
+        Assert.Null(stored.SemanticResponse);
+        Assert.Null(stored.PayloadHex);
+        Assert.Equal(FeaturePayloadProjectionKind.MetadataOnly, stored.PayloadProjectionKind);
+    }
+
+    [Theory]
     [InlineData(null)]
     [InlineData((byte)0x07)]
     public void Classify_ShortBufferDoesNotFabricateHeaderHints(byte? reportId)
@@ -252,5 +329,16 @@ public sealed class BareFeatureResponseTests
         }
 
         report[88] = checksum;
+    }
+
+    private static void RecalculateShiftedChecksum(Span<byte> buffer)
+    {
+        byte checksum = 0;
+        for (var index = 3; index <= 88; index++)
+        {
+            checksum ^= buffer[index];
+        }
+
+        buffer[89] = checksum;
     }
 }
