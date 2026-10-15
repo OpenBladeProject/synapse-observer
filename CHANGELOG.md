@@ -17,6 +17,9 @@
 
 ### Fixed
 
+- Explain how to collect, review, and submit evidence for an existing or new
+  OpenBlade device support request ([#3](https://github.com/OpenBladeProject/synapse-observer/pull/3)).
+
 - Clarify download and evidence-submission instructions in the README and link
   the latest release ([#2](https://github.com/OpenBladeProject/synapse-observer/pull/2)).
 
