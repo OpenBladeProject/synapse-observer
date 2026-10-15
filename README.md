@@ -22,22 +22,40 @@ See [model coverage](docs/model-coverage.md).
 ## Send evidence
 
 1. Open the app and select **Collect device information**.
-2. To add a recording, open your laptop's controls in Synapse. Start both apps
-   normally under the same Windows account, check recording availability, and
-   allow observation for this session. Select **Start recording**.
-3. Choose an item and its starting setting, then select **Begin this step**.
-4. Change one setting in Synapse, then mark its new value in the collector.
-   Restore the starting setting in Synapse and mark restoration.
-5. Use **Other state…** for an unfamiliar value. Skip items you cannot find.
-6. Stop recording, save the evidence ZIP, and attach it to your support request.
+2. To add an optional recording, open your laptop's controls in Synapse. Start
+   both apps normally under the same Windows account, select **Check recording
+   availability**, and allow observation for this session. Select **Start
+   recording**.
+3. Choose an evidence item and enter the exact setting shown in Synapse. Select
+   **Begin this step** before changing it.
+4. Change one setting in Synapse. Enter the new value and select **I changed it**.
+   Restore the exact starting setting in Synapse, check that its controls show
+   that value, then select **I restored it**.
+5. Use **Other state…** for an unfamiliar value. Select **Skip** or **Setting
+   unavailable** for items you cannot test.
+6. Select **Stop recording**, then **Save evidence ZIP…**. A ZIP containing only
+   device information is still useful when recording is unavailable or skipped.
 
 The guide covers performance, fans, keyboard lighting and layout, the illuminated
 logo, special keys, battery settings, and display controls. For optional M-key/Fn
 checks, press the prompted key with the collector window active. Each
 check lasts five seconds.
 
-A device-information ZIP is still useful when recording cannot start. See
-[what the ZIP contains](docs/capture-contents.md).
+See [what the ZIP contains](docs/capture-contents.md).
+
+### Submit the ZIP
+
+1. Review the ZIP before uploading it to GitHub. A support request and its
+   attachments are public. Nothing is uploaded by the collector.
+2. Search the existing
+   [device support requests](https://github.com/OpenBladeProject/openblade-core/issues?q=is%3Aissue%20label%3Adevice-support)
+   for your model number. Attach the ZIP to a matching request, or open the
+   [new device support form](https://github.com/OpenBladeProject/openblade-core/issues/new?template=device-support.yml).
+3. Include the laptop name and RZ09 model number, BIOS and Synapse versions,
+   OpenBlade version if installed, the settings you tested, and anything you
+   skipped or could not record.
+4. Attach the Synapse Observer evidence ZIP. If OpenBlade's **Help add support**
+   button also saved `OpenBlade-identity-report.zip`, attach that file too.
 
 ## Recording notes
 
