@@ -62,6 +62,22 @@ public sealed class EvidenceCollectionReviewTests
         Assert.Contains(review.Notes, note => note.StartsWith("Some recording data could not be retained", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public void RestoredNoOpIsReportedWithoutAnUnfinishedRestorationWarning()
+    {
+        using var session = new EvidenceSession(SyntheticPreview.CreateInventory());
+        session.AddMarker(new(1, EvidenceMarkerKind.UserReportedStartingValue, "performance", "Starting", EvidenceProvenance.UserReported, "Balanced"));
+        session.AddMarker(new(2, EvidenceMarkerKind.UserReportedTargetValue, "performance", "Changed", EvidenceProvenance.UserReported, " balanced "));
+        session.AddMarker(new(3, EvidenceMarkerKind.UserActionConfirmed, "performance", "Change marked", EvidenceProvenance.UserReported));
+        session.AddMarker(new(4, EvidenceMarkerKind.UserReportedRestoration, "performance", "Restored", EvidenceProvenance.UserReported, "Balanced"));
+
+        var review = EvidenceCollectionReview.Create(session.Snapshot());
+
+        Assert.Contains(review.Notes, note => note.Contains("same starting and changed value", StringComparison.Ordinal));
+        Assert.DoesNotContain(review.Notes, note => note.Contains("unfinished", StringComparison.Ordinal));
+        Assert.DoesNotContain(review.Notes, note => note.Contains("Restore any changed setting", StringComparison.Ordinal));
+    }
+
     private static ControlObservation Observation(string operation, double time, ObservationSource source,
         ObservationDirection direction, byte[] bytes) => new(operation, time, source,
         direction == ObservationDirection.Output ? "DeviceIoControl.HID_GET_FEATURE" : "HidD_SetFeature",

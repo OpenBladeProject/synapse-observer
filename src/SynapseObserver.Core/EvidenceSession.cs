@@ -367,7 +367,7 @@ public sealed class EvidenceSession : IDisposable
     }
 }
 
-internal static class EvidenceText
+public static class EvidenceText
 {
     public static bool IsToken(string? value)
     {

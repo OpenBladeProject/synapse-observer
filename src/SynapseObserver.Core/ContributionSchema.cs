@@ -95,6 +95,8 @@ public sealed record ContributionActionWindowDraft(
     string? Gap)
 {
     public PowerSourceKind PowerSourceAtAction { get; init; } = PowerSourceKind.Unknown;
+
+    public bool UnchangedReportedValues { get; init; }
 }
 
 public sealed record ContributionSpecialKeyDraft(

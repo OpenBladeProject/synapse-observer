@@ -397,7 +397,9 @@ public static class ContributionDraftBuilder
         var markers = markerList.OrderBy(static marker => marker.RelativeMilliseconds).ToArray();
         var start = markers[0].RelativeMilliseconds;
         var end = markers[^1].RelativeMilliseconds;
-        var complete = HasOrderedUserSequence(markers);
+        var ordered = HasOrderedUserSequence(markers);
+        var unchanged = ordered && HasUnchangedReportedValues(markers);
+        var complete = ordered && !unchanged;
         var sourceObservations = snapshot.Observations
             .Select((item, index) => (Item: item, Reference: ObservationReference(item, index), Index: index))
             .Where(item => item.Item.RelativeMilliseconds >= start && item.Item.RelativeMilliseconds <= end)
@@ -424,7 +426,9 @@ public static class ContributionDraftBuilder
             .ToArray();
         var markerDrafts = markers.Select(CreateMarkerDraft).ToArray();
         labels.TryGetValue(activityId, out var label);
-        var gap = complete
+        var gap = unchanged
+            ? "The reported starting and target values are unchanged; this sequence does not establish a setting change."
+            : complete
             ? observations.Length == 0 ? "No user-mode feature observation fell inside this action window." : null
             : "An ordered starting, target, action, and restoration sequence is not present.";
         return new ContributionActionWindowDraft(
@@ -438,6 +442,7 @@ public static class ContributionDraftBuilder
             gap)
         {
             PowerSourceAtAction = GetActionPowerSource(markers),
+            UnchangedReportedValues = unchanged,
         };
     }
 
@@ -463,13 +468,27 @@ public static class ContributionDraftBuilder
         var next = 0;
         foreach (var marker in markers)
         {
-            if (marker.Kind == expected[next] && ++next == expected.Length)
+            if (marker.Kind != expected[next])
+            {
+                continue;
+            }
+
+            if (++next == expected.Length)
             {
                 return true;
             }
         }
 
         return false;
+    }
+
+    private static bool HasUnchangedReportedValues(IReadOnlyList<EvidenceMarker> markers)
+    {
+        var startingValue = markers.FirstOrDefault(static marker =>
+            marker.Kind == EvidenceMarkerKind.UserReportedStartingValue)?.Value;
+        var targetValue = markers.FirstOrDefault(static marker =>
+            marker.Kind == EvidenceMarkerKind.UserReportedTargetValue)?.Value;
+        return SettingValueComparison.AreEquivalent(startingValue, targetValue);
     }
 
     private static bool IsActionMarker(EvidenceMarkerKind kind) => kind is
@@ -946,7 +965,8 @@ public static class ContributionDraftBuilder
         {
             gaps.Add(new ContributionQualityGap(
                 $"action.{window.ActivityId}",
-                window.CompleteUserReportedSequence ? "NoMatchingObservation" : "IncompleteActionMarkers",
+                window.UnchangedReportedValues ? "UnchangedReportedValues"
+                    : window.CompleteUserReportedSequence ? "NoMatchingObservation" : "IncompleteActionMarkers",
                 window.Gap!));
         }
 

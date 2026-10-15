@@ -28,7 +28,12 @@ public sealed record EvidenceCollectionReview(string Summary, IReadOnlyList<stri
         var pending = snapshot.Coverage.Count(item => item.State == CoverageState.Pending);
         if (pending > 0)
             notes.Add($"{Count(pending, "evidence item")} {(pending == 1 ? "has" : "have")} not been recorded. You can save this partial collection.");
-        var incomplete = counts.ActionWindows - counts.CompleteActionWindows;
+        var unchanged = quality.Gaps.Count(item => item.Code == "UnchangedReportedValues");
+        if (unchanged > 0)
+            notes.Add($"{Count(unchanged, "action sequence")} reported the same starting and changed value. "
+                + (unchanged == 1 ? "It is retained but does not establish a setting change."
+                    : "They are retained but do not establish setting changes."));
+        var incomplete = counts.ActionWindows - counts.CompleteActionWindows - unchanged;
         if (incomplete > 0)
             notes.Add($"{Count(incomplete, "setting-change sequence")} {(incomplete == 1 ? "is" : "are")} unfinished. Restore any changed setting to its exact starting value before leaving Synapse.");
         var responses = snapshot.Observations.Where(item => item.Source == ObservationSource.ReturnedBuffer).ToArray();

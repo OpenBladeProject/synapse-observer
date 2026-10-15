@@ -308,6 +308,54 @@ public sealed class EvidenceBundleWriterTests
             Assert.Single(coverage.Coverage, item => item.Capability == "performance.externalPower.presets").Status);
     }
 
+    [Theory]
+    [InlineData("Balanced", false)]
+    [InlineData(" balanced ", false)]
+    [InlineData("BALANCED", false)]
+    [InlineData("Custom: CPU Boost, GPU Medium", true)]
+    public void CreateDrafts_RequiresDistinctStartingAndTargetValues(string target, bool expectedComplete)
+    {
+        using var session = new EvidenceSession(SyntheticPreview.CreateInventory(), DateTimeOffset.UnixEpoch);
+        session.AddMarker(new EvidenceMarker(1, EvidenceMarkerKind.UserReportedStartingValue,
+            "performance", "Starting value", EvidenceProvenance.UserReported, "Balanced"));
+        session.AddMarker(new EvidenceMarker(2, EvidenceMarkerKind.UserReportedTargetValue,
+            "performance", "Changed value", EvidenceProvenance.UserReported, target));
+        session.AddMarker(new EvidenceMarker(3, EvidenceMarkerKind.UserActionConfirmed,
+            "performance", "Change marked", EvidenceProvenance.UserReported));
+        session.AddMarker(new EvidenceMarker(4, EvidenceMarkerKind.UserReportedRestoration,
+            "performance", "Restored", EvidenceProvenance.UserReported, "Balanced"));
+
+        var drafts = ContributionDraftBuilder.CreateDrafts(session.Snapshot());
+
+        var window = Assert.Single(drafts.Annotation.ActionWindows);
+        Assert.Equal(expectedComplete, window.CompleteUserReportedSequence);
+        Assert.Equal(!expectedComplete, window.UnchangedReportedValues);
+        Assert.Equal(!expectedComplete, window.Gap?.Contains("unchanged", StringComparison.Ordinal));
+        Assert.Contains(drafts.Quality.Gaps, gap => gap.Area == "action.performance"
+            && gap.Code == (expectedComplete ? "NoMatchingObservation" : "UnchangedReportedValues"));
+    }
+
+    [Fact]
+    public void CreateDrafts_NullValuesRemainUnknownRatherThanUnchanged()
+    {
+        using var session = new EvidenceSession(SyntheticPreview.CreateInventory(), DateTimeOffset.UnixEpoch);
+        session.AddMarker(new EvidenceMarker(1, EvidenceMarkerKind.UserReportedStartingValue,
+            "performance", "Starting value", EvidenceProvenance.UserReported));
+        session.AddMarker(new EvidenceMarker(2, EvidenceMarkerKind.UserReportedTargetValue,
+            "performance", "Changed value", EvidenceProvenance.UserReported));
+        session.AddMarker(new EvidenceMarker(3, EvidenceMarkerKind.UserActionConfirmed,
+            "performance", "Change marked", EvidenceProvenance.UserReported));
+        session.AddMarker(new EvidenceMarker(4, EvidenceMarkerKind.UserReportedRestoration,
+            "performance", "Restored", EvidenceProvenance.UserReported));
+
+        var drafts = ContributionDraftBuilder.CreateDrafts(session.Snapshot());
+
+        var window = Assert.Single(drafts.Annotation.ActionWindows);
+        Assert.True(window.CompleteUserReportedSequence);
+        Assert.False(window.UnchangedReportedValues);
+        Assert.DoesNotContain(drafts.Quality.Gaps, gap => gap.Code == "UnchangedReportedValues");
+    }
+
     [Fact]
     public async Task WriteAsync_PreCancelledTokenLeavesExistingDestinationUntouched()
     {

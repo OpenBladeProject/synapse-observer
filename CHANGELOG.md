@@ -39,6 +39,11 @@
 
 ### Fixed
 
+- Require a different reported value for a setting change and explain unchanged
+  legacy sequences in exported evidence. Validate typed setting descriptions
+  before saving a marker
+  ([#7](https://github.com/OpenBladeProject/synapse-observer/pull/7)).
+
 - Explain how to collect, review, and submit evidence for an existing or new
   OpenBlade device support request ([#3](https://github.com/OpenBladeProject/synapse-observer/pull/3)).
 

@@ -22,14 +22,48 @@ public sealed class CollectorWorkflowTests
         Assert.True(model.MarkCommand.CanExecute(null));
     }
 
+    [Theory]
+    [InlineData("Balanced")]
+    [InlineData(" balanced ")]
+    [InlineData("BALANCED")]
+    [InlineData("  Balanced   ")]
+    public async Task ChangedValueMustDifferFromStartingValue(string changed)
+    {
+        var model = await RecordingAsync();
+        model.StartingSetting = "Balanced";
+        await Run(model.MarkCommand);
+
+        model.ChangedSetting = changed;
+
+        Assert.False(model.MarkCommand.CanExecute(null));
+        Assert.Contains("different", model.StepStatus);
+        Assert.DoesNotContain(model.Evidence!.Markers, marker => marker.Kind == EvidenceMarkerKind.UserReportedTargetValue);
+    }
+
     [Fact]
-    public async Task InvalidPersonalPathCannotAdvanceStartingMarker()
+    public async Task CustomDetailChangeRemainsAValidTransition()
+    {
+        var model = await RecordingAsync();
+        model.StartingEntry.SelectedChoice = model.StartingEntry.Choices.Single(choice => choice.Label == "Custom");
+        model.StartingEntry.Details = "CPU Boost, GPU High";
+        await Run(model.MarkCommand);
+        model.ChangedEntry.SelectedChoice = model.ChangedEntry.Choices.Single(choice => choice.Label == "Custom");
+        model.ChangedEntry.Details = "CPU Boost, GPU Medium";
+
+        Assert.True(model.MarkCommand.CanExecute(null));
+        await Run(model.MarkCommand);
+        Assert.Contains(model.Evidence!.Markers, marker => marker.Kind == EvidenceMarkerKind.UserReportedTargetValue
+            && marker.Value == "Custom: CPU Boost, GPU Medium");
+    }
+
+    [Fact]
+    public async Task InvalidPersonalPathCannotEnableStartingMarker()
     {
         var model = await RecordingAsync();
         model.StartingSetting = @"C:\Users\person";
-        await Run(model.MarkCommand);
+        Assert.False(model.MarkCommand.CanExecute(null));
         Assert.True(model.ShowStartingValue);
-        Assert.Equal(1, model.Evidence!.RejectedMarkerCount);
+        Assert.Equal(0, model.Evidence!.RejectedMarkerCount);
         Assert.DoesNotContain(model.Evidence.Markers, marker => marker.Kind == EvidenceMarkerKind.UserReportedStartingValue);
     }
 

@@ -270,3 +270,62 @@ Blade model. Later presentation changes improve recording status and recovery
 and add Battery Saver to the suggested presets. Discovery also reports blocked
 resident observers before offering Start. These changes do not alter the tested
 native hook lifecycle or evidence decoder. Raw local evidence remains private.
+
+## Broader Synapse workflow trial, 2026-10-15
+
+Live package source: `6c61570e6863cc98e5e24c12051fca0939f11a60`.
+Executable SHA-256: `4AF8B3B3DB59642A1959FEC584A03104688529B3CC22664AE3C12728365B253B`.
+The laptop was Blade 16 RZ09-0581, HID `1532:02E0`, BIOS 4.01, with Synapse
+4.0.827.114. Synapse reported insufficient external power and disabled its
+higher performance presets. The connector and adapter wattage were not inferred.
+
+Twelve guided setting windows completed with restoration checked in Synapse:
+
+| Evidence item | Starting selection | Temporary selection | Restored selection |
+| --- | --- | --- | --- |
+| Keyboard lighting | Quick Static green preset | Red preset | Same green preset |
+| Logo lighting | Off | Static | Off |
+| Function row | Multimedia keys | Function keys | Multimedia keys |
+| Gaming mode | On, Windows/Copilot disabled, Alt+Tab/Alt+F4 allowed | Off | Same On settings |
+| Charge limit | 80%, optimizer On | 70% | 80% |
+| Battery protection | Optimizer On, 80% | Off | On, 80% |
+| Full charge override | Off, optimizer On, 80% | On | Off, optimizer On, 80% |
+| Keyboard brightness | Plugged In, 6% | 7% | 6% |
+| Animated lighting frames | Quick Static green, 6%, logo Off | Spectrum Cycling, default animation | Same Static green, 6%, logo Off |
+| Fans | Auto | Fixed, displayed 5400 RPM | Auto |
+| Display refresh | 60 Hz | 240 Hz | 60 Hz |
+| Display color mode | Native | sRGB | Native |
+
+The collector completed eleven passive recordings in the same Synapse process,
+with confirmed hook and worker shutdown after each. The first recording reached
+its normal five-minute bound; its completed lighting window remained intact,
+and clean stop allowed reuse. No failed feature calls or recording drops were
+shown. One rejected Gaming description remains in the quality history: a slash
+passed the old UI validation but failed the evidence text validator before any
+setting was changed. The later valid Gaming window completed and restored.
+
+The report-only flow saved Synapse's displayed 2560 x 1600 panel resolution
+without a recording. Skip and Setting unavailable advanced the guide. The
+five-second prompted M1 check ended with Timeout and zero input observations;
+no physical key was pressed and no key coverage is claimed.
+
+The first nine-window checkpoint contains exactly the five expected ZIP files,
+nine ordered complete/restored windows, 2,124 observations, and 2,024 retained
+reviewed input bodies. All 44 output bodies remained excluded. A bounded privacy
+scan found no local paths, accounts, device instance paths, or serial fields.
+The rejected marker remains visible as a global quality gap. Raw ZIPs stay local.
+
+This trial found two collector defects. The fixes prevent identical reported
+starting and changed values from completing a change, conservatively flag known
+legacy no-op windows in exports, and apply the evidence text validator before
+allowing a UI marker. Focused regressions and the Release suite pass 511 tests
+(Core 311, App 115, Backend 85). These results cover the code changes; the live
+setting trial above used the separately identified frozen package.
+
+Remaining evidence includes disabled Custom/Performance controls and tuning,
+physical M/Fn keys and keyboard legends, per-key color mapping, and features not
+exposed by this Synapse UI. HDR, VRR, dynamic refresh, panel brightness, EC/MCU
+versions, and cooling-pad behavior were not exercised. Manual fan-curve editing
+was not part of the Fixed fan-mode round trip. No model beyond this laptop,
+firmware readback, physical lighting observation, or signed-build antivirus
+compatibility is established by these results.

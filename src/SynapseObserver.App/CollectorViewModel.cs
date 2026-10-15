@@ -84,13 +84,17 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
         StartingEntry.Reset(0);
         ChangedEntry.Reset(0);
         StartingEntry.PropertyChanged += (_, _) => RefreshCommands();
-        ChangedEntry.PropertyChanged += (_, _) => RefreshCommands();
+        ChangedEntry.PropertyChanged += (_, _) =>
+        {
+            Changed(nameof(StepStatus));
+            RefreshCommands();
+        };
         CollectCommand = new AsyncCommand(() => GuardAsync(CollectAsync), () => !closing && !busy && !collecting && !recording && !IsProbingSpecialKey);
         StartCommand = new AsyncCommand(() => GuardAsync(StartAsync), () => !closing && !busy && !IsProbingSpecialKey && HasInventory && consent && !recording && (preview || backendCandidate is not null));
         StopCommand = new AsyncCommand(() => GuardAsync(StopAsync), () => recording && !busy && !closing);
         MarkCommand = new AsyncCommand(() => GuardAsync(MarkAsync), () => !closing && !busy && !IsProbingSpecialKey && HasInventory && HasCurrentStep
             && (CurrentActivity.IsReadOnly || (recording && !observerEnded))
-            && (stepPhase == 2 || (stepPhase == 0 ? StartingEntry.HasValue : ChangedEntry.HasValue)));
+            && (stepPhase == 2 || (stepPhase == 0 ? StartingEntry.HasValue : HasDistinctChangedSetting)));
         SkipCommand = new AsyncCommand(() => GuardAsync(() => SkipAsync(false)), () => CanSelectActivity && HasCurrentStep);
         UnavailableCommand = new AsyncCommand(() => GuardAsync(() => SkipAsync(true)), () => CanSelectActivity && HasCurrentStep);
         SaveCommand = new AsyncCommand(() => GuardAsync(SaveAsync), () => !preview && !busy && !IsProbingSpecialKey && HasInventory && !recording);
@@ -142,6 +146,8 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
         }
     }
     private CaptureActivity CurrentActivity => Activities[step];
+    private bool HasDistinctChangedSetting => ChangedEntry.HasValue
+        && !SettingValueComparison.AreEquivalent(startingSetting, ChangedEntry.Value);
     public string CoverageSummary => $"{Activities.Count(activity => activity.State != CoverageState.Pending)} of {Activities.Count} items handled. Choose any item; stop and save whenever you are ready.";
     public string StartingValueLabel => HasCurrentStep && CurrentActivity.IsReadOnly ? "Current state or known behavior" : "Starting setting";
     public string ActivityGuidance => HasCurrentStep ? CurrentActivity.Guidance : string.Empty;
@@ -172,6 +178,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
         : !recording ? "Current-state reports are available without observing Synapse. Setting changes need a recording."
         : observerEnded ? "Recording is unavailable. Restore any unfinished setting and save the evidence after cleanup."
         : stepPhase == 0 ? "Examples are suggestions, not confirmed support. Skip or mark unavailable if needed."
+        : stepPhase == 1 && ChangedEntry.HasValue && !HasDistinctChangedSetting ? "Choose a value different from the starting setting."
         : stepPhase == 1 ? "The collector observes Synapse. It does not change a setting for you."
         : "Restoration will be recorded as your observation of the displayed setting.";
     public string MarkButtonText => HasCurrentStep && CurrentActivity.IsReadOnly ? "Save current state" : stepPhase == 0 ? "Begin this step" : stepPhase == 1 ? "I changed it" : "I restored it";
@@ -405,6 +412,11 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
             }
             else if (stepPhase == 1)
             {
+                if (!HasDistinctChangedSetting)
+                {
+                    status = "Choose a changed value that differs from the starting setting.";
+                    return;
+                }
                 if (!Marker(EvidenceMarkerKind.UserReportedTargetValue, CurrentActivity.Id, "Changed setting reported", EvidenceProvenance.UserReported, ChangedEntry.Value, actionPower)) return;
                 if (!Marker(EvidenceMarkerKind.UserActionConfirmed, CurrentActivity.Id, "User marked the setting change", EvidenceProvenance.UserReported, powerSource: actionPower)) return;
                 stepPhase = 2;
