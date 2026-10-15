@@ -699,7 +699,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
     }
 
     private string WithRestorationReminder(string message) => HasCurrentStep && stepPhase > 0
-        ? $"Restore {startingSetting} in Synapse before leaving this setting. " + message
+        ? $"Restore {startingSetting} in the original controls before leaving this setting. " + message
         : message;
 
     private void CountNativeFailureGap()

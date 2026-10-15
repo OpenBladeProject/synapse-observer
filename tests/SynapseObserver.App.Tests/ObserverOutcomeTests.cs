@@ -129,13 +129,17 @@ public sealed class ObserverOutcomeTests
     [Theory]
     [InlineData(0)]
     [InlineData(170)]
-    public async Task AutonomousEndDistinguishesExpiryFromFailureAndKeepsRestorationReminder(int failure)
+    public async Task AutonomousEndKeepsSourceNeutralDisplayRestorationReminder(int failure)
     {
-        var model = await BeginStep();
+        var model = await Recording();
+        model.SelectedActivityIndex = model.Activities.ToList().FindIndex(activity => activity.Id == "display-hdr");
+        model.StartingSetting = "Off";
+        await Run(model.MarkCommand);
         var observer = new OwnedObserver([]) { Finished = true, Failure = failure };
         model.SetOwnedTestObserver(observer, startPump: true);
         await Pump(model);
-        Assert.Contains("Restore Balanced", model.Status);
+        Assert.Contains("Restore Off in the original controls", model.Status);
+        Assert.DoesNotContain("in Synapse", model.Status, StringComparison.OrdinalIgnoreCase);
         if (failure == 0)
         {
             Assert.Contains("time limit", model.Status);

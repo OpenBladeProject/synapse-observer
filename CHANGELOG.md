@@ -39,6 +39,10 @@
 
 ### Fixed
 
+- Keep timeout restoration guidance accurate for Windows display settings as well
+  as Synapse controls
+  ([#7](https://github.com/OpenBladeProject/synapse-observer/pull/7)).
+
 - Require a different reported value for a setting change and explain unchanged
   legacy sequences in exported evidence. Validate typed setting descriptions
   before saving a marker, and preserve the submitted value during power checks.
