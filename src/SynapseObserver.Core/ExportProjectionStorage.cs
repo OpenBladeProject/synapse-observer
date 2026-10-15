@@ -62,8 +62,8 @@ internal sealed class ExportDiskList<T> : IReadOnlyList<T>, IDisposable
         {
             var path = Path.Combine(scope?.DirectoryPath ?? Path.GetTempPath(), $"synapse-observer-projection-{Guid.NewGuid():N}.jsonl");
             file = new FileStream(path, FileMode.CreateNew, FileAccess.ReadWrite,
-                FileShare.ReadWrite | FileShare.Delete, 64 * 1024, FileOptions.DeleteOnClose);
-            writer = new StreamWriter(file, new UTF8Encoding(false), 64 * 1024);
+                FileShare.ReadWrite | FileShare.Delete, 1, FileOptions.DeleteOnClose);
+            writer = new StreamWriter(file, new UTF8Encoding(false), 4 * 1024);
         }
         writer.WriteLine(JsonSerializer.Serialize(value));
         Count = checked(Count + 1);
@@ -103,8 +103,11 @@ internal sealed class ExportDiskList<T> : IReadOnlyList<T>, IDisposable
         if (disposed) return;
         disposed = true;
         scope?.Remove(this);
-        try { writer?.Dispose(); }
-        finally { file?.Dispose(); }
+        // Enumeration flushes records that are actually read. Disposal discards
+        // any unwritten scratch tail rather than flushing a file being deleted.
+        writer = null;
+        file?.Dispose();
+        file = null;
     }
 }
 

@@ -128,7 +128,26 @@ public sealed class ContinuousObservationStorageTests
 
         snapshot.Dispose();
         Assert.False(File.Exists(spoolPath));
+        Assert.True(Directory.Exists(directory));
         DeleteDirectory(directory);
+    }
+
+    [Fact]
+    public void CreateDefault_WriterOpenFailureDeletesOwnedSpoolAndEmptySessionDirectory()
+    {
+        string? spoolPath = null;
+        using var store = SanitizedObservationStore.CreateDefault(path =>
+        {
+            spoolPath = path;
+            throw new IOException("Synthetic writer-open failure.");
+        });
+
+        Assert.NotNull(spoolPath);
+        Assert.Equal(EvidenceStorageFailure.IoFailure, store.Failure);
+        Assert.False(File.Exists(spoolPath));
+        var directory = Path.GetDirectoryName(spoolPath!);
+        Assert.NotNull(directory);
+        Assert.False(Directory.Exists(directory));
     }
 
     [Fact]

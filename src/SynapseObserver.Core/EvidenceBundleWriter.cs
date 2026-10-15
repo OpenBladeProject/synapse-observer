@@ -80,7 +80,7 @@ public static class EvidenceBundleWriter
                     await WriteJsonEntryAsync(archive, "coverage-draft.json", drafts.Coverage, ContributionJsonOptions, cancellationToken).ConfigureAwait(false);
                     await WriteJsonEntryAsync(archive, "annotation-draft.json", drafts.Annotation, ContributionJsonOptions, cancellationToken).ConfigureAwait(false);
                     await WriteJsonEntryAsync(archive, "quality-receipt.json", drafts.Quality, ContributionJsonOptions, cancellationToken).ConfigureAwait(false);
-                    await WriteEntryAsync(archive, "README.txt", Encoding.UTF8.GetBytes(CreateReadme(snapshot, drafts.Quality)), cancellationToken).ConfigureAwait(false);
+                    await WriteEntryAsync(archive, "README.txt", Encoding.UTF8.GetBytes(CreateReadme(snapshot, drafts.Quality, drafts.Statistics)), cancellationToken).ConfigureAwait(false);
                 }
 
                 await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
@@ -137,14 +137,14 @@ public static class EvidenceBundleWriter
         await entryStream.WriteAsync(content, cancellationToken).ConfigureAwait(false);
     }
 
-    private static string CreateReadme(EvidenceSessionSnapshot snapshot, ContributionQualityReceipt quality)
+    private static string CreateReadme(EvidenceSessionSnapshot snapshot, ContributionQualityReceipt quality, ObservationQualityStatistics statistics)
     {
         var builder = new StringBuilder();
         builder.AppendLine("Synapse Observer evidence bundle");
         builder.AppendLine("================================");
         builder.AppendLine();
         builder.AppendLine("This bundle was saved locally. The collector did not upload it.");
-        var review = EvidenceCollectionReview.Create(snapshot, quality);
+        var review = EvidenceCollectionReview.Create(snapshot, quality, statistics);
         builder.AppendLine();
         builder.AppendLine(review.Summary);
         foreach (var note in review.Notes) builder.AppendLine("- " + note);

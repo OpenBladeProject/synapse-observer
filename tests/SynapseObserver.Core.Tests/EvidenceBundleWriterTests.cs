@@ -418,6 +418,7 @@ public sealed class EvidenceBundleWriterTests
         {
             var destination = Path.Combine(directory, "continuous.zip");
             await EvidenceBundleWriter.WriteSnapshotAsync(exportSnapshot, destination);
+            Assert.Equal(4, generated.EnumerationCount); // Routing, coverage, statistics, manifest.
             using var archive = ZipFile.OpenRead(destination);
             Assert.True(archive.GetEntry("manifest.json")!.Length > 16 * 1024 * 1024);
             using (var manifest = await ReadJsonAsync(archive, "manifest.json"))
@@ -520,7 +521,11 @@ public sealed class EvidenceBundleWriterTests
         var readsBeforeReview = generated.EnumerationCount;
         var quality = ContributionDraftBuilder.CreateQualityReceipt(source);
         Assert.Equal(20, quality.Counts.CompleteActionWindows);
-        Assert.InRange(generated.EnumerationCount - readsBeforeReview, 1, 15);
+        Assert.Equal(3, generated.EnumerationCount - readsBeforeReview);
+        var readsBeforeTextReview = generated.EnumerationCount;
+        var review = EvidenceCollectionReview.Create(source);
+        Assert.Contains("20 complete action sequences", review.Summary);
+        Assert.Equal(3, generated.EnumerationCount - readsBeforeTextReview);
     }
 
     [Fact]

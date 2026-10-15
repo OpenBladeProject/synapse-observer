@@ -965,6 +965,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
             return;
         }
 
+        session?.Dispose();
         session = new EvidenceSession(PreviewInventory());
         deviceSummary = "Razer Blade · example device\nBIOS 1.00 · 3 Razer HID interfaces · Synapse detected";
         recorderStatus = "Synapse is ready. Start a short recording when you are ready to change settings.";

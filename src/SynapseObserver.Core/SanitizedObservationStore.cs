@@ -25,25 +25,58 @@ internal sealed class SanitizedObservationStore : IDisposable
 
     internal EvidenceStorageFailure? Failure => Volatile.Read(ref _failure);
 
-    internal static SanitizedObservationStore CreateDefault()
+    internal static SanitizedObservationStore CreateDefault() => CreateDefault(null);
+
+    internal static SanitizedObservationStore CreateDefault(
+        Func<string, Stream>? writerFactory)
     {
+        string? directory = null;
+        FileStream? anchor = null;
+        Stream? writer = null;
         try
         {
-            var directory = Path.Combine(
+            directory = Path.Combine(
                 Path.GetTempPath(),
                 "SynapseObserver",
                 $"session-{Guid.NewGuid():N}");
             Directory.CreateDirectory(directory);
             var path = Path.Combine(directory, "sanitized-observations.spool");
-            return Create(path);
+            anchor = new FileStream(
+                path,
+                FileMode.CreateNew,
+                FileAccess.ReadWrite,
+                FileShare.ReadWrite | FileShare.Delete,
+                bufferSize: 1,
+                FileOptions.DeleteOnClose | FileOptions.SequentialScan);
+            writer = writerFactory?.Invoke(path) ?? new FileStream(
+                path,
+                FileMode.Open,
+                FileAccess.Write,
+                FileShare.ReadWrite | FileShare.Delete,
+                bufferSize: 1,
+                FileOptions.SequentialScan);
+            ValidateWriter(writer, nameof(writerFactory));
+            var state = new SpoolState(path, directory, anchor, ownsDirectory: true);
+            anchor = null;
+            return new SanitizedObservationStore(state, writer, null);
         }
         catch (UnauthorizedAccessException)
         {
+            DisposeFailedInitialization(writer, anchor);
+            DeleteOwnedEmptyDirectory(directory);
             return Failed(EvidenceStorageFailure.AccessDenied);
         }
         catch (IOException)
         {
+            DisposeFailedInitialization(writer, anchor);
+            DeleteOwnedEmptyDirectory(directory);
             return Failed(EvidenceStorageFailure.IoFailure);
+        }
+        catch
+        {
+            DisposeFailedInitialization(writer, anchor);
+            DeleteOwnedEmptyDirectory(directory);
+            throw;
         }
     }
 
@@ -71,11 +104,7 @@ internal sealed class SanitizedObservationStore : IDisposable
                 FileShare.ReadWrite | FileShare.Delete,
                 bufferSize: 1,
                 FileOptions.SequentialScan);
-            if (!writer.CanWrite || !writer.CanSeek)
-            {
-                writer.Dispose();
-                throw new ArgumentException("The observation spool writer must be writable and seekable.", nameof(writerFactory));
-            }
+            ValidateWriter(writer, nameof(writerFactory));
 
             var anchor = new FileStream(
                 fullPath,
@@ -84,7 +113,7 @@ internal sealed class SanitizedObservationStore : IDisposable
                 FileShare.ReadWrite | FileShare.Delete,
                 bufferSize: 1,
                 FileOptions.DeleteOnClose | FileOptions.SequentialScan);
-            var state = new SpoolState(fullPath, directory, anchor);
+            var state = new SpoolState(fullPath, directory, anchor, ownsDirectory: false);
             return new SanitizedObservationStore(state, writer, null);
         }
         catch
@@ -101,6 +130,55 @@ internal sealed class SanitizedObservationStore : IDisposable
             // established. A CreateNew collision or throwing injected factory
             // must never delete a path that may belong to somebody else.
             throw;
+        }
+    }
+
+    private static void ValidateWriter(Stream writer, string parameterName)
+    {
+        if (!writer.CanWrite || !writer.CanSeek)
+        {
+            throw new ArgumentException(
+                "The observation spool writer must be writable and seekable.",
+                parameterName);
+        }
+    }
+
+    private static void DisposeFailedInitialization(Stream? writer, FileStream? anchor)
+    {
+        try
+        {
+            writer?.Dispose();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+        }
+
+        try
+        {
+            anchor?.Dispose();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+        }
+    }
+
+    private static void DeleteOwnedEmptyDirectory(string? directory)
+    {
+        if (string.IsNullOrWhiteSpace(directory))
+        {
+            return;
+        }
+
+        try
+        {
+            if (Directory.Exists(directory)
+                && !Directory.EnumerateFileSystemEntries(directory).Any())
+            {
+                Directory.Delete(directory);
+            }
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
         }
     }
 
@@ -374,14 +452,20 @@ internal sealed class SanitizedObservationStore : IDisposable
     private sealed class SpoolState
     {
         private FileStream? _deleteAnchor;
+        private readonly bool _ownsDirectory;
         private int _references = 1;
         private int _ownerReleased;
 
-        internal SpoolState(string path, string directory, FileStream deleteAnchor)
+        internal SpoolState(
+            string path,
+            string directory,
+            FileStream deleteAnchor,
+            bool ownsDirectory)
         {
             Path = path;
             Directory = directory;
             _deleteAnchor = deleteAnchor;
+            _ownsDirectory = ownsDirectory;
         }
 
         internal string Path { get; }
@@ -426,14 +510,8 @@ internal sealed class SanitizedObservationStore : IDisposable
                 {
                 }
 
-                // DeleteOnClose provides cleanup if the process terminates.
-                // The explicit fallback covers file systems that ignore it.
-                if (File.Exists(Path))
-                {
-                    File.Delete(Path);
-                }
-
-                if (System.IO.Directory.Exists(Directory)
+                if (_ownsDirectory
+                    && System.IO.Directory.Exists(Directory)
                     && !System.IO.Directory.EnumerateFileSystemEntries(Directory).Any())
                 {
                     System.IO.Directory.Delete(Directory);

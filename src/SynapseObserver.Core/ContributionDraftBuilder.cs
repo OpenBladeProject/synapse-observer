@@ -190,7 +190,7 @@ public static class ContributionDraftBuilder
 
     // Bundle export shares one set of windows across the three draft documents.
     internal static (ContributionCoverageDraft Coverage, ContributionAnnotationDraft Annotation,
-        ContributionQualityReceipt Quality) CreateDrafts(
+        ContributionQualityReceipt Quality, ObservationQualityStatistics Statistics) CreateDrafts(
         EvidenceSessionSnapshot snapshot, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
@@ -201,9 +201,9 @@ public static class ContributionDraftBuilder
         cancellationToken.ThrowIfCancellationRequested();
         var annotation = CreateAnnotationDraft(snapshot, windows);
         cancellationToken.ThrowIfCancellationRequested();
-        var quality = CreateQualityReceipt(snapshot, windows, coverage);
+        var quality = CreateQualityReceipt(snapshot, windows, coverage, out var statistics);
         cancellationToken.ThrowIfCancellationRequested();
-        return (coverage, annotation, quality);
+        return (coverage, annotation, quality, statistics);
     }
 
     public static ContributionCoverageDraft CreateCoverageDraft(EvidenceSessionSnapshot snapshot)
@@ -217,7 +217,7 @@ public static class ContributionDraftBuilder
     {
         var evidence = CapabilityPaths.ToDictionary(
             static path => path,
-            static _ => new ExportDiskList<ContributionEvidenceReference>(),
+            static _ => new CoverageReferences(),
             StringComparer.Ordinal);
 
         AddInventoryEvidence(snapshot.Inventory, evidence);
@@ -237,7 +237,7 @@ public static class ContributionDraftBuilder
             .Select(path => new ContributionCoverageEntry(
                 path,
                 evidence[path].Count == 0 ? ContributionCoverageStatus.NotInvestigated : ContributionCoverageStatus.Captured,
-                evidence[path]))
+                evidence[path].Records))
             .ToArray();
 
         return new ContributionCoverageDraft(
@@ -278,23 +278,27 @@ public static class ContributionDraftBuilder
         };
     }
 
-    public static ContributionQualityReceipt CreateQualityReceipt(EvidenceSessionSnapshot snapshot)
+    public static ContributionQualityReceipt CreateQualityReceipt(EvidenceSessionSnapshot snapshot) =>
+        CreateQualityAnalysis(snapshot).Quality;
+
+    internal static (ContributionQualityReceipt Quality, ObservationQualityStatistics Statistics) CreateQualityAnalysis(
+        EvidenceSessionSnapshot snapshot)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
         using var projections = new ExportProjectionScope();
         var windows = CreateActionWindows(snapshot, retainSources: false);
-        return CreateQualityReceipt(snapshot, windows, CreateCoverageDraft(snapshot, windows, retainReferences: false));
+        var quality = CreateQualityReceipt(snapshot, windows,
+            CreateCoverageDraft(snapshot, windows, retainReferences: false), out var statistics);
+        return (quality, statistics);
     }
 
     private static ContributionQualityReceipt CreateQualityReceipt(
         EvidenceSessionSnapshot snapshot, IReadOnlyList<ContributionActionWindowDraft> windows,
-        ContributionCoverageDraft coverageDraft)
+        ContributionCoverageDraft coverageDraft, out ObservationQualityStatistics statistics)
     {
-        var outsideWindows = snapshot.Observations.Count(item => !windows.Any(window => WithinWindow(item, window)));
-        var reviewed = snapshot.Observations.Count(static item =>
-            item.PayloadProjectionKind != FeaturePayloadProjectionKind.MetadataOnly);
-        var redacted = snapshot.Observations.Count(static item => !item.CompletePayloadRetained);
-        var gaps = CreateQualityGaps(snapshot, windows, outsideWindows > 0);
+        statistics = ObservationQualityStatistics.Collect(snapshot.Observations,
+            item => windows.Any(window => WithinWindow(item, window)));
+        var gaps = CreateQualityGaps(snapshot, windows, statistics);
         var inventoryGapCount = gaps.Count(static gap => gap.Code.StartsWith("Inventory", StringComparison.Ordinal));
         var coverage = coverageDraft.Coverage;
         var capturedCoverage = coverage.Count(static item => item.Status == ContributionCoverageStatus.Captured);
@@ -310,14 +314,13 @@ public static class ContributionDraftBuilder
                 windows.Count,
                 windows.Count(static item => item.CompleteUserReportedSequence),
                 snapshot.Observations.Count,
-                reviewed,
-                redacted,
-                outsideWindows,
+                statistics.Reviewed,
+                statistics.Redacted,
+                statistics.Unassociated,
                 snapshot.SpecialKeyObservations.Count,
                 snapshot.RejectedMarkerCount + snapshot.RejectedObservationCount + snapshot.RejectedCoverageCount)
             {
-                ReviewedSemanticOnlyResponses = snapshot.Observations.Count(static item =>
-                    item.SemanticResponse is not null && !item.CompletePayloadRetained),
+                ReviewedSemanticOnlyResponses = statistics.SemanticOnly,
             },
             gaps,
             MaintainerStages,
@@ -503,7 +506,7 @@ public static class ContributionDraftBuilder
 
     private static void AddInventoryEvidence(
         InventorySnapshot inventory,
-        Dictionary<string, ExportDiskList<ContributionEvidenceReference>> evidence)
+        Dictionary<string, CoverageReferences> evidence)
     {
         if (IsUsable(inventory.PowerSource.State))
         {
@@ -626,7 +629,7 @@ public static class ContributionDraftBuilder
     private static void AddFeatureEvidence(
         EvidenceSessionSnapshot snapshot,
         IReadOnlyList<ContributionActionWindowDraft> windows,
-        Dictionary<string, ExportDiskList<ContributionEvidenceReference>> evidence,
+        Dictionary<string, CoverageReferences> evidence,
         bool retainReferences)
     {
         var index = 0;
@@ -868,7 +871,7 @@ public static class ContributionDraftBuilder
 
     private static void AddSpecialKeyEvidence(
         EvidenceSessionSnapshot snapshot,
-        Dictionary<string, ExportDiskList<ContributionEvidenceReference>> evidence)
+        Dictionary<string, CoverageReferences> evidence)
     {
         var completedProbes = snapshot.SpecialKeyProbes
             .Where(static probe => probe.ObservationCount > 0)
@@ -922,7 +925,7 @@ public static class ContributionDraftBuilder
     private static IReadOnlyList<ContributionQualityGap> CreateQualityGaps(
         EvidenceSessionSnapshot snapshot,
         IReadOnlyList<ContributionActionWindowDraft> windows,
-        bool hasOutsideObservations)
+        ObservationQualityStatistics statistics)
     {
         var gaps = new List<ContributionQualityGap>();
         AddSectionGap(gaps, "machineIdentity", snapshot.Inventory.MachineIdentity.State);
@@ -1015,7 +1018,7 @@ public static class ContributionDraftBuilder
                 "The observer reported that recording evidence may be incomplete."));
         }
 
-        if (hasOutsideObservations)
+        if (statistics.Unassociated > 0)
         {
             gaps.Add(new ContributionQualityGap(
                 "observations",
@@ -1023,8 +1026,7 @@ public static class ContributionDraftBuilder
                 "One or more control observations could not be associated with a prompted action window."));
         }
 
-        if (snapshot.Observations.Any(static item =>
-                item.ErrorCategory is "unreadable-buffer" or "buffer-exceeds-limit"))
+        if (statistics.CapturePayloadLoss)
         {
             gaps.Add(new ContributionQualityGap(
                 "observations",
@@ -1032,7 +1034,7 @@ public static class ContributionDraftBuilder
                 "One or more native observations could not retain a call payload because the source buffer was unreadable or exceeded the bounded copy limit."));
         }
 
-        if (snapshot.Observations.Any(static item => !item.CompletePayloadRetained))
+        if (statistics.Redacted > 0)
         {
             gaps.Add(new ContributionQualityGap(
                 "observations",
@@ -1040,7 +1042,7 @@ public static class ContributionDraftBuilder
                 "One or more unsupported, malformed, failed, sensitive, or over-limit report bodies were withheld."));
         }
 
-        if (snapshot.Observations.Any(static item => item.ReturnedLengthUnknown))
+        if (statistics.ReturnedLengthUnknown)
         {
             gaps.Add(new ContributionQualityGap(
                 "observations",
@@ -1048,7 +1050,7 @@ public static class ContributionDraftBuilder
                 "HidD_GetFeature succeeded, but the API does not provide an actual returned-byte count."));
         }
 
-        if (snapshot.Observations.Any(static item => item.Status == ObservationStatus.Failed))
+        if (statistics.ApiFailure)
         {
             gaps.Add(new ContributionQualityGap(
                 "observations",
@@ -1056,7 +1058,7 @@ public static class ContributionDraftBuilder
                 "One or more observed calls completed with a failure status."));
         }
 
-        if (snapshot.Observations.Any(static item => item.Status is ObservationStatus.Pending or ObservationStatus.Cancelled))
+        if (statistics.IncompleteCompletion)
         {
             gaps.Add(new ContributionQualityGap(
                 "observations",
@@ -1105,17 +1107,26 @@ public static class ContributionDraftBuilder
     private static bool IsUsable(CollectionState state) =>
         state is CollectionState.Collected or CollectionState.Partial;
 
+    private sealed class CoverageReferences
+    {
+        internal ExportDiskList<ContributionEvidenceReference> Records { get; } = new();
+        // Only bounded inventory and special-key references use this set.
+        // Every control-observation reference bypasses it with deduplicate:false.
+        internal HashSet<(ContributionObservationLayer Layer, string Reference)> MetadataReferences { get; } = [];
+        internal int Count => Records.Count;
+    }
+
     private static void Add(
-        Dictionary<string, ExportDiskList<ContributionEvidenceReference>> evidence,
+        Dictionary<string, CoverageReferences> evidence,
         string path,
         ContributionObservationLayer layer,
         string referenceId,
         string summary, bool deduplicate = true)
     {
         if (evidence.TryGetValue(path, out var entries)
-            && (!deduplicate || !entries.Any(item => item.Layer == layer && item.ReferenceId == referenceId)))
+            && (!deduplicate || entries.MetadataReferences.Add((layer, referenceId))))
         {
-            entries.Add(new ContributionEvidenceReference(layer, referenceId, summary));
+            entries.Records.Add(new ContributionEvidenceReference(layer, referenceId, summary));
         }
     }
 
