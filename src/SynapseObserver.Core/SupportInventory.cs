@@ -594,7 +594,8 @@ internal static class SupportInventorySanitizer
                 .Select(static profile => profile with
                 {
                     FileName = WindowsInventorySource.GetSafeColorProfileFileName(profile.FileName),
-                    Sha256 = Sha256(profile.Sha256),
+                    Sha256 = WindowsInventorySource.GetSafeColorProfileFileName(profile.FileName) is not null
+                        ? Sha256(profile.Sha256) : null,
                     DefaultSubtypes = profile.DefaultSubtypes
                         .Where(Enum.IsDefined)
                         .Distinct()
@@ -606,7 +607,9 @@ internal static class SupportInventorySanitizer
                 || profiles.Length != Math.Min(scope.Profiles.Count, WindowsInventorySource.MaxColorProfileRecordsPerScope)
                 || scope.Profiles.Any(static profile => profile.FileName is not null
                     && WindowsInventorySource.GetSafeColorProfileFileName(profile.FileName) is null
-                    || profile.Sha256 is not null && Sha256(profile.Sha256) is null
+                    || profile.Sha256 is not null
+                        && (Sha256(profile.Sha256) is null
+                            || WindowsInventorySource.GetSafeColorProfileFileName(profile.FileName) is null)
                     || profile.DefaultSubtypes.Any(static subtype => !Enum.IsDefined(subtype)));
             CollectionState state = !Enum.IsDefined(scope.State) || scopePartial
                 ? CollectionState.Partial
@@ -626,9 +629,12 @@ internal static class SupportInventorySanitizer
             || !scopes.Any(static scope => scope.Scope == DisplayColorProfileScope.CurrentUser)
             || selectedScope == DisplayColorProfileScope.SystemWide
                 && !scopes.Any(static scope => scope.Scope == DisplayColorProfileScope.SystemWide);
-        CollectionState inventoryState = !Enum.IsDefined(inventory.State) || partial
-            ? CollectionState.Partial
-            : inventory.State;
+        var whollyUnavailable = inventory.State == CollectionState.Unavailable
+            && !scopes.Any(static scope => scope.Profiles.Count > 0
+                || scope.State is CollectionState.Collected or CollectionState.Absent);
+        CollectionState inventoryState = whollyUnavailable
+            ? CollectionState.Unavailable
+            : !Enum.IsDefined(inventory.State) || partial ? CollectionState.Partial : inventory.State;
         return inventory with
         {
             SelectedScope = selectedScope,

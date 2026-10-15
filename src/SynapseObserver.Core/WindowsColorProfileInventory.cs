@@ -403,6 +403,12 @@ public sealed partial class WindowsInventorySource
         string? safeFileName = SafeColorProfileFileNames.TryGetValue(labelIdentity, out string? knownName)
             ? knownName
             : null;
+        // Custom calibration files can be unique to a person or device. Keep
+        // their association/default metadata, but never read or hash the file.
+        if (safeFileName is null)
+        {
+            return new ColorProfileMaterializationResult(label, null, null, true);
+        }
         if (!TryResolveColorProfilePath(nativeName, colorDirectory, out string? path))
         {
             return new ColorProfileMaterializationResult(label, safeFileName, null, false);

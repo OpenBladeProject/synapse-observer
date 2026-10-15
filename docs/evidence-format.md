@@ -151,7 +151,7 @@ metadata; no input report bodies or ordinary key presses are collected.
 Each active display may also carry bounded `colorProfiles` metadata: selected
 Windows scope, associated profiles, and separately identified SDR and HDR
 defaults. An association has no inferred subtype. Profiles use per-session
-opaque labels and, when a file can be safely read from the Windows color
-directory, SHA-256. Only recognized preset filenames are retained; custom names,
-paths, and profile contents are omitted. Missing APIs, inaccessible files, and
+opaque labels. Only recognized preset filenames and their SHA-256 hashes are
+retained, after a bounded read from the Windows color directory. Custom names,
+custom content hashes, paths, and all profile contents are omitted. Missing APIs, inaccessible files, and
 bounds remain explicit partial results without removing the display's modes.

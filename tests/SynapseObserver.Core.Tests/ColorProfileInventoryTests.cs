@@ -295,12 +295,13 @@ public sealed class ColorProfileInventoryTests
             var custom = source.MaterializeColorProfile(customName, directory, static _ => "profile-safe");
             Assert.Equal("profile-safe", custom.ProfileLabel);
             Assert.Null(custom.FileName);
-            Assert.Equal(Convert.ToHexString(SHA256.HashData(content)), custom.Sha256);
+            Assert.Null(custom.Sha256);
             Assert.True(custom.Complete);
 
             File.WriteAllBytes(Path.Combine(directory, "sRGB_CTR.icm"), content);
             var known = source.MaterializeColorProfile("sRGB_CTR.icm", directory, static _ => "profile-known");
             Assert.Equal("sRGB_CTR.icm", known.FileName);
+            Assert.Equal(Convert.ToHexString(SHA256.HashData(content)), known.Sha256);
             Assert.True(known.Complete);
 
             Assert.False(WindowsInventorySource.TryResolveColorProfilePath(
@@ -362,6 +363,45 @@ public sealed class ColorProfileInventoryTests
         Assert.All(scope.Profiles, static profile => Assert.DoesNotContain("owner", profile.FileName ?? string.Empty, StringComparison.OrdinalIgnoreCase));
         Assert.All(scope.Profiles, static profile => Assert.True(profile.Sha256 is null or { Length: 64 }));
         Assert.DoesNotContain(scope.Profiles.SelectMany(static profile => profile.DefaultSubtypes), static subtype => (int)subtype == 99);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void SupportSanitizer_PreservesWhollyUnavailableProfileState(bool failedScopePresent)
+    {
+        var failedScope = new DisplayColorProfileScopeEvidence(
+            DisplayColorProfileScope.CurrentUser, CollectionState.Unavailable, [], false, "Unavailable");
+        var display = new DisplayEvidence("display-safe", "Panel", true, null, [])
+        {
+            ColorProfiles = new(null, CollectionState.Unavailable,
+                failedScopePresent ? [failedScope] : [], "Unavailable"),
+        };
+        var sanitized = SupportInventorySanitizer.Sanitize(SupportInventorySnapshot.Empty with
+        {
+            Displays = SectionResult<IReadOnlyList<DisplayEvidence>>.Collected([display]),
+        });
+        Assert.Equal(CollectionState.Unavailable,
+            Assert.Single(sanitized.Displays.Value).ColorProfiles!.State);
+    }
+
+    [Fact]
+    public void SupportSanitizer_OmitsInjectedCustomProfileHash()
+    {
+        var display = new DisplayEvidence("display-safe", "Panel", true, null, [])
+        {
+            ColorProfiles = new(DisplayColorProfileScope.CurrentUser, CollectionState.Collected,
+                [new(DisplayColorProfileScope.CurrentUser, CollectionState.Collected,
+                    [new("profile-safe", null, new string('A', 64), true, [])], false, null)], null),
+        };
+        var sanitized = SupportInventorySanitizer.Sanitize(SupportInventorySnapshot.Empty with
+        {
+            Displays = SectionResult<IReadOnlyList<DisplayEvidence>>.Collected([display]),
+        });
+        var profile = Assert.Single(Assert.Single(Assert.Single(sanitized.Displays.Value).ColorProfiles!.Scopes).Profiles);
+        Assert.Null(profile.FileName);
+        Assert.Null(profile.Sha256);
+        Assert.True(profile.IsAssociated);
     }
 
     private static WindowsInventorySource.ColorProfileMaterializationResult Materialize(

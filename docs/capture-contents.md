@@ -92,7 +92,8 @@ with the JSON files when attaching the ZIP to a support request.
   16 LampArrays with 4,096 lamps, 256 key mappings, and 512 lamp indices per key
   for each array. HID capability summaries are limited to 128 shapes per interface;
   color-profile lists retain up to 32 associations plus the two default-profile
-  records for each queried scope, with profile hashing limited to 16 MiB per file.
+  records for each queried scope. Only recognized preset files are hashed, with
+  hashing limited to 16 MiB per file.
 - Each JSON entry is limited to 16 MiB. Export writes a private temporary file,
   flushes it, and replaces the selected ZIP only after every entry succeeds.
 
