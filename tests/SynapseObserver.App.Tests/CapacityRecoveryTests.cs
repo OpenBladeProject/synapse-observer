@@ -39,7 +39,7 @@ public sealed class CapacityRecoveryTests
         Assert.All(observer.RawBuffers, buffer => Assert.All(buffer, value => Assert.Equal((byte)0, value)));
 
         Assert.True(model.ShowCapacityRecovery);
-        Assert.Contains("observation", model.CapacitySummary, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Recording", model.CapacitySummary, StringComparison.OrdinalIgnoreCase);
         Assert.False(model.IsRecording);
         Assert.False(model.StartCommand.CanExecute(null));
         Assert.False(model.MarkCommand.CanExecute(null));
@@ -105,14 +105,16 @@ public sealed class CapacityRecoveryTests
         await CurrentPump(model).WaitAsync(TimeSpan.FromSeconds(5));
         Assert.True(model.IsRecording);
 
-        FillMarkersTo(model, EvidenceLimits.MaxMarkers - 6);
+        var capacityThreshold = EvidenceLimits.MaxMarkers - CollectorViewModel.CleanupMarkerReserve;
+        FillMarkersTo(model, capacityThreshold - 1);
         model.StartingSetting = "Battery";
         await Run(model.MarkCommand);
         await WaitForCapacityStopAsync(model, observer);
 
         var evidence = model.Evidence!;
-        Assert.Equal(EvidenceLimits.MaxMarkers - 4, evidence.Markers.Count);
+        Assert.Equal(capacityThreshold + 1, evidence.Markers.Count);
         Assert.Equal(0, evidence.RejectedMarkerCount);
+        Assert.Contains("checklist", model.CapacitySummary, StringComparison.OrdinalIgnoreCase);
         Assert.Contains(evidence.Markers, marker => marker.Kind == EvidenceMarkerKind.UserReportedCurrentState);
         Assert.Contains(evidence.Markers, marker => marker.Kind == EvidenceMarkerKind.RecordingStopped);
         Assert.Contains(evidence.Coverage, item =>
@@ -135,13 +137,14 @@ public sealed class CapacityRecoveryTests
         await Run(model.MarkCommand);
         model.ChangedSetting = "Silent";
         await Run(model.MarkCommand);
-        FillMarkersTo(model, EvidenceLimits.MaxMarkers - 6);
+        var capacityThreshold = EvidenceLimits.MaxMarkers - CollectorViewModel.CleanupMarkerReserve;
+        FillMarkersTo(model, capacityThreshold - 1);
 
         await Run(model.MarkCommand);
         await WaitForCapacityStopAsync(model, observer);
 
         var evidence = model.Evidence!;
-        Assert.Equal(EvidenceLimits.MaxMarkers - 4, evidence.Markers.Count);
+        Assert.Equal(capacityThreshold + 1, evidence.Markers.Count);
         Assert.Equal(0, evidence.RejectedMarkerCount);
         Assert.Contains(evidence.Markers, marker => marker.Kind == EvidenceMarkerKind.UserReportedRestoration
             && marker.Value == "Balanced");
@@ -153,6 +156,107 @@ public sealed class CapacityRecoveryTests
         Assert.False(model.CapacityRestorationRequired);
         Assert.False(model.CapacityRestorationConfirmed);
         Assert.True(model.SaveAndContinueCommand.CanExecute(null));
+        await model.CloseAsync();
+    }
+
+    [Fact]
+    public async Task IncreasingObserverDropsCoalesceWithoutConsumingMarkerCapacity()
+    {
+        var model = await RecordingAsync();
+        var observer = CapacityObserver.Empty();
+        model.SetOwnedTestObserver(observer, [Candidate]);
+        observer.DroppedEvents = 1;
+        await Poll(model);
+        var first = Assert.Single(model.Evidence!.Markers,
+            marker => marker.Label == "Observer queue dropped events");
+
+        for (var dropped = 2; dropped <= 600; dropped++)
+        {
+            observer.DroppedEvents = dropped;
+            await Poll(model);
+        }
+        await Run(model.StopCommand);
+
+        var evidence = model.Evidence!;
+        var retained = Assert.Single(evidence.Markers,
+            marker => marker.Label == "Observer queue dropped events");
+        Assert.Equal(first.RelativeMilliseconds, retained.RelativeMilliseconds);
+        Assert.Equal("count-600", retained.Value);
+        Assert.Equal(0, evidence.RejectedMarkerCount);
+        Assert.True(evidence.Markers.Count < EvidenceLimits.MaxMarkers - CollectorViewModel.CleanupMarkerReserve);
+        Assert.Contains("600 recording gaps", model.ObservationSummary);
+        Assert.False(model.ShowCapacityRecovery);
+        await model.CloseAsync();
+    }
+
+    [Fact]
+    public async Task ProbePreflightRefusesReservedMarkerAndObservationCapacityWithoutStartMarker()
+    {
+        var markerModel = await CollectedAsync();
+        var markerThreshold = EvidenceLimits.MaxMarkers - CollectorViewModel.CleanupMarkerReserve;
+        FillMarkersTo(markerModel, markerThreshold - 1);
+        var markerCount = CurrentSession(markerModel).MarkerCount;
+
+        Assert.False(markerModel.PrepareSpecialKeyProbe());
+        Assert.Equal(markerCount, CurrentSession(markerModel).MarkerCount);
+        Assert.DoesNotContain(markerModel.Evidence!.Markers,
+            marker => marker.Kind == EvidenceMarkerKind.SpecialKeyProbeStarted);
+        Assert.True(markerModel.ShowCapacityRecovery);
+        await markerModel.CloseAsync();
+
+        var observationModel = await CollectedAsync();
+        var oldSession = CurrentSession(observationModel);
+        var keySession = CreateKeySession();
+        SetCurrentSession(observationModel, keySession);
+        oldSession.Dispose();
+        for (var index = 0; index < EvidenceLimits.MaxSpecialKeyObservations; index++)
+        {
+            Assert.Equal(EvidenceAddResult.Added, keySession.AddSpecialKeyObservation(
+                KeyObservation(index / EvidenceLimits.MaxSpecialKeyObservationsPerProbe + 1)));
+        }
+        Assert.Equal(EvidenceLimits.MaxSpecialKeyObservations, keySession.SpecialKeyObservationCount);
+
+        Assert.False(observationModel.PrepareSpecialKeyProbe());
+        Assert.Equal(0, keySession.MarkerCount);
+        Assert.DoesNotContain(observationModel.Evidence!.Markers,
+            marker => marker.Kind == EvidenceMarkerKind.SpecialKeyProbeStarted);
+        Assert.True(observationModel.ShowCapacityRecovery);
+        await observationModel.CloseAsync();
+    }
+
+    [Fact]
+    public async Task SixtyFourthProbeSummaryTriggersRecoveryWithoutOverwritingDeclaredState()
+    {
+        var model = await CollectedAsync();
+        model.SelectedActivityIndex = ActivityIndex(model, "special-key-m1");
+        model.StartingSetting = "Unassigned";
+        await Run(model.MarkCommand);
+        var declared = Assert.Single(model.Evidence!.Coverage,
+            item => item.ActivityId == "special-key-m1");
+        Assert.Equal(CoverageState.Completed, declared.State);
+
+        for (var index = 1; index <= EvidenceLimits.MaxSpecialKeyProbes; index++)
+        {
+            SetActiveProbeLabel(model, $"probe-{index:D3}");
+            model.CompleteSpecialKeyProbe(ProbeSummary());
+        }
+
+        Assert.Equal(EvidenceLimits.MaxSpecialKeyProbes, CurrentSession(model).SpecialKeyProbeCount);
+        Assert.True(model.ShowCapacityRecovery);
+        Assert.False(model.PrepareSpecialKeyProbe());
+        Assert.DoesNotContain(model.Evidence!.Markers,
+            marker => marker.Kind == EvidenceMarkerKind.SpecialKeyProbeStarted);
+
+        SetActiveProbeLabel(model, "probe-065");
+        model.CompleteSpecialKeyProbe(ProbeSummary());
+
+        var evidence = model.Evidence!;
+        Assert.Equal(EvidenceLimits.MaxSpecialKeyProbes, evidence.SpecialKeyProbes.Count);
+        Assert.Contains("could not be retained", model.SpecialKeyStatus, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(CoverageState.Completed, Assert.Single(evidence.Coverage,
+            item => item.ActivityId == "special-key-m1").State);
+        Assert.Contains(evidence.Markers, marker => marker.Kind == EvidenceMarkerKind.UserReportedCurrentState
+            && marker.ActivityId == "special-key-m1" && marker.Value == "Unassigned");
         await model.CloseAsync();
     }
 
@@ -264,6 +368,12 @@ public sealed class CapacityRecoveryTests
             await Run(model.SaveCommand);
             Assert.Equal(firstHash, SHA256.HashData(File.ReadAllBytes(firstPath)));
             Assert.Contains("different filename", model.Status, StringComparison.OrdinalIgnoreCase);
+            var unrelatedPath = Path.Combine(directory, "unrelated-existing.zip");
+            var unrelatedBytes = new byte[] { 0x55, 0x4E, 0x52, 0x45, 0x4C, 0x41, 0x54, 0x45, 0x44 };
+            File.WriteAllBytes(unrelatedPath, unrelatedBytes);
+            destination = unrelatedPath;
+            await Run(model.SaveCommand);
+            Assert.Equal(unrelatedBytes, File.ReadAllBytes(unrelatedPath));
             destination = secondPath;
             await Run(model.SaveCommand);
 
@@ -379,10 +489,16 @@ public sealed class CapacityRecoveryTests
 
     private static async Task<CollectorViewModel> RecordingAsync()
     {
-        var model = new CollectorViewModel(preview: true);
-        await Run(model.CollectCommand);
+        var model = await CollectedAsync();
         model.AttachConsent = true;
         await Run(model.StartCommand);
+        return model;
+    }
+
+    private static async Task<CollectorViewModel> CollectedAsync()
+    {
+        var model = new CollectorViewModel(preview: true);
+        await Run(model.CollectCommand);
         return model;
     }
 
@@ -394,6 +510,37 @@ public sealed class CapacityRecoveryTests
         (EvidenceSession)typeof(CollectorViewModel)
             .GetField("session", BindingFlags.Instance | BindingFlags.NonPublic)!
             .GetValue(model)!;
+
+    private static void SetCurrentSession(CollectorViewModel model, EvidenceSession session) =>
+        typeof(CollectorViewModel)
+            .GetField("session", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(model, session);
+
+    private static void SetActiveProbeLabel(CollectorViewModel model, string label) =>
+        typeof(CollectorViewModel)
+            .GetField("activeProbeLabel", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(model, label);
+
+    private static EvidenceSession CreateKeySession()
+    {
+        var inventory = SyntheticPreview.CreateInventory();
+        var hid = inventory.RazerHidInterfaces.Value.Single() with { UsagePage = 1, Usage = 6 };
+        return new EvidenceSession(inventory with
+        {
+            RazerHidInterfaces = SectionResult<IReadOnlyList<HidInterfaceEvidence>>.Collected([hid]),
+        });
+    }
+
+    private static SpecialKeyObservation KeyObservation(int probe) => new(
+        1, SpecialKeyExpectedKey.M1, SpecialKeyModeContext.Unknown, "hid-preview-01",
+        SpecialKeyObservationOrigin.WindowsRawInput, SpecialKeyPhase.KeyDown, 0x7C)
+    {
+        ProbeLabel = $"probe-{probe:D3}",
+    };
+
+    private static SpecialKeyProbeSummary ProbeSummary() => new(
+        SpecialKeyExpectedKey.M1, SpecialKeyModeContext.Unknown,
+        SpecialKeyProbeEndReason.Timeout, 0, 0, 0, string.Empty);
 
     private static Task Poll(CollectorViewModel model) =>
         (Task)typeof(CollectorViewModel)
@@ -474,6 +621,7 @@ public sealed class CapacityRecoveryTests
         public int Stops { get; private set; }
         public int Disposals { get; private set; }
         public int Invalidations { get; private set; }
+        public int DroppedEvents { get; set; }
         public long OriginTimestampTicks { get; } = System.Diagnostics.Stopwatch.GetTimestamp();
 
         public static CapacityObserver Boundary(bool cleanupFailure = false)
@@ -517,7 +665,7 @@ public sealed class CapacityRecoveryTests
             Started: true,
             Finished: finished,
             Failure: cleanupFailure && finished ? 170 : 0,
-            DroppedEvents: 0,
+            DroppedEvents: DroppedEvents,
             Diagnostic: "Owned capacity observer",
             ReuseAllowed: !cleanupFailure);
 

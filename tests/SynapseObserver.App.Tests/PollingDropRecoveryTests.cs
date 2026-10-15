@@ -21,7 +21,7 @@ public sealed class PollingDropRecoveryTests
         Assert.Contains("9 recording gaps", model.ObservationSummary);
         var evidence = model.Evidence!;
         var drops = evidence.Markers.Where(marker => marker.Label == "Observer queue dropped events").ToArray();
-        Assert.Equal(new[] { "count-5", "count-7" }, drops.Select(marker => marker.Value));
+        Assert.Equal(new[] { "count-7" }, drops.Select(marker => marker.Value));
         Assert.Contains(ContributionDraftBuilder.CreateQualityReceipt(evidence).Gaps,
             gap => gap.Code == "RecordingObservationLoss");
         Assert.Equal(1, observer.Stops);

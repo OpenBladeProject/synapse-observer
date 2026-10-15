@@ -14,6 +14,7 @@ public partial class MainWindow : Window
     private bool wasRecording;
     private bool hadInventory;
     private bool pendingExportFocus;
+    private bool hadCapacityRecovery;
     private SpecialKeyProbe? specialKeyProbe;
 
     public MainWindow(bool preview)
@@ -46,7 +47,9 @@ public partial class MainWindow : Window
             }
             var finished = wasRecording && !viewModel.IsRecording;
             wasRecording = viewModel.IsRecording;
-            pendingExportFocus |= finished;
+            var recoveryAvailable = viewModel.ShowCapacityRecovery;
+            pendingExportFocus |= finished || recoveryAvailable && !hadCapacityRecovery;
+            hadCapacityRecovery = recoveryAvailable;
             if (pendingExportFocus && !viewModel.IsBusy)
             {
                 pendingExportFocus = false;

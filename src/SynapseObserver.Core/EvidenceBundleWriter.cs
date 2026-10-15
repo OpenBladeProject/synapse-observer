@@ -28,18 +28,20 @@ public static class EvidenceBundleWriter
     public static Task WriteAsync(
         EvidenceSession session,
         string destinationPath,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool overwrite = true)
     {
         ArgumentNullException.ThrowIfNull(session);
         cancellationToken.ThrowIfCancellationRequested();
         // Freeze before returning to the caller; no worker reads the mutable session.
-        return WriteSnapshotAsync(session.Snapshot(), destinationPath, cancellationToken);
+        return WriteSnapshotAsync(session.Snapshot(), destinationPath, cancellationToken, overwrite);
     }
 
     internal static async Task WriteSnapshotAsync(
         EvidenceSessionSnapshot snapshot,
         string destinationPath,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool overwrite = true)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(destinationPath);
 
@@ -82,7 +84,7 @@ public static class EvidenceBundleWriter
             }
 
             cancellationToken.ThrowIfCancellationRequested();
-            File.Move(temporaryPath, fullDestination, overwrite: true);
+            File.Move(temporaryPath, fullDestination, overwrite: overwrite);
             temporaryCreated = false;
         }
         finally

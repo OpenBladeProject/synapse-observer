@@ -77,7 +77,7 @@ with the JSON files when attaching the ZIP to a support request.
 
 ## Collection limits
 
-- The app displays retained observation capacity and stops a recording when the ZIP fills. After cleanup, save the current ZIP and explicitly continue in a fresh part. An interrupted setting stays visible until you confirm restoration in its original controls; this checkbox is not firmware readback or a captured restoration marker. Partial save remains available without that confirmation. Each part retains its own evidence and the original inventory timestamp. Session-start markers identify parts with a random collection token and part number; operation identifiers stay distinct across parts. Marker space is reserved for cleanup. The collection review describes only the current ZIP part. Buffered records beyond the hard limit are counted as lost; a final response can be omitted when the limit falls between a request and response. A fresh part cannot recover already omitted records. Earlier checklist progress is shown only in the UI, not copied as completed coverage into the new part. Keep all parts together. Up to 256 parts can be saved in one collection; the final part can still be saved. Cleanup failures retain the existing manual Synapse restart requirement.
+- The app displays retained observation capacity and stops a recording when the ZIP fills. After cleanup, save the current ZIP and explicitly continue in a fresh part. An interrupted setting stays visible until you confirm restoration in its original controls; this checkbox is not firmware readback or a captured restoration marker. Partial save remains available without that confirmation. Each part retains its own evidence and the original inventory timestamp. Session-start markers identify parts with a random collection token and part number; operation identifiers stay distinct across parts. Marker space is reserved for cleanup. Queue-loss counts update one marker per recording, preserving the first-loss timestamp and latest cumulative count. A new part uses an unused filename and is written without replacing an existing file. The collection review describes only the current ZIP part. Buffered records beyond the hard limit are counted as lost; a final response can be omitted when the limit falls between a request and response. A fresh part cannot recover already omitted records. Earlier checklist progress is shown only in the UI, not copied as completed coverage into the new part. Keep all parts together. Up to 256 parts can be saved in one collection; the final part can still be saved. Cleanup failures retain the existing manual Synapse restart requirement.
 - A recording lasts at most ten minutes.
 - One identified physical Blade laptop can contribute up to eight feature
   collections during live observation.
@@ -88,7 +88,9 @@ with the JSON files when attaching the ZIP to a support request.
   and leaves stop/export available. The independent coverage draft still contains
   the complete maintained capability universe; it is not limited by the guided-item bound.
 - Special-key evidence is bounded to 256 observations, 32 observations per
-  prompted probe, and 64 probe summaries.
+  prompted probe, and 64 probe summaries. Reaching a total key-input or probe
+  limit offers the same save-and-continue recovery. A probe that cannot retain
+  its result does not claim normal completion.
 - Display text is limited to 256 characters and opaque identifier tokens to 80
   characters.
 - Payload comparison keeps at most 64 streams and 16 changed-byte ranges per

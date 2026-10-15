@@ -51,18 +51,12 @@ internal sealed partial class CollectorViewModel
     private Task ProbeSpecialKeyAsync()
     {
         if (!CanProbeSpecialKeys || session is null || specialKeyProbe is null || probeForeground is null) return Task.CompletedTask;
+        if (!PrepareSpecialKeyProbe()) return Task.CompletedTask;
         activeProbeLabel = $"probe-{++probeSequence:D3}";
         probeOrigin = RelativeMilliseconds;
         probingSpecialKey = true;
         specialKeyStatus = $"Press only {expectedSpecialKey} now. Keep this window active for five seconds. Ordinary typing is omitted.";
         if (!Marker(EvidenceMarkerKind.SpecialKeyProbeStarted, SpecialKeyActivity(expectedSpecialKey), "Special-key probe requested", EvidenceProvenance.UserReported))
-        {
-            probingSpecialKey = false;
-            RefreshSpecialKeyProbe();
-            return Task.CompletedTask;
-        }
-        CheckMarkerCapacity();
-        if (capacityReached)
         {
             probingSpecialKey = false;
             RefreshSpecialKeyProbe();
@@ -75,8 +69,15 @@ internal sealed partial class CollectorViewModel
             {
                 var result = session.AddSpecialKeyObservation(item with
                 { RelativeMilliseconds = probeOrigin + item.RelativeMilliseconds, ProbeLabel = activeProbeLabel });
-                if (result is EvidenceAddResult.RejectedInvalid or EvidenceAddResult.RejectedLimit)
-                    specialKeyStatus = "Some input evidence was rejected by the privacy or size limits.";
+                if (result == EvidenceAddResult.RejectedInvalid)
+                    specialKeyStatus = "Some input evidence was rejected by the privacy rules.";
+                if (result == EvidenceAddResult.RejectedLimit || session.SpecialKeyObservationCount >= EvidenceLimits.MaxSpecialKeyObservations)
+                {
+                    specialKeyProbe.EndAtCapacity();
+                    ReachCapacity("Key-check space is full.");
+                    specialKeyStatus = "This ZIP's key-input capacity is full. Save this ZIP and continue in a new part.";
+                    RefreshSpecialKeyProbe();
+                }
             }, probeForeground, SpecialKeyModeContext.Unknown);
         }
         catch
@@ -89,16 +90,46 @@ internal sealed partial class CollectorViewModel
         return Task.CompletedTask;
     }
 
+    // Admission precedes the requested-probe marker: do not create an intent
+    // that cannot have a bounded result, or arm a probe in a saturated part.
+    internal bool PrepareSpecialKeyProbe()
+    {
+        if (session is null || capacityReached) return false;
+        if (session.MarkerCount >= EvidenceLimits.MaxMarkers - CleanupMarkerReserve - 1
+            || session.SpecialKeyProbeCount >= EvidenceLimits.MaxSpecialKeyProbes
+            || session.SpecialKeyObservationCount >= EvidenceLimits.MaxSpecialKeyObservations)
+        {
+            ReachCapacity("There is no room for another key check.");
+            specialKeyStatus = "This ZIP has no room for another key check. Save it and continue in a new part.";
+            RefreshSpecialKeyProbe();
+            return false;
+        }
+        return true;
+    }
+
     internal void CompleteSpecialKeyProbe(SpecialKeyProbeSummary summary)
     {
         probingSpecialKey = false;
         if (session is not null)
         {
-            session.AddSpecialKeyProbe(summary with { ProbeLabel = activeProbeLabel, RelativeMilliseconds = probeOrigin });
-            // A probe is separate evidence. It never replaces a declaration
-            // or treats missing input as proof that the key is unavailable.
+            var result = session.AddSpecialKeyProbe(summary with { ProbeLabel = activeProbeLabel, RelativeMilliseconds = probeOrigin });
+            if (result != EvidenceAddResult.Added)
+            {
+                Marker(EvidenceMarkerKind.Failure, "observer", "Special-key probe result could not be retained", EvidenceProvenance.Collector);
+                if (result == EvidenceAddResult.RejectedLimit) ReachCapacity("Key-check space is full.");
+                specialKeyStatus = "The key-check result could not be retained. Save partial evidence; no complete result is claimed.";
+                RefreshSpecialKeyProbe();
+                return;
+            }
+            // A probe never replaces the user's declaration of visible behavior.
         }
         specialKeyStatus = SpecialKeyCompletionStatus(summary);
+        if (session is not null && (session.SpecialKeyProbeCount >= EvidenceLimits.MaxSpecialKeyProbes
+            || session.SpecialKeyObservationCount >= EvidenceLimits.MaxSpecialKeyObservations))
+        {
+            ReachCapacity("Key-check space is full.");
+            specialKeyStatus += " This ZIP's key-check capacity is full. Save it and continue in a new part.";
+        }
         RefreshSpecialKeyProbe();
     }
 
@@ -128,6 +159,7 @@ internal sealed partial class CollectorViewModel
     {
         Changed(nameof(ProbeSpecialKeyCommand)); Changed(nameof(CancelSpecialKeyProbeCommand));
         Changed(nameof(IsProbingSpecialKey)); Changed(nameof(ShowSpecialKeyProbe)); Changed(nameof(CanProbeSpecialKeys));
+        Changed(nameof(CapacitySummary));
         Changed(nameof(CanChooseSpecialKey)); Changed(nameof(SpecialKeyStatus));
         ProbeSpecialKeyCommand?.Refresh(); CancelSpecialKeyProbeCommand?.Refresh();
         RefreshCommands();

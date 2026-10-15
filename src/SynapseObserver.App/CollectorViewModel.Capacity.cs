@@ -10,20 +10,22 @@ internal sealed partial class CollectorViewModel
     // Each part keeps the existing schema and memory/export bounds. Paths remain
     // local, and only the latest saved copy of each part needs overwrite protection.
     private const int MaxEvidenceParts = 256;
-    // Leave room for the bounded user-action tail and cleanup diagnostics.
-    private const int CleanupMarkerReserve = 5;
+    // Reserve a two-marker action tail plus the one-shot queue, malformed
+    // reader, native failure, final drain, stopped and cleanup diagnostics.
+    internal const int CleanupMarkerReserve = 10;
     private readonly string collectionToken = "collection-" + Guid.NewGuid().ToString("N");
     private string CollectionPartLabel => $"{collectionToken}-part-{evidencePart:D3}";
     private readonly Dictionary<int, string> savedPartPaths = [];
     private int evidencePart = 1;
     private bool capacityReached;
+    private string capacityReason = string.Empty;
     private string capacityStartingSetting = string.Empty;
     private int interruptedActivity = -1;
     private bool capacityRestorationConfirmed;
     internal Func<string?>? EvidenceDestinationForTest { get; set; }
     internal Func<EvidenceSession, string, Task>? EvidenceWriterForTest { get; set; }
     public AsyncCommand SaveAndContinueCommand { get; }
-    public string CapacitySummary => $"ZIP part {evidencePart}: {session?.ObservationCount ?? 0} of {EvidenceLimits.MaxObservations} observations; {session?.MarkerCount ?? 0} of {EvidenceLimits.MaxMarkers} action markers. A full part stops recording; save it to continue.";
+    public string CapacitySummary => capacityReached ? $"ZIP part {evidencePart}: {capacityReason} Save it to continue." : $"ZIP part {evidencePart}: {session?.ObservationCount ?? 0} of {EvidenceLimits.MaxObservations} control reports. A full part stops recording; save it to continue.";
     public bool ShowCapacityRecovery => capacityReached && !recording;
     public bool ShowStandardSave => !capacityReached;
     public bool CanConfirmCapacityRestoration => !busy && !recording && !closing;
@@ -46,13 +48,14 @@ internal sealed partial class CollectorViewModel
     {
         if (capacityReached || session is null || session.MarkerCount < EvidenceLimits.MaxMarkers - CleanupMarkerReserve) return;
         retentionGapDetails = "The action-marker capacity is reserved for cleanup. Save this ZIP and continue in a new part.";
-        ReachCapacity();
+        ReachCapacity("Checklist space is full.");
     }
 
-    private void ReachCapacity()
+    private void ReachCapacity(string reason = "Recording space is full.")
     {
         if (capacityReached) return;
         capacityReached = true;
+        capacityReason = reason;
         if (HasCurrentStep && stepPhase > 0)
         {
             capacityStartingSetting = startingSetting;
@@ -80,13 +83,22 @@ internal sealed partial class CollectorViewModel
             Refresh();
             return;
         }
+        var replacingCurrentPart = savedPartPaths.TryGetValue(evidencePart, out var currentPath)
+            && string.Equals(currentPath, fullPath, StringComparison.OrdinalIgnoreCase);
+        var allowOverwrite = evidencePart == 1 || replacingCurrentPart;
+        if (!allowOverwrite && File.Exists(fullPath))
+        {
+            status = "Choose an unused filename for this new ZIP part. Existing files are preserved, including alternate paths to earlier parts.";
+            Refresh();
+            return;
+        }
         busy = true;
         Refresh();
         try
         {
             var savedSession = session!;
             if (EvidenceWriterForTest is not null) await EvidenceWriterForTest(savedSession, fullPath);
-            else await EvidenceBundleWriter.WriteAsync(savedSession, fullPath, CancellationToken.None);
+            else await EvidenceBundleWriter.WriteAsync(savedSession, fullPath, CancellationToken.None, overwrite: allowOverwrite);
             savedPartPaths[evidencePart] = fullPath;
             status = "Evidence ZIP saved. Attach all saved parts to your support request.";
             if (!continueInNewPart || closing) return;
@@ -107,7 +119,7 @@ internal sealed partial class CollectorViewModel
             observedCalls = failedCalls = gaps = droppedEvents = stepStartCount = stepStartGaps = recordingStartGaps = 0;
             observerOrigin = probeOrigin = 0;
             capacityReached = capacityRestorationConfirmed = observerEnded = cleanupRequested = readerFaulted = nativeFailureGapCounted = malformedLossMarkerEmitted = false;
-            capacityStartingSetting = retentionGapDetails = string.Empty;
+            capacityStartingSetting = retentionGapDetails = capacityReason = string.Empty;
             stopTask = null;
             step = interruptedActivity;
             interruptedActivity = -1;

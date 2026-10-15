@@ -85,6 +85,7 @@ public sealed class SpecialKeyProbe : IDisposable
     }
 
     public void Disarm() { source.Dispatcher.VerifyAccess(); End(SpecialKeyProbeEndReason.Cancelled); }
+    internal void EndAtCapacity() { source.Dispatcher.VerifyAccess(); End(SpecialKeyProbeEndReason.LimitReached); }
 
     private bool HasFocus() => GetForegroundWindow() == hwnd && foreground?.Invoke() == true;
     private void OnTick(object? sender, EventArgs args) => CheckActive();

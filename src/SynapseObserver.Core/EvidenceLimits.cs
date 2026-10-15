@@ -6,6 +6,9 @@ public static class EvidenceLimits
     public const int MaxTokenLength = 80;
     public const int MaxMarkers = 512;
     public const int MaxObservations = 4096;
+    public const int MaxSpecialKeyObservations = 256;
+    public const int MaxSpecialKeyObservationsPerProbe = 32;
+    public const int MaxSpecialKeyProbes = 64;
     public const int MaxCoverageItems = 128;
     public const int MaxPayloadBytesPerObservation = 4096;
     public const int MaxPayloadComparisonStreams = 64;

@@ -829,7 +829,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
         collectionDetails = $"{dropped} events were dropped by the bounded observer queue during this recording. Completed-call observations cannot establish firmware application. Pending asynchronous completions were not observed.";
         gaps += dropped - droppedEvents;
         droppedEvents = dropped;
-        Marker(EvidenceMarkerKind.Failure, "observer", "Observer queue dropped events", EvidenceProvenance.Observer, $"count-{dropped}");
+        session?.RecordObserverDroppedEvents(RelativeMilliseconds, recordingNumber, dropped);
         return true;
     }
 
@@ -881,7 +881,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
         }
         if (result == EvidenceAddResult.RejectedLimit)
         {
-            ReachCapacity();
+            ReachCapacity("Checklist space is full.");
             retentionGapDetails = $"The session reached its {EvidenceLimits.MaxMarkers} action-marker limit. Further markers are counted as rejected in the ZIP. Stop and save this ZIP, then continue in a new part.";
             status = "This action could not be recorded because the session is full. " + CapacityInstructions;
             Refresh();

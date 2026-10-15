@@ -10,6 +10,7 @@ public sealed class EvidenceSession : IDisposable
     private readonly List<SpecialKeyProbeSummary> _specialKeyProbes = [];
     private readonly List<SanitizedControlObservation> _observations = [];
     private readonly Dictionary<string, CoverageItem> _coverage = new(StringComparer.Ordinal);
+    private readonly Dictionary<int, int> _dropMarkerIndices = [];
     private int _payloadBytes;
     private int _rejectedMarkers;
     private int _rejectedObservations;
@@ -25,6 +26,9 @@ public sealed class EvidenceSession : IDisposable
         StartedAtUtc = startedAtUtc ?? DateTimeOffset.UtcNow;
     }
 
+    public int SpecialKeyProbeCount { get { lock (_sync) return _specialKeyProbes.Count; } }
+    public int SpecialKeyObservationCount { get { lock (_sync) return _specialKeys.Count; } }
+
     public int MarkerCount { get { lock (_sync) return _markers.Count; } }
 
     public int ObservationCount { get { lock (_sync) return _observations.Count; } }
@@ -32,6 +36,31 @@ public sealed class EvidenceSession : IDisposable
     public InventorySnapshot Inventory { get; }
 
     public DateTimeOffset StartedAtUtc { get; }
+
+    // A growing queue-loss counter must not consume one marker per poll.
+    // Replacement retains the first-loss timestamp and recording boundary.
+    public EvidenceAddResult RecordObserverDroppedEvents(double relativeMilliseconds, int recordingNumber, int droppedEvents)
+    {
+        lock (_sync)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (!double.IsFinite(relativeMilliseconds) || relativeMilliseconds < 0 || recordingNumber < 1 || droppedEvents < 1)
+            {
+                _rejectedMarkers++;
+                return EvidenceAddResult.RejectedInvalid;
+            }
+            var value = $"count-{droppedEvents}";
+            if (_dropMarkerIndices.TryGetValue(recordingNumber, out var index))
+            {
+                _markers[index] = _markers[index] with { Value = value };
+                return EvidenceAddResult.Added;
+            }
+            var result = AddMarker(new EvidenceMarker(relativeMilliseconds, EvidenceMarkerKind.Failure,
+                "observer", "Observer queue dropped events", EvidenceProvenance.Observer, value));
+            if (result == EvidenceAddResult.Added) _dropMarkerIndices.Add(recordingNumber, _markers.Count - 1);
+            return result;
+        }
+    }
 
     public EvidenceAddResult AddMarker(EvidenceMarker marker)
     {
@@ -187,9 +216,9 @@ public sealed class EvidenceSession : IDisposable
         lock (_sync)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            if (_specialKeys.Count >= 256) return EvidenceAddResult.RejectedLimit;
+            if (_specialKeys.Count >= EvidenceLimits.MaxSpecialKeyObservations) return EvidenceAddResult.RejectedLimit;
             if (!SpecialKeyEvidencePolicy.IsValid(observation, Inventory)) return EvidenceAddResult.RejectedInvalid;
-            if (_specialKeys.Count(item => item.ProbeLabel == observation.ProbeLabel) >= 32)
+            if (_specialKeys.Count(item => item.ProbeLabel == observation.ProbeLabel) >= EvidenceLimits.MaxSpecialKeyObservationsPerProbe)
                 return EvidenceAddResult.RejectedLimit;
             _specialKeys.Add(observation with { ChangedRanges = observation.ChangedRanges?.ToArray() });
             return EvidenceAddResult.Added;
@@ -202,11 +231,11 @@ public sealed class EvidenceSession : IDisposable
         lock (_sync)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            if (_specialKeyProbes.Count >= 64) return EvidenceAddResult.RejectedLimit;
+            if (_specialKeyProbes.Count >= EvidenceLimits.MaxSpecialKeyProbes) return EvidenceAddResult.RejectedLimit;
             if (!EvidenceText.IsToken(summary.ProbeLabel) || !double.IsFinite(summary.RelativeMilliseconds)
                 || summary.RelativeMilliseconds < 0 || !Enum.IsDefined(summary.ExpectedKey)
                 || !Enum.IsDefined(summary.ModeContext) || !Enum.IsDefined(summary.EndReason)
-                || summary.ObservationCount is < 0 or > 32 || summary.IgnoredTypingCount is < 0 or > 1000000
+                || (summary.ObservationCount < 0 || summary.ObservationCount > EvidenceLimits.MaxSpecialKeyObservationsPerProbe) || summary.IgnoredTypingCount is < 0 or > 1000000
                 || summary.RejectedPacketCount is < 0 or > 1000000)
                 return EvidenceAddResult.RejectedInvalid;
             // Fixed policy text prevents any input-supplied diagnostic from exporting private text.
