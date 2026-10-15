@@ -15,7 +15,7 @@ namespace SynapseObserver.Core;
 
 public sealed partial class WindowsInventorySource
 {
-    private const int MaxSupportDisplayModes = 128;
+    private const int MaxSupportDisplayModes = EvidenceLimits.MaxDisplayModesPerDisplay;
     private const int MaxSupportDevices = 24;
     private IReadOnlyList<HidDescriptorSupportEvidence> _lastHidDescriptorSupport = [];
 

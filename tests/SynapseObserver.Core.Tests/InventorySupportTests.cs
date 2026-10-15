@@ -55,12 +55,12 @@ public sealed class InventorySupportTests
                     "Internal Display",
                     true,
                     new DisplayModeEvidence(2560, 1600, 32, 240),
-                    Enumerable.Range(0, 200)
+                    Enumerable.Range(0, EvidenceLimits.MaxDisplayModesPerDisplay + 10)
                         .Select(static index => new DisplayModeEvidence(1920, 1080, 32, index + 1))
                         .ToArray()),
             ]),
             SectionResult<IReadOnlyList<BrightnessEvidence>>.Collected(
-                [new BrightnessEvidence("display-safe", 50, Enumerable.Range(0, 200).Select(static i => (byte)i).ToArray())]),
+                [new BrightnessEvidence("display-safe", 50, Enumerable.Range(0, EvidenceLimits.MaxDisplayModesPerDisplay + 10).Select(static i => (byte)i).ToArray())]),
             SectionResult<IReadOnlyList<ThermalZoneEvidence>>.Collected(
                 [new ThermalZoneEvidence("thermal-safe", 3000)]),
             SectionResult<IReadOnlyList<LampArrayEvidence>>.Unavailable([], @"C:\private\lamp.txt"),
@@ -89,7 +89,7 @@ public sealed class InventorySupportTests
         Assert.Equal(new[] { "filter-safe" }, sanitized.DeviceDrivers.Value[0].UpperFilters);
         Assert.Equal("rzdev.sys", Assert.Single(sanitized.DeviceDrivers.Value[0].Files).FileName);
         Assert.Equal("Synapse.exe", Assert.Single(sanitized.ExecutableModules.Value).FileName);
-        Assert.Equal(128, Assert.Single(sanitized.Displays.Value).AvailableModes.Count);
+        Assert.Equal(EvidenceLimits.MaxDisplayModesPerDisplay, Assert.Single(sanitized.Displays.Value).AvailableModes.Count);
         Assert.Equal(101, Assert.Single(sanitized.Brightness.Value).AvailableLevels.Count);
         Assert.DoesNotContain("RAW-SERIAL", json, StringComparison.Ordinal);
         Assert.DoesNotContain("C:\\\\", json, StringComparison.Ordinal);
@@ -267,9 +267,23 @@ public sealed class InventorySupportTests
     }
 
     [Fact]
+    public void CollectBoundedDisplayModes_RetainsNativeHighRefreshModeBeyondOldLimit()
+    {
+        var native = new DisplayModeEvidence(2560, 1600, 32, 240);
+        var result = WindowsInventorySource.CollectBoundedDisplayModes(index => index switch
+        {
+            < 200 => new DisplayModeEvidence(index + 320, 720, 32, 60),
+            200 => native,
+            _ => null,
+        });
+        Assert.False(result.Truncated);
+        Assert.Contains(native, result.Modes);
+    }
+
+    [Fact]
     public void CollectBoundedDisplayModes_ReportsUniqueAndRawClipping()
     {
-        var unique = WindowsInventorySource.CollectBoundedDisplayModes(index => index < 130
+        var unique = WindowsInventorySource.CollectBoundedDisplayModes(index => index < EvidenceLimits.MaxDisplayModesPerDisplay + 2
             ? new DisplayModeEvidence(index + 1, 1080, 32, 60)
             : null);
         var raw = WindowsInventorySource.CollectBoundedDisplayModes(index => index <= 4096
@@ -277,7 +291,7 @@ public sealed class InventorySupportTests
             : null);
 
         Assert.True(unique.Truncated);
-        Assert.Equal(128, unique.Modes.Count);
+        Assert.Equal(EvidenceLimits.MaxDisplayModesPerDisplay, unique.Modes.Count);
         Assert.True(raw.Truncated);
         Assert.Single(raw.Modes);
     }

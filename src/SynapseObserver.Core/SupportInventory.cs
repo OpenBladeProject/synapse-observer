@@ -296,7 +296,7 @@ internal static class SupportInventorySanitizer
     private const int MaxFilters = 16;
     private const int MaxGraphicsAdapters = 8;
     private const int MaxDisplays = 16;
-    private const int MaxDisplayModes = 128;
+    private const int MaxDisplayModes = EvidenceLimits.MaxDisplayModesPerDisplay;
     private const int MaxBrightnessEntries = 16;
     private const int MaxBrightnessLevels = 101;
     private const int MaxThermalZones = 16;
