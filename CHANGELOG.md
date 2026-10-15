@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- Rewrite Chinese and Russian guides with clearer instructions and more natural wording. ([#9](https://github.com/OpenBladeProject/synapse-observer/pull/9))
+
 ### Added
 
 - Add complete Simplified Chinese and Russian README, evidence guides, and
