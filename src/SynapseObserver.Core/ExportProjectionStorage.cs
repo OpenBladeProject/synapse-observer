@@ -18,8 +18,8 @@ internal sealed class ExportProjectionScope : IDisposable
 
     internal ExportProjectionScope(CancellationToken cancellationToken = default, string? directory = null)
     {
-        CancellationToken = cancellationToken;
-        DirectoryPath = directory ?? Path.GetTempPath();
+        CancellationToken = cancellationToken.CanBeCanceled ? cancellationToken : previous?.CancellationToken ?? default;
+        DirectoryPath = directory ?? previous?.DirectoryPath ?? Path.GetTempPath();
         Active.Value = this;
     }
 

@@ -21,8 +21,11 @@ internal sealed class ObservationQualityStatistics
         Func<SanitizedControlObservation, bool> associated)
     {
         var result = new ObservationQualityStatistics();
+        var cancellationToken = ExportProjectionScope.Current?.CancellationToken ?? default;
+        cancellationToken.ThrowIfCancellationRequested();
         foreach (var item in observations)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (item.PayloadProjectionKind != FeaturePayloadProjectionKind.MetadataOnly) result.Reviewed++;
             if (!item.CompletePayloadRetained) result.Redacted++;
             if (!associated(item)) result.Unassociated++;
