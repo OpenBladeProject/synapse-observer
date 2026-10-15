@@ -5,6 +5,31 @@ namespace SynapseObserver.Core.Tests;
 public sealed class ContinuousObservationStorageTests
 {
     [Fact]
+    public void SharedReader_StopsEverySpoolPassWhenExportIsCancelled()
+    {
+        var directory = TemporaryDirectory();
+        using var session = Session(directory);
+        Assert.Equal(EvidenceAddResult.Added, session.AddObservation(
+            Observation(FeatureReportTestData.Create(3, 3, [1, 5, 25]), "op-1", 1)));
+        Assert.Equal(EvidenceAddResult.Added, session.AddObservation(
+            Observation(FeatureReportTestData.Create(3, 3, [1, 5, 50]), "op-2", 2)));
+        using var snapshot = session.Snapshot();
+        using var cancellation = new CancellationTokenSource();
+        using (var scope = new ExportProjectionScope(cancellation.Token))
+        using (var reader = snapshot.Observations.GetEnumerator())
+        {
+            Assert.True(reader.MoveNext());
+            cancellation.Cancel();
+            Assert.Throws<OperationCanceledException>(() => reader.MoveNext());
+        }
+        // Cancelling export leaves the committed evidence available for retry.
+        Assert.Equal(2, snapshot.Observations.Count());
+        snapshot.Dispose();
+        session.Dispose();
+        DeleteDirectory(directory);
+    }
+
+    [Fact]
     public void Snapshot_RetainsMoreThanLegacyCountAndPayloadBudgets()
     {
         var directory = TemporaryDirectory();

@@ -356,7 +356,9 @@ internal sealed class SanitizedObservationStore : IDisposable
         public IEnumerator<SanitizedControlObservation> GetEnumerator()
         {
             var lease = _lease ?? throw new ObjectDisposedException(nameof(EvidenceSessionSnapshot));
-            return new ObservationEnumerator(lease.State.Acquire(), _count, _committedLength);
+            var cancellationToken = ExportProjectionScope.Current?.CancellationToken ?? default;
+            cancellationToken.ThrowIfCancellationRequested();
+            return new ObservationEnumerator(lease.State.Acquire(), _count, _committedLength, cancellationToken);
         }
 
         IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
@@ -377,9 +379,11 @@ internal sealed class SanitizedObservationStore : IDisposable
         private readonly int _count;
         private readonly long _committedLength;
         private int _index = -1;
+        private readonly CancellationToken _cancellationToken;
 
-        internal ObservationEnumerator(SpoolLease lease, int count, long committedLength)
+        internal ObservationEnumerator(SpoolLease lease, int count, long committedLength, CancellationToken cancellationToken)
         {
+            _cancellationToken = cancellationToken;
             _lease = lease;
             _count = count;
             _committedLength = committedLength;
@@ -408,6 +412,7 @@ internal sealed class SanitizedObservationStore : IDisposable
         public bool MoveNext()
         {
             ObjectDisposedException.ThrowIf(_reader is null, this);
+            _cancellationToken.ThrowIfCancellationRequested();
             if (_index + 1 >= _count)
             {
                 Current = null!;
