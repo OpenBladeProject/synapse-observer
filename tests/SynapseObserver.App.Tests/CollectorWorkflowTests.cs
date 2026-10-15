@@ -533,6 +533,11 @@ public sealed class CollectorWorkflowTests
     {
         var model = await RecordingAsync();
         var observer = new GatedOwnedObserver(failure: failure);
+        EvidenceSessionSnapshot? finalSnapshot = null;
+        model.PropertyChanged += (_, _) =>
+        {
+            if (!model.IsRecording && !model.IsBusy) finalSnapshot ??= model.Evidence;
+        };
         model.SetOwnedTestObserver(observer, startPump: true);
         model.StopCommand.Execute(null);
         await observer.StopEntered.Task;
@@ -544,7 +549,8 @@ public sealed class CollectorWorkflowTests
         Assert.Equal(1, observer.Stops);
         Assert.Equal(1, observer.Disposals);
         Assert.Equal(1, observer.MaximumConcurrentPolls);
-        Assert.Single(model.Evidence!.Markers, item => item.Kind == EvidenceMarkerKind.RecordingStopped);
+        using var evidence = Assert.IsType<EvidenceSessionSnapshot>(finalSnapshot);
+        Assert.Single(evidence.Markers, item => item.Kind == EvidenceMarkerKind.RecordingStopped);
         Assert.Equal(failure != 0, model.Status.Contains("ended with a gap"));
     }
 
@@ -553,13 +559,14 @@ public sealed class CollectorWorkflowTests
     {
         var model = await RecordingAsync();
         var session = (EvidenceSession)typeof(CollectorViewModel).GetField("session", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(model)!;
+        var observer = new GatedOwnedObserver(dropped: 1);
+        model.SetOwnedTestObserver(observer);
         while (session.Snapshot().Markers.Count < EvidenceLimits.MaxMarkers)
             Assert.Equal(EvidenceAddResult.Added, session.AddMarker(new(0, EvidenceMarkerKind.Failure, "owned-fixture", "Owned quota fixture", EvidenceProvenance.Collector)));
         model.StartingSetting = "Balanced";
         await Run(model.MarkCommand);
         Assert.True(model.ShowStartingValue);
         Assert.Contains("session is full", model.Status);
-        var observer = new GatedOwnedObserver(dropped: 1);
         model.SetOwnedTestObserver(observer, startPump: true);
         model.StopCommand.Execute(null);
         await observer.PolledDuringStop.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -701,7 +708,7 @@ public sealed class CollectorWorkflowTests
     [Theory]
     [InlineData(1, "HidD_SetFeature", 0)]
     [InlineData(1, "invalid api", 1)]
-    [InlineData(EvidenceLimits.MaxObservations + 1, "HidD_SetFeature", 1)]
+    [InlineData(4097, "HidD_SetFeature", 0)]
     public async Task RetentionRejectionsAreGapsButPrivacyRedactionIsNot(int count, string api, int expectedGaps)
     {
         var model = await RecordingAsync();
@@ -713,8 +720,7 @@ public sealed class CollectorWorkflowTests
         await Run(model.StopCommand);
         Assert.Equal(expectedGaps, model.Evidence!.RejectedObservationCount);
         Assert.Contains($"{expectedGaps} recording gaps", model.ObservationSummary);
-        if (count > EvidenceLimits.MaxObservations)
-            Assert.Contains($"{EvidenceLimits.MaxObservations} observation limit", model.CollectionDetails);
+        Assert.Equal(count - expectedGaps, model.Evidence.Observations.Count);
         Assert.All(events, observation => Assert.All(observation.RequestBytes, value => Assert.Equal((byte)0, value)));
     }
 

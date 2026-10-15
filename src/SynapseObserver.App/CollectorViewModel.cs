@@ -41,6 +41,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
     private bool observerEnded;
     private int recordingStartGaps;
     private int recordingNumber;
+    private int dropSegmentNumber;
     private bool busy;
     private EvidenceSession? session;
     private bool collecting;
@@ -56,9 +57,9 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
     private string collectionDetails = "The observer collects selected laptop feature calls. An observed response is labeled as a user-mode returned buffer, not firmware confirmation.";
     private string status = "Start with your laptop's device information.";
     private EvidenceCollectionReview? collectionReview;
-    public string ReviewSummary => (evidencePart > 1 ? "This review covers the current ZIP part only. " : string.Empty) + (collectionReview?.Summary ?? string.Empty);
+    public string ReviewSummary => collectionReview?.Summary ?? string.Empty;
     public string ReviewNotes => collectionReview is null ? string.Empty
-        : (evidencePart > 1 ? "Earlier saved items are in the previous ZIP parts. Share all parts together.\n\n" : string.Empty) + string.Join("\n\n", collectionReview.Notes);
+        : string.Join("\n\n", collectionReview.Notes);
 
     private async Task UpdateCollectionReviewAsync()
     {
@@ -68,8 +69,16 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
         RefreshCommands();
         try
         {
-            var snapshot = session.Snapshot();
+            using var snapshot = session.Snapshot();
             collectionReview = await Task.Run(() => EvidenceCollectionReview.Create(snapshot));
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            // A full capture volume can also prevent temporary review files.
+            // Cleanup and export to another volume must remain available.
+            collectionReview = new EvidenceCollectionReview(
+                "The collection review could not be prepared. Collected information is still available.",
+                ["Check free disk space and save the partial evidence ZIP to another location. The export will prepare its review there."]);
         }
         finally
         {
@@ -89,7 +98,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
             Changed(nameof(StepStatus));
             RefreshCommands();
         };
-        CollectCommand = new AsyncCommand(() => GuardAsync(CollectAsync), () => !closing && !busy && !collecting && !recording && !IsProbingSpecialKey);
+        CollectCommand = new AsyncCommand(() => GuardAsync(CollectAsync), () => !closing && !capacityReached && !busy && !collecting && !recording && !IsProbingSpecialKey);
         StartCommand = new AsyncCommand(() => GuardAsync(StartAsync), () => !closing && !busy && !IsProbingSpecialKey && !capacityReached && HasInventory && consent && !recording && (preview || backendCandidate is not null));
         StopCommand = new AsyncCommand(() => GuardAsync(StopAsync), () => recording && !busy && !closing);
         MarkCommand = new AsyncCommand(() => GuardAsync(MarkAsync), () => !closing && !busy && !IsProbingSpecialKey && !capacityReached && HasInventory && HasCurrentStep
@@ -98,9 +107,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
         SkipCommand = new AsyncCommand(() => GuardAsync(() => SkipAsync(false)), () => CanSelectActivity && HasCurrentStep);
         UnavailableCommand = new AsyncCommand(() => GuardAsync(() => SkipAsync(true)), () => CanSelectActivity && HasCurrentStep);
         SaveCommand = new AsyncCommand(() => GuardAsync(SaveAsync), CanSaveEvidence);
-        SaveAndContinueCommand = new AsyncCommand(() => GuardAsync(SaveAndContinueAsync), () => CanSaveEvidence() && ShowCapacityRecovery
-            && !MarkCommand.IsRunning && (!CapacityRestorationRequired || CapacityRestorationConfirmed) && evidencePart < MaxEvidenceParts);
-        MarkCommand.CanExecuteChanged += (_, _) => SaveAndContinueCommand.Refresh();
+        MarkCommand.CanExecuteChanged += (_, _) => SaveCommand.Refresh();
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -151,7 +158,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
     private CaptureActivity CurrentActivity => Activities[step];
     private bool HasDistinctChangedSetting => ChangedEntry.HasValue
         && !SettingValueComparison.AreEquivalent(startingSetting, ChangedEntry.Value);
-    public string CoverageSummary => $"{Activities.Count(activity => activity.State != CoverageState.Pending || activity.SavedInEarlierZip)} of {Activities.Count} items handled. Choose any item; stop and save whenever you are ready.";
+    public string CoverageSummary => $"{Activities.Count(activity => activity.State != CoverageState.Pending)} of {Activities.Count} items handled. Choose any item; stop and save whenever you are ready.";
     public string StartingValueLabel => HasCurrentStep && CurrentActivity.IsReadOnly ? "Current state or known behavior" : "Starting setting";
     public string ActivityGuidance => HasCurrentStep ? CurrentActivity.Guidance : string.Empty;
     public bool ShowStartingValue => HasCurrentStep && stepPhase == 0;
@@ -177,7 +184,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
         ? $"Restore the starting setting: {startingSetting}. " : "Recording is unavailable. ")
         + (stopping || cleanupRequested ? "Wait for recording cleanup, then save the partial evidence."
             : "Stop recording and save the partial evidence.");
-    public string StepStatus => capacityReached ? "Save this part before recording more settings. Share all saved ZIP parts together." : !HasCurrentStep ? "Your setting changes and restoration markers are recorded." : CurrentActivity.IsReadOnly ? "This is your report, not a hardware measurement or firmware confirmation."
+    public string StepStatus => capacityReached ? "Recording stopped early. Save the partial evidence after cleanup." : !HasCurrentStep ? "Your setting changes and restoration markers are recorded." : CurrentActivity.IsReadOnly ? "This is your report, not a hardware measurement or firmware confirmation."
         : !recording ? "Current-state reports are available without observing Synapse. Setting changes need a recording."
         : observerEnded ? "Recording is unavailable. Restore any unfinished setting and save the evidence after cleanup."
         : stepPhase == 0 ? "If Synapse shows \"Syncing Profiles\", wait before changing a setting. Skip anything you cannot test."
@@ -226,7 +233,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
             var identities = inventory.MachineIdentity.Value;
             var identity = identities.FirstOrDefault();
             deviceSummary = $"{identity?.ProductName ?? "Laptop identity unavailable"} · BIOS {identity?.BiosVersion ?? "unavailable"}\n{inventory.RazerHidInterfaces.Value.Count} Razer HID interfaces · {inventory.SynapseProcesses.Value.Count} related software processes";
-            Marker(EvidenceMarkerKind.SessionStarted, "session", "Device information collected", EvidenceProvenance.Collector, CollectionPartLabel);
+            Marker(EvidenceMarkerKind.SessionStarted, "session", "Device information collected", EvidenceProvenance.Collector);
             foreach (var activity in Activities)
             {
                 session.SetCoverage(new CoverageItem(activity.Id, activity.Title, CoverageState.Pending, CoverageReason.None));
@@ -235,6 +242,8 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
             await DiscoverRecorderAsync();
             await UpdateCollectionReviewAsync();
             status = "Device information collected. You can save it now or add a recording.";
+            if (session.StorageFailure is not null)
+                ReachCapacity("Local evidence storage is unavailable. Check free disk space; device information can still be exported.");
         }
         finally
         {
@@ -346,6 +355,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
             readerFaulted = false;
             recordingStartGaps = gaps;
             recordingNumber++;
+            dropSegmentNumber = 0;
             recording = true;
             observerEnded = false;
             collectionDetails = "The observer collects selected laptop feature calls. An observed response is labeled as a user-mode returned buffer, not firmware confirmation.";
@@ -476,7 +486,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
     private void NextStep()
     {
         var next = Enumerable.Range(1, Activities.Count).Select(offset => (step + offset) % Activities.Count)
-            .FirstOrDefault(index => Activities[index].State == CoverageState.Pending && !Activities[index].SavedInEarlierZip, -1);
+            .FirstOrDefault(index => Activities[index].State == CoverageState.Pending, -1);
         step = next;
         ResetEntries();
     }
@@ -666,7 +676,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
                     observerEnded = true;
                     cleanupRequested = true;
                     status = CapacityInstructions;
-                    recorderStatus = "This ZIP is full. Stopping the observer and retaining buffered-call loss counts.";
+                    recorderStatus = "Collection stopped early. Cleaning up the observer and retaining recording-gap counts.";
                     Refresh();
                     requestStop();
                 }
@@ -829,7 +839,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
         collectionDetails = $"{dropped} events were dropped by the bounded observer queue during this recording. Completed-call observations cannot establish firmware application. Pending asynchronous completions were not observed.";
         gaps += dropped - droppedEvents;
         droppedEvents = dropped;
-        session?.RecordObserverDroppedEvents(RelativeMilliseconds, recordingNumber, dropped);
+        session?.RecordObserverDroppedEvents(RelativeMilliseconds, recordingNumber, dropped, dropSegmentNumber);
         return true;
     }
 
@@ -845,15 +855,20 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
     private void AddControlObservation(ControlObservation observation)
     {
         var result = session!.AddObservation(observation);
-        if (session.ObservationCount >= EvidenceLimits.MaxObservations) ReachCapacity();
-        if (result is not (EvidenceAddResult.RejectedInvalid or EvidenceAddResult.RejectedLimit)) return;
-        gaps++;
-        retentionGapDetails = result == EvidenceAddResult.RejectedLimit
-            ? $"The session reached its {EvidenceLimits.MaxObservations} observation limit. Further observations are counted as gaps. Save this ZIP and continue in a new part after recording cleanup."
-            : "An invalid observation could not be retained. Its rejection is counted as a recording gap in the evidence.";
+        if (result is EvidenceAddResult.RejectedStorage)
+        {
+            gaps++;
+            retentionGapDetails = "Local evidence storage failed. Only complete reports saved before the failure can be exported; later reports are counted as gaps.";
+            ReachCapacity("Local evidence storage could not continue. Check free disk space and save the partial ZIP to another location.");
+        }
+        else if (result is EvidenceAddResult.RejectedInvalid or EvidenceAddResult.RejectedLimit)
+        {
+            gaps++;
+            retentionGapDetails = "An observation could not be retained. Its rejection is counted as a recording gap in the evidence.";
+        }
     }
 
-    private Task SaveAsync() => ExportEvidenceAsync(continueInNewPart: false);
+    private Task SaveAsync() => ExportEvidenceAsync();
 
     public async Task CloseAsync()
     {
@@ -862,7 +877,6 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
         await CollectCommand.CurrentExecution;
         await StartCommand.CurrentExecution;
         await SaveCommand.CurrentExecution;
-        await SaveAndContinueCommand.CurrentExecution;
         await MarkCommand.CurrentExecution;
         if (recording || observer is not null)
         {
@@ -882,11 +896,12 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
         if (result == EvidenceAddResult.RejectedLimit)
         {
             ReachCapacity("Checklist space is full.");
-            retentionGapDetails = $"The session reached its {EvidenceLimits.MaxMarkers} action-marker limit. Further markers are counted as rejected in the ZIP. Stop and save this ZIP, then continue in a new part.";
+            retentionGapDetails = $"The session reached its {EvidenceLimits.MaxMarkers} action-marker limit. Further markers are counted as rejected in the ZIP. Stop and save the partial evidence ZIP.";
             status = "This action could not be recorded because the session is full. " + CapacityInstructions;
             Refresh();
             return false;
         }
+        if (result == EvidenceAddResult.Added && kind == EvidenceMarkerKind.UserReportedStartingValue) dropSegmentNumber++;
         return result == EvidenceAddResult.Added;
     }
 
@@ -938,7 +953,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
         if (stage == 4)
         {
             startingSetting = "Custom: CPU Boost, GPU High";
-            ReachCapacity();
+            ReachCapacity("Local evidence storage could not continue. Check free disk space and save the partial ZIP to another location.");
             recording = false;
             ResetEntries();
             status = CapacityInstructions;
@@ -964,7 +979,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
     {
         ProbeSpecialKeyCommand?.Refresh(); CancelSpecialKeyProbeCommand?.Refresh();
         CollectCommand.Refresh(); StartCommand.Refresh(); StopCommand.Refresh(); MarkCommand.Refresh();
-        SkipCommand.Refresh(); UnavailableCommand.Refresh(); SaveCommand.Refresh(); SaveAndContinueCommand.Refresh();
+        SkipCommand.Refresh(); UnavailableCommand.Refresh(); SaveCommand.Refresh();
     }
 
     private void Changed([CallerMemberName] string? property = null) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(property));

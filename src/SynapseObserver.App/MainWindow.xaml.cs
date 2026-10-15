@@ -58,11 +58,9 @@ public partial class MainWindow : Window
                     if (!closing && IsEnabled && IsVisible && viewModel.ShowExport)
                     {
                         ExportCard.BringIntoView();
-                        if (!viewModel.ShowCapacityRecovery) SaveEvidenceButton.Focus();
-                        else if (viewModel.CapacityRestorationRequired && !viewModel.CapacityRestorationConfirmed)
+                        if (viewModel.ShowCapacityRecovery && viewModel.CapacityRestorationRequired && !viewModel.CapacityRestorationConfirmed)
                             CapacityRestorationCheckBox.Focus();
-                        else if (viewModel.SaveAndContinueCommand.CanExecute(null)) ContinueEvidenceButton.Focus();
-                        else SavePartialEvidenceButton.Focus();
+                        else SaveEvidenceButton.Focus();
                     }
                 }));
             }

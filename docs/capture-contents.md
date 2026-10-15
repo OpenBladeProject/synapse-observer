@@ -77,19 +77,19 @@ with the JSON files when attaching the ZIP to a support request.
 
 ## Collection limits
 
-- The app displays retained observation capacity and stops a recording when the ZIP fills. After cleanup, save the current ZIP and explicitly continue in a fresh part. An interrupted setting stays visible until you confirm restoration in its original controls; this checkbox is not firmware readback or a captured restoration marker. Partial save remains available without that confirmation. Each part retains its own evidence and the original inventory timestamp. Session-start markers identify parts with a random collection token and part number; operation identifiers stay distinct across parts. Marker space is reserved for cleanup. Queue-loss counts update one marker per recording, preserving the first-loss timestamp and latest cumulative count. A new part uses an unused filename and is written without replacing an existing file. The collection review describes only the current ZIP part. Buffered records beyond the hard limit are counted as lost; a final response can be omitted when the limit falls between a request and response. A fresh part cannot recover already omitted records. Earlier checklist progress is shown only in the UI, not copied as completed coverage into the new part. Keep all parts together. Up to 256 parts can be saved in one collection; the final part can still be saved. Cleanup failures retain the existing manual Synapse restart requirement.
+- Sanitized control observations are written to a local temporary spool as they arrive, then streamed into one ZIP. There is no fixed observation count, total retained-payload allowance, or JSON-entry size ceiling. Memory use stays bounded; available local disk space determines how much can be retained. The temporary spool contains the same privacy-filtered fields as the manifest, never raw reports or the comparison secret. A storage failure stops collection with an explicit gap; only completely stored records are exported. Failed or cancelled export preserves the collection for retry. Temporary evidence is released when the collection and its active exports close.
+- An interrupted setting keeps its exact starting-value reminder. A late restoration confirmed after recording stopped is exported as a separate user-reported context marker, leaving the earlier recorded sequence incomplete. Partial save is available without confirmation. Marker space is reserved for cleanup. Queue-loss notices coalesce within each recording and guided action window, preserving its first-loss timestamp and latest recording-wide cumulative count. Cleanup failures retain the existing manual Synapse restart requirement.
 - A recording lasts at most ten minutes.
 - One identified physical Blade laptop can contribute up to eight feature
   collections during live observation.
-- Feature reports are bounded to 4,096 bytes per observation, 4 MiB of retained
-  bodies per session, 4,096 observations, and 16 KiB per native observer event.
+- Feature reports are bounded to 4,096 bytes per observation and 16 KiB per native observer event.
 - The session accepts up to 512 markers and 128 guided coverage items.
   Reaching the marker limit preserves earlier evidence, counts rejected markers,
   and leaves stop/export available. The independent coverage draft still contains
   the complete maintained capability universe; it is not limited by the guided-item bound.
 - Special-key evidence is bounded to 256 observations, 32 observations per
   prompted probe, and 64 probe summaries. Reaching a total key-input or probe
-  limit offers the same save-and-continue recovery. A probe that cannot retain
+  limit disables further optional key checks; setting recordings can continue. A probe that cannot retain
   its result does not claim normal completion.
 - Display text is limited to 256 characters and opaque identifier tokens to 80
   characters.
@@ -106,7 +106,7 @@ with the JSON files when attaching the ZIP to a support request.
   color-profile lists retain up to 32 associations plus the two default-profile
   records for each queried scope. Only recognized preset files are hashed, with
   hashing limited to 16 MiB per file.
-- Each JSON entry is limited to 16 MiB. Export writes a private temporary file,
+- Export streams JSON entries to a private temporary ZIP,
   flushes it, and replaces the selected ZIP only after every entry succeeds.
 
 The ZIP excludes HID interface paths, PnP instance paths, serial-number fields,

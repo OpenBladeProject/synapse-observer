@@ -75,7 +75,7 @@ prompt does not prove that Fn was held or that the key controls performance.
 Probe results remain separate from declarations of key behavior; no input signal
 never replaces an earlier report or marks the declared key unavailable.
 
-Queues, report bodies, record counts, text, and total manifest size are bounded.
+Native queues, individual report bodies, checklist markers, optional key checks, and text remain bounded. Sanitized control observations use a disk-backed store with no fixed count, total-payload, or JSON-entry size ceiling; export streams the frozen committed prefix into one ZIP. A session may include an optional `storageFailure` with a fixed category and summary; it never contains a path or exception message.
 Omitted payloads, rejected records, queue loss, and incomplete restoration remain
 visible. Native drop counters restart with each recording, while session loss
 and earlier evidence remain accumulated. A native failure contributes one gap

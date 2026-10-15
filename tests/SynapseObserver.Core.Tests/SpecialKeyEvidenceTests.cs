@@ -43,8 +43,9 @@ public sealed class SpecialKeyEvidenceTests
         var summary = new SpecialKeyProbeSummary(SpecialKeyExpectedKey.M1, SpecialKeyModeContext.Unknown,
             SpecialKeyProbeEndReason.Timeout, 0, 0, 0, @"C:\Users\alice\secret");
         Assert.Equal(EvidenceAddResult.Added, session.AddSpecialKeyProbe(summary));
+        using var snapshot = session.Snapshot();
         session.Dispose();
-        Assert.DoesNotContain("alice", Assert.Single(session.Snapshot().SpecialKeyProbes).Gap);
+        Assert.DoesNotContain("alice", Assert.Single(snapshot.SpecialKeyProbes).Gap);
         Assert.Throws<ObjectDisposedException>(() => session.AddSpecialKeyObservation(Key(0x7C)));
     }
 

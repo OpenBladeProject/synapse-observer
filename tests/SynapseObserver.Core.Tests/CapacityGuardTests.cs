@@ -20,6 +20,23 @@ public sealed class CapacityGuardTests
     }
 
     [Fact]
+    public void RecordObserverDroppedEvents_SeparatesSegmentsWithinTheSameRecording()
+    {
+        using var session = new EvidenceSession(SyntheticPreview.CreateInventory());
+
+        Assert.Equal(EvidenceAddResult.Added, session.RecordObserverDroppedEvents(5, 1, 1));
+        Assert.Equal(EvidenceAddResult.Added,
+            session.RecordObserverDroppedEvents(200, 1, 501, segmentNumber: 1));
+        Assert.Equal(EvidenceAddResult.Added,
+            session.RecordObserverDroppedEvents(350, 1, 550, segmentNumber: 1));
+
+        Assert.Collection(
+            session.Snapshot().Markers,
+            first => AssertDroppedEventsMarker(first, 5, "count-1"),
+            second => AssertDroppedEventsMarker(second, 200, "count-550"));
+    }
+
+    [Fact]
     public void RecordObserverDroppedEvents_InvalidValuesAreRejectedWithoutMutation()
     {
         using var session = new EvidenceSession(SyntheticPreview.CreateInventory());
@@ -29,10 +46,12 @@ public sealed class CapacityGuardTests
         Assert.Equal(EvidenceAddResult.RejectedInvalid, session.RecordObserverDroppedEvents(1, 0, 1));
         Assert.Equal(EvidenceAddResult.RejectedInvalid, session.RecordObserverDroppedEvents(1, 1, 0));
         Assert.Equal(EvidenceAddResult.RejectedInvalid, session.RecordObserverDroppedEvents(1, 1, -1));
+        Assert.Equal(EvidenceAddResult.RejectedInvalid,
+            session.RecordObserverDroppedEvents(1, 1, 1, segmentNumber: -1));
 
         var snapshot = session.Snapshot();
         Assert.Empty(snapshot.Markers);
-        Assert.Equal(5, snapshot.RejectedMarkerCount);
+        Assert.Equal(6, snapshot.RejectedMarkerCount);
     }
 
     [Fact]

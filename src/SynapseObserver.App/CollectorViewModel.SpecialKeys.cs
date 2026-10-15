@@ -19,7 +19,9 @@ internal sealed partial class CollectorViewModel
     public bool ShowSpecialKeyProbe => HasInventory;
     public bool CanProbeSpecialKeys => HasInventory && !capacityReached && !closing && !busy && !probingSpecialKey && !preview
         && specialKeyProbe is not null && stepPhase == 0 && SpecialKeyProbeParser.IsSingleBladeRoot(inputCandidates)
-        && inputCandidates.Any(SpecialKeyProbeParser.IsInputCandidate);
+        && inputCandidates.Any(SpecialKeyProbeParser.IsInputCandidate)
+        && session!.SpecialKeyProbeCount < EvidenceLimits.MaxSpecialKeyProbes
+        && session.SpecialKeyObservationCount < EvidenceLimits.MaxSpecialKeyObservations;
     public bool CanChooseSpecialKey => !probingSpecialKey;
     public string SpecialKeyStatus => specialKeyStatus + (HasInventory && !preview && inputCandidates.Count == 0
         ? " The laptop's input interfaces could not be selected unambiguously. Save the inventory so the maintainer can investigate." : string.Empty);
@@ -74,8 +76,7 @@ internal sealed partial class CollectorViewModel
                 if (result == EvidenceAddResult.RejectedLimit || session.SpecialKeyObservationCount >= EvidenceLimits.MaxSpecialKeyObservations)
                 {
                     specialKeyProbe.EndAtCapacity();
-                    ReachCapacity("Key-check space is full.");
-                    specialKeyStatus = "This ZIP's key-input capacity is full. Save this ZIP and continue in a new part.";
+                    specialKeyStatus = "The optional key-check limit has been reached. Setting recordings can continue; all collected key evidence will be included in the ZIP.";
                     RefreshSpecialKeyProbe();
                 }
             }, probeForeground, SpecialKeyModeContext.Unknown);
@@ -95,12 +96,17 @@ internal sealed partial class CollectorViewModel
     internal bool PrepareSpecialKeyProbe()
     {
         if (session is null || capacityReached) return false;
-        if (session.MarkerCount >= EvidenceLimits.MaxMarkers - CleanupMarkerReserve - 1
-            || session.SpecialKeyProbeCount >= EvidenceLimits.MaxSpecialKeyProbes
+        if (session.MarkerCount >= EvidenceLimits.MaxMarkers - CleanupMarkerReserve - 1)
+        {
+            ReachCapacity("The checklist has reached its action-marker limit.");
+            specialKeyStatus = "There is no room for another key-check marker. Save the partial evidence after cleanup.";
+            RefreshSpecialKeyProbe();
+            return false;
+        }
+        if (session.SpecialKeyProbeCount >= EvidenceLimits.MaxSpecialKeyProbes
             || session.SpecialKeyObservationCount >= EvidenceLimits.MaxSpecialKeyObservations)
         {
-            ReachCapacity("There is no room for another key check.");
-            specialKeyStatus = "This ZIP has no room for another key check. Save it and continue in a new part.";
+            specialKeyStatus = "The optional key-check limit has been reached. Setting recordings can continue; all collected key evidence will be included in the ZIP.";
             RefreshSpecialKeyProbe();
             return false;
         }
@@ -116,7 +122,6 @@ internal sealed partial class CollectorViewModel
             if (result != EvidenceAddResult.Added)
             {
                 Marker(EvidenceMarkerKind.Failure, "observer", "Special-key probe result could not be retained", EvidenceProvenance.Collector);
-                if (result == EvidenceAddResult.RejectedLimit) ReachCapacity("Key-check space is full.");
                 specialKeyStatus = "The key-check result could not be retained. Save partial evidence; no complete result is claimed.";
                 RefreshSpecialKeyProbe();
                 return;
@@ -127,8 +132,7 @@ internal sealed partial class CollectorViewModel
         if (session is not null && (session.SpecialKeyProbeCount >= EvidenceLimits.MaxSpecialKeyProbes
             || session.SpecialKeyObservationCount >= EvidenceLimits.MaxSpecialKeyObservations))
         {
-            ReachCapacity("Key-check space is full.");
-            specialKeyStatus += " This ZIP's key-check capacity is full. Save it and continue in a new part.";
+            specialKeyStatus += " The optional key-check limit has been reached. Setting recordings can continue; collected key evidence will be included in the ZIP.";
         }
         RefreshSpecialKeyProbe();
     }

@@ -1,7 +1,6 @@
 using System.IO;
 using System.IO.Compression;
 using System.Reflection;
-using System.Security.Cryptography;
 using System.Text.Json;
 using SynapseObserver.App;
 using SynapseObserver.Backend;
@@ -11,90 +10,124 @@ namespace SynapseObserver.App.Tests;
 
 public sealed class CapacityRecoveryTests
 {
+    private const int LegacyObservationLimit = 4_096;
+
     private static readonly LocalHidCandidate Candidate = new(
         "owned-device-path", "owned-interface", "Razer Blade owned fixture", 0x1532, 0xFFFF, null,
         1, 2, new HidReportGeometry(0, 0, 1), CollectionState.Collected, null,
         null, null, null, "owned-root", "owned-hardware", "Razer Blade owned fixture");
 
-    private static readonly BackendCandidate Backend = new(42, "Owned", true, "Owned fixture");
-
     [Fact]
-    public async Task LastRequestSlotLatchesCapacityStopsCleanlyAndZeroesWholeNativeEvent()
+    public async Task ContinuousCaptureExceedsLegacyLimitAndExportsLaterActionInOneZip()
     {
-        var model = await RecordingAsync();
-        model.EvidenceDestinationForTest = () => Path.Combine(Path.GetTempPath(), $"unused-{Guid.NewGuid():N}.zip");
-        var observer = CapacityObserver.Boundary();
+        var directory = Path.Combine(Path.GetTempPath(), $"synapse-observer-continuous-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var destination = Path.Combine(directory, "continuous-evidence.zip");
+            var model = await RecordingAsync();
+            model.EvidenceDestinationForTest = () => destination;
+            var observer = CapacityObserver.HighVolume(LegacyObservationLimit + 128);
+            model.SetOwnedTestObserver(observer, [Candidate]);
 
-        model.SetOwnedTestObserver(observer, [Candidate], startPump: true);
-        await WaitForCapacityStopAsync(model, observer);
+            await Poll(model);
 
-        var evidence = model.Evidence!;
-        Assert.Equal(EvidenceLimits.MaxObservations, evidence.Observations.Count);
-        Assert.Equal(1, evidence.RejectedObservationCount);
-        var last = evidence.Observations[^1];
-        Assert.Equal($"recording-1-op-{EvidenceLimits.MaxObservations}", last.OperationId);
-        Assert.Equal(ObservationSource.UserModeCall, last.Source);
-        Assert.DoesNotContain(evidence.Observations, item =>
-            item.OperationId == last.OperationId && item.Source == ObservationSource.ReturnedBuffer);
-        Assert.All(observer.RawBuffers, buffer => Assert.All(buffer, value => Assert.Equal((byte)0, value)));
+            using (var sustained = model.Evidence!)
+            {
+                Assert.Equal(LegacyObservationLimit + 128, sustained.Observations.Count);
+                Assert.Equal(0, sustained.RejectedObservationCount);
+                Assert.Null(sustained.StorageFailure);
+            }
+            Assert.True(model.IsRecording);
+            Assert.False(model.ShowCapacityRecovery);
+            Assert.Contains($"{LegacyObservationLimit + 128} control reports saved locally", model.CapacitySummary);
 
-        Assert.True(model.ShowCapacityRecovery);
-        Assert.Contains("Recording", model.CapacitySummary, StringComparison.OrdinalIgnoreCase);
-        Assert.False(model.IsRecording);
-        Assert.False(model.StartCommand.CanExecute(null));
-        Assert.False(model.MarkCommand.CanExecute(null));
-        Assert.False(model.SkipCommand.CanExecute(null));
-        Assert.False(model.UnavailableCommand.CanExecute(null));
-        Assert.False(model.CanSelectActivity);
-        Assert.False(model.CanProbeSpecialKeys);
-        Assert.True(model.SaveCommand.CanExecute(null));
-        Assert.Equal(1, observer.Stops);
-        Assert.Equal(1, observer.Disposals);
-        Assert.Equal(0, observer.Invalidations);
-        await model.CloseAsync();
+            model.StartingSetting = "Balanced";
+            await Run(model.MarkCommand);
+            observer.EnqueueFinalResponse(
+                (ulong)LegacyObservationLimit + 129,
+                CurrentRelativeMilliseconds(model));
+            await Poll(model);
+            model.ChangedSetting = "Silent";
+            await Run(model.MarkCommand);
+            await Run(model.MarkCommand);
+            await Run(model.StopCommand);
+
+            using (var retained = model.Evidence!)
+            {
+                Assert.Equal(LegacyObservationLimit + 130, retained.Observations.Count);
+                Assert.Equal(0, retained.RejectedObservationCount);
+                Assert.Null(retained.StorageFailure);
+                var window = Assert.Single(ContributionDraftBuilder.CreateAnnotationDraft(retained).ActionWindows);
+                Assert.True(window.CompleteUserReportedSequence);
+                Assert.Contains(window.Markers, marker => marker.Kind == EvidenceMarkerKind.UserReportedRestoration
+                    && marker.Value == "Balanced");
+                Assert.Contains(window.Observations, observation =>
+                    observation.OperationId == $"recording-1-op-{LegacyObservationLimit + 129}"
+                    && observation.Direction == ObservationDirection.Output);
+                Assert.Equal(CoverageState.Completed, Assert.Single(retained.Coverage,
+                    item => item.ActivityId == "performance").State);
+            }
+
+            await Run(model.SaveCommand);
+
+            Assert.True(File.Exists(destination));
+            Assert.Single(Directory.EnumerateFiles(directory, "*.zip"));
+            using var manifest = ReadZipJson(destination, "manifest.json");
+            using var annotation = ReadZipJson(destination, "annotation-draft.json");
+            var observations = manifest.RootElement.GetProperty("session").GetProperty("observations")
+                .EnumerateArray().ToArray();
+            Assert.Equal(LegacyObservationLimit + 130, observations.Length);
+            Assert.Equal(observations[^2].GetProperty("operationId").GetString(),
+                observations[^1].GetProperty("operationId").GetString());
+            Assert.Equal("returnedBuffer", observations[^1].GetProperty("source").GetString());
+            Assert.True(Assert.Single(annotation.RootElement.GetProperty("actionWindows").EnumerateArray())
+                .GetProperty("completeUserReportedSequence").GetBoolean());
+            Assert.All(observer.RawBuffers, buffer => Assert.All(buffer, value => Assert.Equal((byte)0, value)));
+            await model.CloseAsync();
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
     }
 
     [Fact]
-    public async Task CapacityDuringPendingPowerReadCannotAdvanceMarkerPhase()
+    public async Task MarkerCapacityDuringPendingPowerReadCannotAdvanceMarkerPhase()
     {
         var model = await RecordingAsync();
         model.EvidenceDestinationForTest = () => Path.Combine(Path.GetTempPath(), $"unused-{Guid.NewGuid():N}.zip");
-        var observer = CapacityObserver.BeforeBoundary();
-        model.SetOwnedTestObserver(observer, [Candidate]);
-        await Poll(model);
-        Assert.Equal(EvidenceLimits.MaxObservations - 1, CurrentSession(model).ObservationCount);
-
-        var powerRead = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var enteredPower = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releasePower = new TaskCompletionSource<PowerSourceKind>(TaskCreationOptions.RunContinuationsAsynchronously);
         model.ActionPowerSourceForTest = async () =>
         {
-            powerRead.TrySetResult();
+            enteredPower.TrySetResult();
             return await releasePower.Task;
         };
         model.StartingSetting = "Balanced";
         model.MarkCommand.Execute(null);
-        await powerRead.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await enteredPower.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
-        observer.EnqueueBoundary();
-        model.SetOwnedTestObserver(observer, startPump: true);
-        await WaitUntilAsync(() => model.ShowCapacityRecovery);
-        await WaitForCapacityStopAsync(model, observer);
-        Assert.False(model.SaveAndContinueCommand.CanExecute(null));
+        FillMarkersTo(model, EvidenceLimits.MaxMarkers - CollectorViewModel.CleanupMarkerReserve);
+        CheckMarkerCapacity(model);
+        await WaitForPublishedCapacityStopAsync(model);
+
+        Assert.False(model.SaveCommand.CanExecute(null));
         Assert.False(model.MarkCommand.CurrentExecution.IsCompleted);
         releasePower.SetResult(PowerSourceKind.Ac);
         await model.MarkCommand.CurrentExecution;
 
         Assert.True(model.ShowStartingValue);
         Assert.False(model.CapacityRestorationRequired);
-        Assert.True(model.SaveAndContinueCommand.CanExecute(null));
-        Assert.DoesNotContain(model.Evidence!.Markers,
+        Assert.True(model.SaveCommand.CanExecute(null));
+        using var evidence = model.Evidence!;
+        Assert.DoesNotContain(evidence.Markers,
             marker => marker.Kind == EvidenceMarkerKind.UserReportedStartingValue);
-        Assert.All(observer.RawBuffers, buffer => Assert.All(buffer, value => Assert.Equal((byte)0, value)));
         await model.CloseAsync();
     }
 
     [Fact]
-    public async Task ReadOnlyReportAtMarkerReserveCleansUpAnAlreadyEndedReader()
+    public async Task ReadOnlyReportAtMarkerReserveCleansUpAlreadyEndedReader()
     {
         var model = await RecordingAsync();
         model.EvidenceDestinationForTest = () => Path.Combine(Path.GetTempPath(), $"unused-{Guid.NewGuid():N}.zip");
@@ -111,7 +144,7 @@ public sealed class CapacityRecoveryTests
         await Run(model.MarkCommand);
         await WaitForCapacityStopAsync(model, observer);
 
-        var evidence = model.Evidence!;
+        using var evidence = model.Evidence!;
         Assert.Equal(capacityThreshold + 1, evidence.Markers.Count);
         Assert.Equal(0, evidence.RejectedMarkerCount);
         Assert.Contains("checklist", model.CapacitySummary, StringComparison.OrdinalIgnoreCase);
@@ -120,7 +153,7 @@ public sealed class CapacityRecoveryTests
         Assert.Contains(evidence.Coverage, item =>
             item.ActivityId == "power-source" && item.State == CoverageState.Completed);
         Assert.False(model.CapacityRestorationRequired);
-        Assert.True(model.SaveAndContinueCommand.CanExecute(null));
+        Assert.True(model.SaveCommand.CanExecute(null));
         Assert.Equal(1, observer.Stops);
         Assert.Equal(0, observer.Invalidations);
         await model.CloseAsync();
@@ -143,7 +176,7 @@ public sealed class CapacityRecoveryTests
         await Run(model.MarkCommand);
         await WaitForCapacityStopAsync(model, observer);
 
-        var evidence = model.Evidence!;
+        using var evidence = model.Evidence!;
         Assert.Equal(capacityThreshold + 1, evidence.Markers.Count);
         Assert.Equal(0, evidence.RejectedMarkerCount);
         Assert.Contains(evidence.Markers, marker => marker.Kind == EvidenceMarkerKind.UserReportedRestoration
@@ -154,34 +187,56 @@ public sealed class CapacityRecoveryTests
         Assert.True(Assert.Single(ContributionDraftBuilder.CreateAnnotationDraft(evidence).ActionWindows)
             .CompleteUserReportedSequence);
         Assert.False(model.CapacityRestorationRequired);
-        Assert.False(model.CapacityRestorationConfirmed);
-        Assert.True(model.SaveAndContinueCommand.CanExecute(null));
+        Assert.True(model.SaveCommand.CanExecute(null));
         await model.CloseAsync();
     }
 
     [Fact]
-    public async Task IncreasingObserverDropsCoalesceWithoutConsumingMarkerCapacity()
+    public async Task IncreasingObserverDropsCoalescePerActionSegmentWithoutMarkerFlood()
     {
         var model = await RecordingAsync();
         var observer = CapacityObserver.Empty();
         model.SetOwnedTestObserver(observer, [Candidate]);
-        observer.DroppedEvents = 1;
-        await Poll(model);
-        var first = Assert.Single(model.Evidence!.Markers,
-            marker => marker.Label == "Observer queue dropped events");
-
-        for (var dropped = 2; dropped <= 600; dropped++)
+        for (var dropped = 1; dropped <= 20; dropped++)
         {
             observer.DroppedEvents = dropped;
             await Poll(model);
         }
+
+        using var beforeAction = model.Evidence!;
+        var first = Assert.Single(beforeAction.Markers,
+            marker => marker.Label == "Observer queue dropped events");
+        model.StartingSetting = "Balanced";
+        await Run(model.MarkCommand);
+        using var afterBaseline = model.Evidence!;
+        var baseline = Assert.Single(afterBaseline.Markers,
+            marker => marker.Kind == EvidenceMarkerKind.UserReportedStartingValue);
+
+        for (var dropped = 21; dropped <= 600; dropped++)
+        {
+            observer.DroppedEvents = dropped;
+            await Poll(model);
+        }
+        model.ChangedSetting = "Silent";
+        await Run(model.MarkCommand);
+        await Run(model.MarkCommand);
         await Run(model.StopCommand);
 
-        var evidence = model.Evidence!;
-        var retained = Assert.Single(evidence.Markers,
-            marker => marker.Label == "Observer queue dropped events");
-        Assert.Equal(first.RelativeMilliseconds, retained.RelativeMilliseconds);
-        Assert.Equal("count-600", retained.Value);
+        using var evidence = model.Evidence!;
+        var retained = evidence.Markers
+            .Where(marker => marker.Label == "Observer queue dropped events")
+            .OrderBy(marker => marker.RelativeMilliseconds)
+            .ToArray();
+        Assert.Equal(2, retained.Length);
+        Assert.Equal(first.RelativeMilliseconds, retained[0].RelativeMilliseconds);
+        Assert.Equal("count-20", retained[0].Value);
+        Assert.True(retained[1].RelativeMilliseconds >= baseline.RelativeMilliseconds);
+        Assert.Equal("count-600", retained[1].Value);
+        var window = Assert.Single(ContributionDraftBuilder.CreateAnnotationDraft(evidence).ActionWindows);
+        Assert.InRange(retained[1].RelativeMilliseconds,
+            window.StartRelativeMilliseconds, window.EndRelativeMilliseconds);
+        Assert.Equal(CoverageReason.CaptureFailed, Assert.Single(evidence.Coverage,
+            item => item.ActivityId == "performance").Reason);
         Assert.Equal(0, evidence.RejectedMarkerCount);
         Assert.True(evidence.Markers.Count < EvidenceLimits.MaxMarkers - CollectorViewModel.CleanupMarkerReserve);
         Assert.Contains("600 recording gaps", model.ObservationSummary);
@@ -190,255 +245,135 @@ public sealed class CapacityRecoveryTests
     }
 
     [Fact]
-    public async Task ProbePreflightRefusesReservedMarkerAndObservationCapacityWithoutStartMarker()
+    public async Task SpecialKeyLimitDoesNotStopControlRecording()
     {
-        var markerModel = await CollectedAsync();
-        var markerThreshold = EvidenceLimits.MaxMarkers - CollectorViewModel.CleanupMarkerReserve;
-        FillMarkersTo(markerModel, markerThreshold - 1);
-        var markerCount = CurrentSession(markerModel).MarkerCount;
-
-        Assert.False(markerModel.PrepareSpecialKeyProbe());
-        Assert.Equal(markerCount, CurrentSession(markerModel).MarkerCount);
-        Assert.DoesNotContain(markerModel.Evidence!.Markers,
-            marker => marker.Kind == EvidenceMarkerKind.SpecialKeyProbeStarted);
-        Assert.True(markerModel.ShowCapacityRecovery);
-        await markerModel.CloseAsync();
-
-        var observationModel = await CollectedAsync();
-        var oldSession = CurrentSession(observationModel);
-        var keySession = CreateKeySession();
-        SetCurrentSession(observationModel, keySession);
-        oldSession.Dispose();
-        for (var index = 0; index < EvidenceLimits.MaxSpecialKeyObservations; index++)
-        {
-            Assert.Equal(EvidenceAddResult.Added, keySession.AddSpecialKeyObservation(
-                KeyObservation(index / EvidenceLimits.MaxSpecialKeyObservationsPerProbe + 1)));
-        }
-        Assert.Equal(EvidenceLimits.MaxSpecialKeyObservations, keySession.SpecialKeyObservationCount);
-
-        Assert.False(observationModel.PrepareSpecialKeyProbe());
-        Assert.Equal(0, keySession.MarkerCount);
-        Assert.DoesNotContain(observationModel.Evidence!.Markers,
-            marker => marker.Kind == EvidenceMarkerKind.SpecialKeyProbeStarted);
-        Assert.True(observationModel.ShowCapacityRecovery);
-        await observationModel.CloseAsync();
-    }
-
-    [Fact]
-    public async Task SixtyFourthProbeSummaryTriggersRecoveryWithoutOverwritingDeclaredState()
-    {
-        var model = await CollectedAsync();
-        model.SelectedActivityIndex = ActivityIndex(model, "special-key-m1");
-        model.StartingSetting = "Unassigned";
-        await Run(model.MarkCommand);
-        var declared = Assert.Single(model.Evidence!.Coverage,
-            item => item.ActivityId == "special-key-m1");
-        Assert.Equal(CoverageState.Completed, declared.State);
+        var model = await RecordingAsync();
+        var observer = CapacityObserver.Empty();
+        model.SetOwnedTestObserver(observer, [Candidate]);
 
         for (var index = 1; index <= EvidenceLimits.MaxSpecialKeyProbes; index++)
         {
             SetActiveProbeLabel(model, $"probe-{index:D3}");
             model.CompleteSpecialKeyProbe(ProbeSummary());
         }
-
-        Assert.Equal(EvidenceLimits.MaxSpecialKeyProbes, CurrentSession(model).SpecialKeyProbeCount);
-        Assert.True(model.ShowCapacityRecovery);
-        Assert.False(model.PrepareSpecialKeyProbe());
-        Assert.DoesNotContain(model.Evidence!.Markers,
-            marker => marker.Kind == EvidenceMarkerKind.SpecialKeyProbeStarted);
-
         SetActiveProbeLabel(model, "probe-065");
         model.CompleteSpecialKeyProbe(ProbeSummary());
 
-        var evidence = model.Evidence!;
-        Assert.Equal(EvidenceLimits.MaxSpecialKeyProbes, evidence.SpecialKeyProbes.Count);
+        Assert.True(model.IsRecording);
+        Assert.False(model.ShowCapacityRecovery);
         Assert.Contains("could not be retained", model.SpecialKeyStatus, StringComparison.OrdinalIgnoreCase);
-        Assert.Equal(CoverageState.Completed, Assert.Single(evidence.Coverage,
-            item => item.ActivityId == "special-key-m1").State);
-        Assert.Contains(evidence.Markers, marker => marker.Kind == EvidenceMarkerKind.UserReportedCurrentState
-            && marker.ActivityId == "special-key-m1" && marker.Value == "Unassigned");
+        observer.EnqueueSingleCall();
+        await Poll(model);
+        using (var evidence = model.Evidence!)
+        {
+            Assert.Equal(EvidenceLimits.MaxSpecialKeyProbes, evidence.SpecialKeyProbes.Count);
+            Assert.Single(evidence.Observations);
+            Assert.Null(evidence.StorageFailure);
+        }
+        Assert.True(model.IsRecording);
+        await Run(model.StopCommand);
         await model.CloseAsync();
     }
 
     [Fact]
-    public async Task InterruptedSettingRequiresExplicitRestorationBeforeContinuing()
+    public async Task FailedSaveRetryKeepsOneLateRestorationReportAndIncompleteWindow()
     {
         var model = await RecordingAsync();
-        model.EvidenceDestinationForTest = () => Path.Combine(Path.GetTempPath(), $"unused-{Guid.NewGuid():N}.zip");
         model.StartingSetting = "Balanced";
         await Run(model.MarkCommand);
-        var observer = CapacityObserver.Boundary();
-
-        model.SetOwnedTestObserver(observer, [Candidate], startPump: true);
-        await WaitForCapacityStopAsync(model, observer);
-
+        FillMarkersTo(model, EvidenceLimits.MaxMarkers - CollectorViewModel.CleanupMarkerReserve);
+        CheckMarkerCapacity(model);
+        await WaitForPublishedCapacityStopAsync(model);
         Assert.True(model.CapacityRestorationRequired);
-        Assert.False(model.CapacityRestorationConfirmed);
-        Assert.Contains("Balanced", model.CapacityRestorationLabel);
-        Assert.Contains(model.Evidence!.Coverage, item =>
-            item.ActivityId == "performance" && item.Reason == CoverageReason.IncompleteRestoration);
-        Assert.True(model.SaveCommand.CanExecute(null));
-        Assert.False(model.SaveAndContinueCommand.CanExecute(null));
-
         model.CapacityRestorationConfirmed = true;
+        model.EvidenceDestinationForTest = () => Path.Combine(Path.GetTempPath(), $"retry-{Guid.NewGuid():N}.zip");
+        using var beforeSave = model.Evidence!;
 
-        Assert.True(model.SaveAndContinueCommand.CanExecute(null));
+        EvidenceSessionSnapshot? failedExport = null;
+        model.EvidenceWriterForTest = (session, _) =>
+        {
+            failedExport = session.Snapshot();
+            throw new IOException("Owned writer failure");
+        };
+        await Run(model.SaveCommand);
+
+        using (var afterFailure = model.Evidence!)
+        {
+            Assert.Equal(beforeSave.StartedAtUtc, afterFailure.StartedAtUtc);
+            Assert.Equal(beforeSave.Observations.Count, afterFailure.Observations.Count);
+            Assert.True(model.ShowCapacityRecovery);
+            Assert.Contains(nameof(IOException), model.Status);
+        }
+        Assert.NotNull(failedExport);
+        AssertLateRestorationIsSeparate(failedExport!);
+
+        EvidenceSessionSnapshot? retriedExport = null;
+        model.EvidenceWriterForTest = (session, _) =>
+        {
+            retriedExport = session.Snapshot();
+            return Task.CompletedTask;
+        };
+        await Run(model.SaveCommand);
+
+        Assert.NotNull(retriedExport);
+        AssertLateRestorationIsSeparate(retriedExport!);
+        using (var afterSuccess = model.Evidence!)
+        {
+            Assert.Equal(beforeSave.StartedAtUtc, afterSuccess.StartedAtUtc);
+            Assert.Equal(beforeSave.Observations.Count, afterSuccess.Observations.Count);
+            AssertLateRestorationIsSeparate(afterSuccess);
+        }
+        failedExport!.Dispose();
+        retriedExport!.Dispose();
         await model.CloseAsync();
     }
 
     [Fact]
-    public async Task SuccessfulContinuationWritesTwoIndependentPartsAndRetriesInterruptedActivity()
+    public async Task StorageFailureStopsAndKeepsOnlyCommittedSanitizedPrefix()
     {
-        var directory = Path.Combine(Path.GetTempPath(), $"synapse-observer-capacity-{Guid.NewGuid():N}");
+        var directory = Path.Combine(Path.GetTempPath(), $"synapse-observer-storage-failure-{Guid.NewGuid():N}");
         Directory.CreateDirectory(directory);
         try
         {
-            var firstPath = Path.Combine(directory, "part-1.zip");
-            var secondPath = Path.Combine(directory, "part-2.zip");
-            var destination = firstPath;
             var model = await RecordingAsync();
-            model.EvidenceDestinationForTest = () => destination;
+            var oldSession = CurrentSession(model);
+            var store = SanitizedObservationStore.Create(
+                Path.Combine(directory, "failed.spool"), path => new ThrowingWriteStream(new FileStream(
+                    path,
+                    FileMode.CreateNew,
+                    FileAccess.Write,
+                    FileShare.ReadWrite | FileShare.Delete,
+                    bufferSize: 1,
+                    FileOptions.SequentialScan)));
+            var failedSession = new EvidenceSession(oldSession.Inventory, startedAtUtc: null, store);
+            SetCurrentSession(model, failedSession);
+            oldSession.Dispose();
+            var observer = CapacityObserver.SingleCall();
+            model.SetOwnedTestObserver(observer, [Candidate], startPump: true);
 
-            var performance = ActivityIndex(model, "performance");
-            var power = ActivityIndex(model, "power-source");
-            foreach (var index in Enumerable.Range(0, model.Activities.Count)
-                         .Where(index => index != performance && index != power))
-            {
-                model.SelectedActivityIndex = index;
-                await Run(model.SkipCommand);
-            }
-            model.SelectedActivityIndex = power;
-            model.StartingSetting = "Battery";
-            await Run(model.MarkCommand);
-            model.SelectedActivityIndex = performance;
-            model.StartingSetting = "Balanced";
-            await Run(model.MarkCommand);
+            await WaitForCapacityStopAsync(model, observer);
 
-            var firstObserver = CapacityObserver.Boundary();
-            var secondObserver = CapacityObserver.Empty();
-            var starts = 0;
-            model.SetOwnedTestObserver(firstObserver, [Candidate], startPump: true);
-            model.SetOwnedStartForTest(Backend, () =>
-            {
-                starts++;
-                return Task.FromResult<INativeObservationSession>(secondObserver);
-            });
-            await WaitForCapacityStopAsync(model, firstObserver);
-            var first = model.Evidence!;
-            model.CapacityRestorationConfirmed = true;
-
-            await Run(model.SaveAndContinueCommand);
-
-            var fresh = model.Evidence!;
-            Assert.NotEqual(first.StartedAtUtc, fresh.StartedAtUtc);
-            Assert.Equal(first.Inventory.CollectedAtUtc, fresh.Inventory.CollectedAtUtc);
-            Assert.Empty(fresh.Observations);
-            Assert.Equal(0, fresh.RejectedObservationCount);
-            Assert.Empty(fresh.SpecialKeyObservations);
-            Assert.Empty(fresh.SpecialKeyProbes);
-            Assert.All(fresh.Coverage, item => Assert.Equal(CoverageState.Pending, item.State));
-            var firstPartIdentity = Assert.Single(first.Markers,
-                marker => marker.Kind == EvidenceMarkerKind.SessionStarted).Value!;
-            var secondPartIdentity = Assert.Single(fresh.Markers,
-                marker => marker.Kind == EvidenceMarkerKind.SessionStarted).Value!;
-            Assert.Matches("^collection-[0-9a-f]{32}-part-001$", firstPartIdentity);
-            Assert.Equal(firstPartIdentity[..^3] + "002", secondPartIdentity);
-            Assert.Equal(model.Activities.Count - 1, model.Activities.Count(item => item.SavedInEarlierZip));
-            Assert.True(model.Activities[power].SavedInEarlierZip);
-            Assert.False(model.Activities[performance].SavedInEarlierZip);
-            Assert.Equal(performance, model.SelectedActivityIndex);
-            Assert.True(model.AttachConsent);
-
-            await Run(model.StartCommand);
-            model.StartingSetting = "Balanced";
-            await Run(model.MarkCommand);
-            secondObserver.EnqueueSingleCall();
-            await WaitUntilAsync(() => CurrentSession(model).ObservationCount == 1);
-            Assert.Equal(1, starts);
-            model.ChangedSetting = "Silent";
-            await Run(model.MarkCommand);
-            await Run(model.MarkCommand);
-            Assert.False(model.HasCurrentStep);
-            var laterWindow = Assert.Single(ContributionDraftBuilder.CreateAnnotationDraft(model.Evidence!).ActionWindows);
-            Assert.True(laterWindow.CompleteUserReportedSequence);
-            Assert.Single(laterWindow.Observations);
-            Assert.Contains(laterWindow.Markers, marker => marker.Kind == EvidenceMarkerKind.UserReportedRestoration);
-            await Run(model.StopCommand);
-            var firstHash = SHA256.HashData(File.ReadAllBytes(firstPath));
-            await Run(model.SaveCommand);
-            Assert.Equal(firstHash, SHA256.HashData(File.ReadAllBytes(firstPath)));
-            Assert.Contains("different filename", model.Status, StringComparison.OrdinalIgnoreCase);
-            var unrelatedPath = Path.Combine(directory, "unrelated-existing.zip");
-            var unrelatedBytes = new byte[] { 0x55, 0x4E, 0x52, 0x45, 0x4C, 0x41, 0x54, 0x45, 0x44 };
-            File.WriteAllBytes(unrelatedPath, unrelatedBytes);
-            destination = unrelatedPath;
-            await Run(model.SaveCommand);
-            Assert.Equal(unrelatedBytes, File.ReadAllBytes(unrelatedPath));
-            destination = secondPath;
-            await Run(model.SaveCommand);
-
-            using var firstManifest = ReadManifest(firstPath);
-            using var secondManifest = ReadManifest(secondPath);
-            var firstSession = firstManifest.RootElement.GetProperty("session");
-            var secondSession = secondManifest.RootElement.GetProperty("session");
-            Assert.Equal(firstSession.GetProperty("schemaVersion").GetString(),
-                secondSession.GetProperty("schemaVersion").GetString());
-            Assert.Equal(firstPartIdentity, SessionStartedValue(firstSession));
-            Assert.Equal(secondPartIdentity, SessionStartedValue(secondSession));
-            Assert.Equal(EvidenceLimits.MaxObservations,
-                firstSession.GetProperty("observations").GetArrayLength());
-            Assert.Single(secondSession.GetProperty("observations").EnumerateArray());
-            Assert.Equal(firstSession.GetProperty("inventory").GetProperty("collectedAtUtc").GetString(),
-                secondSession.GetProperty("inventory").GetProperty("collectedAtUtc").GetString());
-            var firstOperations = firstSession.GetProperty("observations").EnumerateArray()
-                .Select(item => item.GetProperty("operationId").GetString()).ToHashSet(StringComparer.Ordinal);
-            var secondOperations = secondSession.GetProperty("observations").EnumerateArray()
-                .Select(item => item.GetProperty("operationId").GetString()).ToHashSet(StringComparer.Ordinal);
-            Assert.Empty(firstOperations.Intersect(secondOperations, StringComparer.Ordinal));
-            Assert.All(secondObserver.RawBuffers, buffer =>
-                Assert.All(buffer, value => Assert.Equal((byte)0, value)));
+            using var evidence = model.Evidence!;
+            Assert.Equal(EvidenceStorageFailure.IoFailure, evidence.StorageFailure);
+            Assert.Empty(evidence.Observations);
+            Assert.Equal(1, evidence.RejectedObservationCount);
+            Assert.True(model.ShowCapacityRecovery);
+            Assert.Contains("storage", model.CapacitySummary, StringComparison.OrdinalIgnoreCase);
+            Assert.All(observer.RawBuffers, buffer => Assert.All(buffer, value => Assert.Equal((byte)0, value)));
             await model.CloseAsync();
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
         }
     }
 
     [Fact]
-    public async Task CancelledAndFailedContinuationKeepFullSessionIntact()
+    public async Task CloseWaitsForInFlightExportBeforeDisposingSession()
     {
-        var model = await FullStoppedModelAsync();
-        var original = model.Evidence!;
-        model.EvidenceDestinationForTest = () => null;
-
-        Assert.True(model.SaveAndContinueCommand.CanExecute(null),
-            $"busy={model.IsBusy}; recording={model.IsRecording}; show={model.ShowCapacityRecovery}; " +
-            $"restoreRequired={model.CapacityRestorationRequired}; restoreConfirmed={model.CapacityRestorationConfirmed}; " +
-            $"markRunning={model.MarkCommand.IsRunning}");
-        model.SaveAndContinueCommand.Execute(null);
-        await model.SaveAndContinueCommand.CurrentExecution;
-
-        Assert.Equal(original.StartedAtUtc, model.Evidence!.StartedAtUtc);
-        Assert.Equal(EvidenceLimits.MaxObservations, model.Evidence.Observations.Count);
-        Assert.True(model.ShowCapacityRecovery);
-
-        model.EvidenceDestinationForTest = () => Path.Combine(Path.GetTempPath(), $"failed-{Guid.NewGuid():N}.zip");
-        model.EvidenceWriterForTest = (_, _) => throw new IOException("Owned writer failure");
-        await Run(model.SaveAndContinueCommand);
-
-        Assert.Equal(original.StartedAtUtc, model.Evidence!.StartedAtUtc);
-        Assert.Equal(EvidenceLimits.MaxObservations, model.Evidence.Observations.Count);
-        Assert.True(model.ShowCapacityRecovery);
-        Assert.Contains(nameof(IOException), model.Status);
-        await model.CloseAsync();
-    }
-
-    [Fact]
-    public async Task CloseWaitsForInFlightContinuationExportBeforeSessionSwap()
-    {
-        var model = await FullStoppedModelAsync();
-        var original = model.Evidence!;
+        var model = await RecordingAsync();
+        await Run(model.StopCommand);
+        using var original = model.Evidence!;
         var entered = new TaskCompletionSource<EvidenceSession>(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         model.EvidenceDestinationForTest = () => Path.Combine(Path.GetTempPath(), $"gated-{Guid.NewGuid():N}.zip");
@@ -448,57 +383,62 @@ public sealed class CapacityRecoveryTests
             await release.Task;
         };
 
-        model.SaveAndContinueCommand.Execute(null);
+        model.SaveCommand.Execute(null);
         var exported = await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        Assert.Equal(original.StartedAtUtc, model.Evidence!.StartedAtUtc);
-        Assert.Equal(EvidenceLimits.MaxObservations, exported.ObservationCount);
+        using (var duringExport = exported.Snapshot())
+        {
+            Assert.Equal(original.StartedAtUtc, duringExport.StartedAtUtc);
+        }
         var close = model.CloseAsync();
         Assert.False(close.IsCompleted);
 
         release.SetResult();
-        await Task.WhenAll(close, model.SaveAndContinueCommand.CurrentExecution);
+        await Task.WhenAll(close, model.SaveCommand.CurrentExecution);
     }
 
     [Fact]
     public async Task FailedCapacityCleanupInvalidatesReuseAndRevokesConsent()
     {
         var model = await RecordingAsync();
-        var observer = CapacityObserver.Boundary(cleanupFailure: true);
+        var observer = CapacityObserver.Empty(cleanupFailure: true);
         model.SetOwnedTestObserver(observer, [Candidate], startPump: true);
-        model.SetOwnedStartForTest(Backend,
-            () => Task.FromResult<INativeObservationSession>(CapacityObserver.SingleCall()));
+        FillMarkersTo(model, EvidenceLimits.MaxMarkers - CollectorViewModel.CleanupMarkerReserve - 1);
+        model.StartingSetting = "Balanced";
 
+        await Run(model.MarkCommand);
         await WaitForCapacityStopAsync(model, observer);
 
         Assert.True(model.ShowCapacityRecovery);
         Assert.True(observer.Invalidations > 0);
         Assert.False(model.AttachConsent);
         Assert.False(model.StartCommand.CanExecute(null));
-        Assert.Contains(model.Evidence!.Markers, marker => marker.Label == "Recording cleanup has a gap");
+        using var evidence = model.Evidence!;
+        Assert.Contains(evidence.Markers, marker => marker.Label == "Recording cleanup has a gap");
         await model.CloseAsync();
     }
 
-    private static async Task<CollectorViewModel> FullStoppedModelAsync()
+    private static void AssertLateRestorationIsSeparate(EvidenceSessionSnapshot evidence)
     {
-        var model = await RecordingAsync();
-        var observer = CapacityObserver.Boundary();
-        model.SetOwnedTestObserver(observer, [Candidate], startPump: true);
-        await WaitForCapacityStopAsync(model, observer);
-        return model;
+        Assert.Single(evidence.Markers,
+            marker => marker.Label == "User reported restoration after recording stopped"
+                && marker.Kind == EvidenceMarkerKind.UserReportedCurrentState
+                && marker.ActivityId == "performance" && marker.Value == "Balanced");
+        Assert.DoesNotContain(evidence.Markers,
+            marker => marker.Kind == EvidenceMarkerKind.UserReportedRestoration
+                && marker.ActivityId == "performance");
+        var coverage = Assert.Single(evidence.Coverage, item => item.ActivityId == "performance");
+        Assert.Equal(CoverageState.CompletedWithGaps, coverage.State);
+        Assert.Equal(CoverageReason.IncompleteRestoration, coverage.Reason);
+        Assert.False(Assert.Single(ContributionDraftBuilder.CreateAnnotationDraft(evidence).ActionWindows)
+            .CompleteUserReportedSequence);
     }
 
     private static async Task<CollectorViewModel> RecordingAsync()
     {
-        var model = await CollectedAsync();
-        model.AttachConsent = true;
-        await Run(model.StartCommand);
-        return model;
-    }
-
-    private static async Task<CollectorViewModel> CollectedAsync()
-    {
         var model = new CollectorViewModel(preview: true);
         await Run(model.CollectCommand);
+        model.AttachConsent = true;
+        await Run(model.StartCommand);
         return model;
     }
 
@@ -521,23 +461,6 @@ public sealed class CapacityRecoveryTests
             .GetField("activeProbeLabel", BindingFlags.Instance | BindingFlags.NonPublic)!
             .SetValue(model, label);
 
-    private static EvidenceSession CreateKeySession()
-    {
-        var inventory = SyntheticPreview.CreateInventory();
-        var hid = inventory.RazerHidInterfaces.Value.Single() with { UsagePage = 1, Usage = 6 };
-        return new EvidenceSession(inventory with
-        {
-            RazerHidInterfaces = SectionResult<IReadOnlyList<HidInterfaceEvidence>>.Collected([hid]),
-        });
-    }
-
-    private static SpecialKeyObservation KeyObservation(int probe) => new(
-        1, SpecialKeyExpectedKey.M1, SpecialKeyModeContext.Unknown, "hid-preview-01",
-        SpecialKeyObservationOrigin.WindowsRawInput, SpecialKeyPhase.KeyDown, 0x7C)
-    {
-        ProbeLabel = $"probe-{probe:D3}",
-    };
-
     private static SpecialKeyProbeSummary ProbeSummary() => new(
         SpecialKeyExpectedKey.M1, SpecialKeyModeContext.Unknown,
         SpecialKeyProbeEndReason.Timeout, 0, 0, 0, string.Empty);
@@ -552,6 +475,16 @@ public sealed class CapacityRecoveryTests
             .GetField("pump", BindingFlags.Instance | BindingFlags.NonPublic)!
             .GetValue(model)!;
 
+    private static double CurrentRelativeMilliseconds(CollectorViewModel model) =>
+        (double)typeof(CollectorViewModel)
+            .GetProperty("RelativeMilliseconds", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(model)!;
+
+    private static void CheckMarkerCapacity(CollectorViewModel model) =>
+        typeof(CollectorViewModel)
+            .GetMethod("CheckMarkerCapacity", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(model, null);
+
     private static void FillMarkersTo(CollectorViewModel model, int count)
     {
         var session = CurrentSession(model);
@@ -562,18 +495,13 @@ public sealed class CapacityRecoveryTests
         }
     }
 
-    private static JsonDocument ReadManifest(string path)
+    private static JsonDocument ReadZipJson(string path, string entryName)
     {
         using var archive = ZipFile.OpenRead(path);
-        var entry = archive.GetEntry("manifest.json")!;
+        var entry = archive.GetEntry(entryName)!;
         using var stream = entry.Open();
         return JsonDocument.Parse(stream);
     }
-
-    private static string SessionStartedValue(JsonElement session) =>
-        session.GetProperty("markers").EnumerateArray()
-            .Single(marker => marker.GetProperty("kind").GetString() == "sessionStarted")
-            .GetProperty("value").GetString()!;
 
     private static async Task WaitUntilAsync(Func<bool> predicate)
     {
@@ -587,9 +515,12 @@ public sealed class CapacityRecoveryTests
     private static async Task WaitForCapacityStopAsync(CollectorViewModel model, CapacityObserver observer)
     {
         await observer.Disposed.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await WaitForPublishedCapacityStopAsync(model);
+    }
+
+    private static async Task WaitForPublishedCapacityStopAsync(CollectorViewModel model)
+    {
         var stopField = typeof(CollectorViewModel).GetField("stopTask", BindingFlags.Instance | BindingFlags.NonPublic)!;
-        // Owned observers can dispose synchronously before StopAsync publishes
-        // its task; test continuations run concurrently without a UI dispatcher.
         await WaitUntilAsync(() => stopField.GetValue(model) is Task);
         var stop = (Task?)stopField.GetValue(model);
         Assert.NotNull(stop);
@@ -619,26 +550,11 @@ public sealed class CapacityRecoveryTests
         public List<byte[]> RawBuffers { get; } = [];
         public TaskCompletionSource Disposed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public int Stops { get; private set; }
-        public int Disposals { get; private set; }
         public int Invalidations { get; private set; }
         public int DroppedEvents { get; set; }
         public long OriginTimestampTicks { get; } = System.Diagnostics.Stopwatch.GetTimestamp();
 
-        public static CapacityObserver Boundary(bool cleanupFailure = false)
-        {
-            var observer = BeforeBoundary(cleanupFailure);
-            observer.EnqueueBoundary();
-            return observer;
-        }
-
-        public static CapacityObserver BeforeBoundary(bool cleanupFailure = false)
-        {
-            var observer = new CapacityObserver(cleanupFailure);
-            observer.Enqueue(Enumerable.Range(1, EvidenceLimits.MaxObservations - 1)
-                .Select(index => observer.Event((ulong)index, includeResponse: false))
-                .ToArray());
-            return observer;
-        }
+        public static CapacityObserver Empty(bool cleanupFailure = false) => new(cleanupFailure);
 
         public static CapacityObserver SingleCall()
         {
@@ -647,19 +563,27 @@ public sealed class CapacityRecoveryTests
             return observer;
         }
 
-        public static CapacityObserver Empty() => new(cleanupFailure: false);
+        public static CapacityObserver HighVolume(int calls)
+        {
+            var observer = Empty();
+            observer.Enqueue(Enumerable.Range(1, calls)
+                .Select(index => observer.Event((ulong)index, includeResponse: false, relativeMilliseconds: 0))
+                .ToArray());
+            return observer;
+        }
 
         public void EnqueueSingleCall()
         {
-            var at = (System.Diagnostics.Stopwatch.GetTimestamp() - OriginTimestampTicks) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
-            Enqueue([Event(1, includeResponse: false) with { RelativeMilliseconds = at, CompletionRelativeMilliseconds = at }]);
+            var at = ElapsedMilliseconds;
+            Enqueue([Event(1, includeResponse: false, at)]);
+        }
+
+        public void EnqueueFinalResponse(ulong sequence, double relativeMilliseconds)
+        {
+            Enqueue([Event(sequence, includeResponse: true, relativeMilliseconds)]);
         }
 
         public void FinishNaturally() => finished = true;
-
-        public void EnqueueBoundary() => Enqueue([
-            Event((ulong)EvidenceLimits.MaxObservations, includeResponse: true),
-        ]);
 
         public NativeSessionStatus GetStatus() => new(
             Started: true,
@@ -690,17 +614,20 @@ public sealed class CapacityRecoveryTests
 
         public ValueTask DisposeAsync()
         {
-            Disposals++;
             Disposed.TrySetResult();
             return ValueTask.CompletedTask;
         }
+
+        private double ElapsedMilliseconds =>
+            (System.Diagnostics.Stopwatch.GetTimestamp() - OriginTimestampTicks) * 1000.0
+            / System.Diagnostics.Stopwatch.Frequency;
 
         private void Enqueue(IReadOnlyList<NativeObservationEvent> batch)
         {
             lock (sync) batches.Enqueue(batch);
         }
 
-        private NativeObservationEvent Event(ulong sequence, bool includeResponse)
+        private NativeObservationEvent Event(ulong sequence, bool includeResponse, double relativeMilliseconds)
         {
             var request = new byte[] { 2 };
             var response = includeResponse ? new byte[] { 3 } : [];
@@ -708,7 +635,7 @@ public sealed class CapacityRecoveryTests
             RawBuffers.Add(response);
             return new NativeObservationEvent(
                 sequence,
-                sequence,
+                relativeMilliseconds,
                 includeResponse ? "DeviceIoControl.HID_GET_FEATURE" : "HidD_SetFeature",
                 includeResponse ? "get-feature" : "set-feature",
                 true,
@@ -719,8 +646,29 @@ public sealed class CapacityRecoveryTests
                 1,
                 includeResponse ? 1u : 0,
                 0,
-                sequence + 0.5,
+                relativeMilliseconds,
                 includeResponse ? 1u : 0);
+        }
+    }
+
+    private sealed class ThrowingWriteStream(Stream inner) : Stream
+    {
+        public override bool CanRead => inner.CanRead;
+        public override bool CanSeek => inner.CanSeek;
+        public override bool CanWrite => true;
+        public override long Length => inner.Length;
+        public override long Position { get => inner.Position; set => inner.Position = value; }
+        public override void Flush() => inner.Flush();
+        public override int Read(byte[] buffer, int offset, int count) => inner.Read(buffer, offset, count);
+        public override long Seek(long offset, SeekOrigin origin) => inner.Seek(offset, origin);
+        public override void SetLength(long value) => inner.SetLength(value);
+        public override void Write(byte[] buffer, int offset, int count) => throw new IOException("Owned storage failure");
+        public override void Write(ReadOnlySpan<byte> buffer) => throw new IOException("Owned storage failure");
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) inner.Dispose();
+            base.Dispose(disposing);
         }
     }
 }

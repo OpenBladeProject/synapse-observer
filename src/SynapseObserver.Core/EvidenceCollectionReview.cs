@@ -36,13 +36,13 @@ public sealed record EvidenceCollectionReview(string Summary, IReadOnlyList<stri
         var incomplete = counts.ActionWindows - counts.CompleteActionWindows - unchanged;
         if (incomplete > 0)
             notes.Add($"{Count(incomplete, "setting-change sequence")} {(incomplete == 1 ? "is" : "are")} unfinished. Restore any changed setting to its exact starting value before leaving Synapse.");
-        var responses = snapshot.Observations.Where(item => item.Source == ObservationSource.ReturnedBuffer).ToArray();
+        var responses = snapshot.Observations.Where(item => item.Source == ObservationSource.ReturnedBuffer);
         var omitted = responses.Count(item => !item.CompletePayloadRetained);
         var semantic = responses.Count(item => item.SemanticResponse is not null);
         if (semantic > 0)
             notes.Add($"{Count(semantic, "returned response summary", "returned response summaries")} retained with opaque and unavailable bytes omitted.");
         if (omitted > 0)
-            notes.Add($"{omitted} of {Count(responses.Length, "returned report body", "returned report bodies")} {(omitted == 1 ? "was" : "were")} omitted. Save this ZIP; the maintainer may need a focused follow-up to understand the responses.");
+            notes.Add($"{omitted} of {Count(responses.Count(), "returned report body", "returned report bodies")} {(omitted == 1 ? "was" : "were")} omitted. Save this ZIP; the maintainer may need a focused follow-up to understand the responses.");
         if (quality.Gaps.Any(item => item.Code is "RecordingObservationLoss" or "CapturePayloadLoss") || counts.RejectedRecords > 0)
             notes.Add("Some recording data could not be retained. Save the partial evidence so the maintainer can see the gap.");
         if (quality.Gaps.Any(item => item.Code == "ObservedApiFailure"))

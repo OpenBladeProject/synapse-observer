@@ -394,69 +394,115 @@ public sealed class EvidenceBundleWriterTests
     }
 
     [Fact]
-    public async Task WriteAsync_MaximumAcceptedSessionFitsDocumentedManifestBound()
+    public async Task WriteSnapshotAsync_StreamsBeyondFormerEntryBoundAndRetainsEveryReference()
     {
-        var session = new EvidenceSession(SyntheticPreview.CreateInventory());
-        var unknownPayload = new byte[EvidenceLimits.MaxPayloadBytesPerObservation];
-        for (var index = 0; index < EvidenceLimits.MaxObservations; index++)
+        const int count = 18000;
+        using var session = new EvidenceSession(SyntheticPreview.CreateInventory());
+        AddCompleteMarkers(session, "brightness", 0, count + 2);
+        Assert.Equal(EvidenceAddResult.Added, session.AddObservation(new ControlObservation(
+            "seed", 1, ObservationSource.UserModeCall, "HidD_SetFeature",
+            ObservationDirection.Input, ObservationStatus.Succeeded, 0, null,
+            0x1532, 0xFFFF, "hid-preview-01", 1, 2, 0,
+            FeatureReportTestData.Create(3, 3, [1, 5, 197]), PayloadDisposition.ProvenFeatureControl, 1.5)));
+        using var snapshot = session.Snapshot();
+        var seed = Assert.Single(snapshot.Observations);
+        var generated = new GeneratedObservations(count, index => seed with
         {
-            Assert.Equal(EvidenceAddResult.AddedPayloadRedacted, session.AddObservation(new ControlObservation(
-                $"op-{index}",
-                index,
-                ObservationSource.UserModeCall,
-                "HidD_SetFeature",
-                ObservationDirection.Input,
-                ObservationStatus.Succeeded,
-                null,
-                null,
-                0x1532,
-                0xFFFF,
-                "hid-preview-01",
-                1,
-                2,
-                0,
-                unknownPayload,
-                PayloadDisposition.ProvenFeatureControl,
-                index + 0.5)));
-        }
-
-        for (var index = session.Snapshot().Markers.Count; index < EvidenceLimits.MaxMarkers; index++)
-        {
-            Assert.Equal(EvidenceAddResult.Added, session.AddMarker(new EvidenceMarker(
-                index,
-                EvidenceMarkerKind.UserActionConfirmed,
-                $"marker-{index}",
-                new string('M', EvidenceLimits.MaxTextLength),
-                EvidenceProvenance.UserReported,
-                new string('V', EvidenceLimits.MaxTextLength))));
-        }
-
-        for (var index = 0; index < EvidenceLimits.MaxCoverageItems; index++)
-        {
-            Assert.Equal(EvidenceAddResult.Added, session.SetCoverage(new CoverageItem(
-                $"coverage-{index}",
-                new string('C', EvidenceLimits.MaxTextLength),
-                CoverageState.CompletedWithGaps,
-                CoverageReason.NoMatchingEvents)));
-        }
-
+            OperationId = $"op-{index}", RelativeMilliseconds = index + 1,
+            CompletedRelativeMilliseconds = index + 1.5,
+        });
+        var exportSnapshot = snapshot with { Observations = generated };
         var directory = Path.Combine(Path.GetTempPath(), $"synapse-observer-tests-{Guid.NewGuid():N}");
         Directory.CreateDirectory(directory);
         try
         {
-            var destination = Path.Combine(directory, "maximum.zip");
-            await EvidenceBundleWriter.WriteAsync(session, destination, CancellationToken.None);
-
+            var destination = Path.Combine(directory, "continuous.zip");
+            await EvidenceBundleWriter.WriteSnapshotAsync(exportSnapshot, destination);
             using var archive = ZipFile.OpenRead(destination);
-            foreach (var entry in archive.Entries.Where(static entry => entry.FullName.EndsWith(".json", StringComparison.Ordinal)))
+            Assert.True(archive.GetEntry("manifest.json")!.Length > 16 * 1024 * 1024);
+            using (var manifest = await ReadJsonAsync(archive, "manifest.json"))
             {
-                Assert.InRange(entry.Length, 1, EvidenceLimits.MaxBundleJsonBytes);
+                var rows = manifest.RootElement.GetProperty("session").GetProperty("observations");
+                Assert.Equal(count, rows.GetArrayLength());
+                Assert.Equal("op-17999", rows[count - 1].GetProperty("operationId").GetString());
+                Assert.Equal(count + 0.5, rows[count - 1].GetProperty("completedRelativeMilliseconds").GetDouble());
             }
+            using (var annotation = await ReadJsonAsync(archive, "annotation-draft.json"))
+                Assert.Equal(count, annotation.RootElement.GetProperty("actionWindows")[0]
+                    .GetProperty("observations").GetArrayLength());
+            using (var coverage = await ReadJsonAsync(archive, "coverage-draft.json"))
+            {
+                var leaf = Assert.Single(coverage.RootElement.GetProperty("coverage").EnumerateArray(),
+                    item => item.GetProperty("capability").GetString() == "keyboardLighting.brightnessRange");
+                Assert.Equal(count, leaf.GetProperty("evidence").GetArrayLength());
+            }
+            // The externally owned snapshot remains usable after export.
+            Assert.Equal("seed", Assert.Single(snapshot.Observations).OperationId);
         }
-        finally
+        finally { Directory.Delete(directory, recursive: true); }
+    }
+
+    [Fact]
+    public void IncompleteThermalAck_CorrelatesOutOfOrderAcrossExternalSortRuns()
+    {
+        const int pairs = 1100;
+        using var session = new EvidenceSession(SyntheticPreview.CreateInventory());
+        AddCompleteMarkers(session, "performance", 0, pairs * 4 + 2);
+        // Reverse arrival order forces sorting, and reusing one key verifies
+        // that each request is consumed once rather than matched to the nearest.
+        for (var index = pairs - 1; index >= 0; index--)
         {
-            Directory.Delete(directory, recursive: true);
+            var time = index * 4 + 1;
+            session.AddObservation(CreateIncompleteThermalAck($"get-{index}", time + 1, 0x42));
+            session.AddObservation(new ControlObservation(
+                $"set-{index}", time, ObservationSource.UserModeCall, "HidD_SetFeature",
+                ObservationDirection.Input, ObservationStatus.Succeeded, 0, null,
+                0x1532, 0xFFFF, "hid-preview-01", 1, 2, 0,
+                FeatureReportTestData.Create(0x0D, 0x02, [1, 1, 5, 0], transactionId: 0x42),
+                PayloadDisposition.ProvenFeatureControl, time + 0.5));
         }
+        using var snapshot = session.Snapshot();
+        using var projections = new ExportProjectionScope();
+        var window = Assert.Single(ContributionDraftBuilder.CreateAnnotationDraft(snapshot).ActionWindows);
+        Assert.Equal(pairs * 2, window.Observations.Count);
+        foreach (var response in window.Observations.Where(item => item.OperationId.StartsWith("get-", StringComparison.Ordinal)))
+        {
+            var number = response.OperationId[4..];
+            Assert.Contains($":set-{number}:", response.CorrelatedRequestReferenceId);
+        }
+    }
+
+    [Fact]
+    public void IncompleteThermalAck_DoesNotConsumeARequestBeforeItsCompletion()
+    {
+        using var session = new EvidenceSession(SyntheticPreview.CreateInventory());
+        AddCompleteMarkers(session, "performance", 0, 20);
+        session.AddObservation(new ControlObservation(
+            "set-delayed", 1, ObservationSource.UserModeCall, "HidD_SetFeature",
+            ObservationDirection.Input, ObservationStatus.Succeeded, 0, null,
+            0x1532, 0xFFFF, "hid-preview-01", 1, 2, 0,
+            FeatureReportTestData.Create(0x0D, 0x02, [1, 1, 5, 0], transactionId: 0x42),
+            PayloadDisposition.ProvenFeatureControl, 10));
+        session.AddObservation(CreateIncompleteThermalAck("get-late", 11, 0x42));
+        session.AddObservation(CreateIncompleteThermalAck("get-early", 5, 0x42));
+        using var snapshot = session.Snapshot();
+        using var projections = new ExportProjectionScope();
+        var observations = Assert.Single(ContributionDraftBuilder.CreateAnnotationDraft(snapshot).ActionWindows).Observations;
+        Assert.Null(Assert.Single(observations, item => item.OperationId == "get-early").CorrelatedRequestReferenceId);
+        Assert.Contains(":set-delayed:", Assert.Single(observations, item => item.OperationId == "get-late").CorrelatedRequestReferenceId);
+    }
+
+    private sealed class GeneratedObservations(int count, Func<int, SanitizedControlObservation> factory)
+        : IReadOnlyList<SanitizedControlObservation>
+    {
+        public int Count => count;
+        public SanitizedControlObservation this[int index] => index >= 0 && index < count
+            ? factory(index) : throw new ArgumentOutOfRangeException(nameof(index));
+        public IEnumerator<SanitizedControlObservation> GetEnumerator()
+        {
+            for (var index = 0; index < count; index++) yield return factory(index);
+        }
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
     }
 
     [Fact]

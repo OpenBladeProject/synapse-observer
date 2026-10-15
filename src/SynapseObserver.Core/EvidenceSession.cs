@@ -8,10 +8,9 @@ public sealed class EvidenceSession : IDisposable
     private readonly List<EvidenceMarker> _markers = [];
     private readonly List<SpecialKeyObservation> _specialKeys = [];
     private readonly List<SpecialKeyProbeSummary> _specialKeyProbes = [];
-    private readonly List<SanitizedControlObservation> _observations = [];
+    private readonly SanitizedObservationStore _observations;
     private readonly Dictionary<string, CoverageItem> _coverage = new(StringComparer.Ordinal);
-    private readonly Dictionary<int, int> _dropMarkerIndices = [];
-    private int _payloadBytes;
+    private readonly Dictionary<(int Recording, int Segment), int> _dropMarkerIndices = [];
     private int _rejectedMarkers;
     private int _rejectedObservations;
     private int _rejectedCoverage;
@@ -20,10 +19,20 @@ public sealed class EvidenceSession : IDisposable
     private bool _disposed;
 
     public EvidenceSession(InventorySnapshot inventory, DateTimeOffset? startedAtUtc = null)
+        : this(inventory, startedAtUtc, SanitizedObservationStore.CreateDefault())
+    {
+    }
+
+    internal EvidenceSession(
+        InventorySnapshot inventory,
+        DateTimeOffset? startedAtUtc,
+        SanitizedObservationStore observations)
     {
         ArgumentNullException.ThrowIfNull(inventory);
+        ArgumentNullException.ThrowIfNull(observations);
         Inventory = InventorySanitizer.Sanitize(inventory);
         StartedAtUtc = startedAtUtc ?? DateTimeOffset.UtcNow;
+        _observations = observations;
     }
 
     public int SpecialKeyProbeCount { get { lock (_sync) return _specialKeyProbes.Count; } }
@@ -33,31 +42,36 @@ public sealed class EvidenceSession : IDisposable
 
     public int ObservationCount { get { lock (_sync) return _observations.Count; } }
 
+    public EvidenceStorageFailure? StorageFailure { get { lock (_sync) return _observations.Failure; } }
+
     public InventorySnapshot Inventory { get; }
 
     public DateTimeOffset StartedAtUtc { get; }
 
     // A growing queue-loss counter must not consume one marker per poll.
+    // A guided starting boundary opens a new segment so later loss retains
+    // a timestamp inside its own action window. Counts remain cumulative.
     // Replacement retains the first-loss timestamp and recording boundary.
-    public EvidenceAddResult RecordObserverDroppedEvents(double relativeMilliseconds, int recordingNumber, int droppedEvents)
+    public EvidenceAddResult RecordObserverDroppedEvents(double relativeMilliseconds, int recordingNumber, int droppedEvents, int segmentNumber = 0)
     {
         lock (_sync)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            if (!double.IsFinite(relativeMilliseconds) || relativeMilliseconds < 0 || recordingNumber < 1 || droppedEvents < 1)
+            if (!double.IsFinite(relativeMilliseconds) || relativeMilliseconds < 0 || recordingNumber < 1 || droppedEvents < 1 || segmentNumber < 0)
             {
                 _rejectedMarkers++;
                 return EvidenceAddResult.RejectedInvalid;
             }
+            var key = (recordingNumber, segmentNumber);
             var value = $"count-{droppedEvents}";
-            if (_dropMarkerIndices.TryGetValue(recordingNumber, out var index))
+            if (_dropMarkerIndices.TryGetValue(key, out var index))
             {
                 _markers[index] = _markers[index] with { Value = value };
                 return EvidenceAddResult.Added;
             }
             var result = AddMarker(new EvidenceMarker(relativeMilliseconds, EvidenceMarkerKind.Failure,
                 "observer", "Observer queue dropped events", EvidenceProvenance.Observer, value));
-            if (result == EvidenceAddResult.Added) _dropMarkerIndices.Add(recordingNumber, _markers.Count - 1);
+            if (result == EvidenceAddResult.Added) _dropMarkerIndices.Add(key, _markers.Count - 1);
             return result;
         }
     }
@@ -106,10 +120,10 @@ public sealed class EvidenceSession : IDisposable
         lock (_sync)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            if (_observations.Count >= EvidenceLimits.MaxObservations)
+            if (_observations.Failure is not null)
             {
                 _rejectedObservations++;
-                return EvidenceAddResult.RejectedLimit;
+                return EvidenceAddResult.RejectedStorage;
             }
 
             if (!IsValidObservation(observation))
@@ -138,18 +152,13 @@ public sealed class EvidenceSession : IDisposable
                 {
                     disposition = PayloadDisposition.ExcludedSensitive;
                 }
-                else if (_payloadBytes <= EvidenceLimits.MaxTotalPayloadBytes - observation.Buffer.Length)
-                {
-                    payloadHex = projection.PayloadHex;
-                    _payloadBytes += observation.Buffer.Length;
-                }
                 else
                 {
-                    disposition = PayloadDisposition.RedactedOverLimit;
+                    payloadHex = projection.PayloadHex;
                 }
             }
 
-            _observations.Add(new SanitizedControlObservation(
+            var sanitized = new SanitizedControlObservation(
                 observation.OperationId,
                 observation.RelativeMilliseconds,
                 observation.Source,
@@ -180,7 +189,13 @@ public sealed class EvidenceSession : IDisposable
                 SemanticResponse = projection.SemanticResponse,
                 PayloadComparison = scoped && observation.Buffer.Length <= EvidenceLimits.MaxPayloadBytesPerObservation
                     ? ComparePayload(observation) : null,
-            });
+            };
+            if (!_observations.TryAppend(sanitized))
+            {
+                _rejectedObservations++;
+                return EvidenceAddResult.RejectedStorage;
+            }
+
             return disposition == observation.PayloadDisposition
                 ? EvidenceAddResult.Added
                 : EvidenceAddResult.AddedPayloadRedacted;
@@ -248,12 +263,13 @@ public sealed class EvidenceSession : IDisposable
     {
         lock (_sync)
         {
+            ObjectDisposedException.ThrowIf(_disposed, this);
             return new EvidenceSessionSnapshot(
                 EvidenceSessionSnapshot.CurrentSchemaVersion,
                 StartedAtUtc,
                 Inventory,
                 EvidenceSessionSnapshot.Freeze(_markers),
-                EvidenceSessionSnapshot.Freeze(_observations),
+                _observations.Snapshot(),
                 EvidenceSessionSnapshot.Freeze(_coverage.Values.OrderBy(static item => item.ActivityId, StringComparer.Ordinal)),
                 _rejectedMarkers,
                 _rejectedObservations,
@@ -261,6 +277,7 @@ public sealed class EvidenceSession : IDisposable
             {
                 SpecialKeyObservations = EvidenceSessionSnapshot.Freeze(_specialKeys),
                 SpecialKeyProbes = EvidenceSessionSnapshot.Freeze(_specialKeyProbes),
+                StorageFailure = _observations.Failure,
             };
         }
     }
@@ -361,6 +378,7 @@ public sealed class EvidenceSession : IDisposable
             }
 
             _previousBuffers.Clear();
+            _observations.Dispose();
         }
     }
 

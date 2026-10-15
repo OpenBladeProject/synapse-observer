@@ -73,7 +73,7 @@ and records your action markers. Recordings last up to ten minutes. Keep this
 window open to record more settings after stopping. If cleanup cannot be
 confirmed, the app asks you to restart Synapse before another recording.
 
-The app shows how much space remains in the current ZIP. When it fills, recording stops. Restore any unfinished setting, then choose **Save ZIP and continue…** to record more settings in a new part. Keep and submit all parts together. If you cannot restore the setting yet, choose **Save partial ZIP only…**.
+The app saves sanitized reports locally while you record. Busy lighting effects do not fill a fixed report allowance. Finish your setting checks, stop recording, then save one evidence ZIP. If local storage fails, restore any unfinished setting and save the partial evidence to another location.
 
 Wait for **Syncing Profiles** to finish before changing or restoring another
 setting. If Synapse stays stuck, stop recording and save the partial ZIP. Restore

@@ -10,12 +10,12 @@
   check from an interrupted probe
   ([#13](https://github.com/OpenBladeProject/synapse-observer/pull/13)).
 
-- Stop recording when a ZIP fills and offer **Save ZIP and continue…** in the
-  same window. Preserve interrupted-setting reminders and earlier ZIPs, keep
-  each part within the existing evidence bounds, link saved parts to their
-  collection, and label prior checklist progress without copying completed
-  coverage into the new part. Offer the same recovery at key-check limits and
-  retain queue-loss totals without filling the guide with repeated notices
+- Stream sanitized control reports to local disk and export one ZIP without
+  the previous observation, retained-payload, or JSON-entry size ceilings.
+  Keep memory bounded during recording and export, preserve late setting
+  changes and responses, and allow partial export after a storage failure.
+  Keep optional key-check limits separate from control recording and retain
+  queue-loss totals within each guided action window
   ([#13](https://github.com/OpenBladeProject/synapse-observer/pull/13)).
 
 ## [0.2.8] - 2026-10-15

@@ -20,6 +20,11 @@ public sealed class ReaderFailureRecoveryTests
         await Run(model.MarkCommand);
         var late = Event(2);
         var observer = new OwnedObserver { ThrowFirstPoll = true, GateStop = true, Failure = failure, Events = [late] };
+        EvidenceSessionSnapshot? finalSnapshot = null;
+        model.PropertyChanged += (_, _) =>
+        {
+            if (!model.IsRecording && !model.IsBusy) finalSnapshot ??= model.Evidence;
+        };
         model.SetOwnedTestObserver(observer, [Candidate], startPump: true);
         await observer.StopEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.True(model.IsBusy);
@@ -37,8 +42,9 @@ public sealed class ReaderFailureRecoveryTests
         Assert.False(model.IsRecording);
         Assert.Contains("partial evidence", model.Status);
         Assert.Contains("Restore Silent", model.Status);
-        Assert.Single(model.Evidence!.Observations);
-        Assert.Single(model.Evidence.Markers, marker => marker.Kind == EvidenceMarkerKind.RecordingStopped);
+        using var evidence = Assert.IsType<EvidenceSessionSnapshot>(finalSnapshot);
+        Assert.Single(evidence.Observations);
+        Assert.Single(evidence.Markers, marker => marker.Kind == EvidenceMarkerKind.RecordingStopped);
         Assert.All(late.RequestBytes, value => Assert.Equal((byte)0, value));
         Assert.Contains("Restart Synapse", model.RecorderStatus);
         Assert.Contains("restart Synapse", model.Status);

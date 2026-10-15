@@ -25,7 +25,7 @@ public static class EvidenceBundleWriter
         Converters = { new JsonStringEnumConverter() },
     };
 
-    public static Task WriteAsync(
+    public static async Task WriteAsync(
         EvidenceSession session,
         string destinationPath,
         CancellationToken cancellationToken = default,
@@ -34,7 +34,8 @@ public static class EvidenceBundleWriter
         ArgumentNullException.ThrowIfNull(session);
         cancellationToken.ThrowIfCancellationRequested();
         // Freeze before returning to the caller; no worker reads the mutable session.
-        return WriteSnapshotAsync(session.Snapshot(), destinationPath, cancellationToken, overwrite);
+        using var snapshot = session.Snapshot();
+        await WriteSnapshotAsync(snapshot, destinationPath, cancellationToken, overwrite).ConfigureAwait(false);
     }
 
     internal static async Task WriteSnapshotAsync(
@@ -52,8 +53,10 @@ public static class EvidenceBundleWriter
             throw new DirectoryNotFoundException("The selected export directory does not exist.");
         }
 
-        var entries = await Task.Run(() => PrepareEntries(snapshot, cancellationToken), cancellationToken)
+        using var projections = new ExportProjectionScope(cancellationToken, destinationDirectory);
+        var drafts = await Task.Run(() => ContributionDraftBuilder.CreateDrafts(snapshot, cancellationToken), cancellationToken)
             .ConfigureAwait(false);
+        var manifest = CreateManifest(snapshot);
 
         var temporaryPath = Path.Combine(
             destinationDirectory,
@@ -73,10 +76,11 @@ public static class EvidenceBundleWriter
                 temporaryCreated = true;
                 using (var archive = new ZipArchive(stream, ZipArchiveMode.Create, leaveOpen: true, Encoding.UTF8))
                 {
-                    foreach (var entry in entries)
-                    {
-                        await WriteEntryAsync(archive, entry.Name, entry.Bytes, cancellationToken).ConfigureAwait(false);
-                    }
+                    await WriteJsonEntryAsync(archive, "manifest.json", manifest, JsonOptions, cancellationToken).ConfigureAwait(false);
+                    await WriteJsonEntryAsync(archive, "coverage-draft.json", drafts.Coverage, ContributionJsonOptions, cancellationToken).ConfigureAwait(false);
+                    await WriteJsonEntryAsync(archive, "annotation-draft.json", drafts.Annotation, ContributionJsonOptions, cancellationToken).ConfigureAwait(false);
+                    await WriteJsonEntryAsync(archive, "quality-receipt.json", drafts.Quality, ContributionJsonOptions, cancellationToken).ConfigureAwait(false);
+                    await WriteEntryAsync(archive, "README.txt", Encoding.UTF8.GetBytes(CreateReadme(snapshot, drafts.Quality)), cancellationToken).ConfigureAwait(false);
                 }
 
                 await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
@@ -96,11 +100,8 @@ public static class EvidenceBundleWriter
         }
     }
 
-    private static (string Name, byte[] Bytes)[] PrepareEntries(
-        EvidenceSessionSnapshot snapshot, CancellationToken cancellationToken)
-    {
-        var drafts = ContributionDraftBuilder.CreateDrafts(snapshot, cancellationToken);
-        var manifest = new EvidenceBundleManifest(
+    private static EvidenceBundleManifest CreateManifest(EvidenceSessionSnapshot snapshot) =>
+        new EvidenceBundleManifest(
             "synapse-observer.bundle.v2",
             DateTimeOffset.UtcNow,
             GetCollectorBuild(),
@@ -114,25 +115,13 @@ public static class EvidenceBundleWriter
                 "README.txt",
             ],
             snapshot);
-        var json = JsonSerializer.SerializeToUtf8Bytes(manifest, JsonOptions);
-        cancellationToken.ThrowIfCancellationRequested();
-        var coverageJson = JsonSerializer.SerializeToUtf8Bytes(drafts.Coverage, ContributionJsonOptions);
-        cancellationToken.ThrowIfCancellationRequested();
-        var annotationJson = JsonSerializer.SerializeToUtf8Bytes(drafts.Annotation, ContributionJsonOptions);
-        cancellationToken.ThrowIfCancellationRequested();
-        var qualityJson = JsonSerializer.SerializeToUtf8Bytes(drafts.Quality, ContributionJsonOptions);
-        cancellationToken.ThrowIfCancellationRequested();
-        if (json.Length > EvidenceLimits.MaxBundleJsonBytes
-            || coverageJson.Length > EvidenceLimits.MaxBundleJsonBytes
-            || annotationJson.Length > EvidenceLimits.MaxBundleJsonBytes
-            || qualityJson.Length > EvidenceLimits.MaxBundleJsonBytes)
-        {
-            throw new InvalidOperationException("An evidence bundle JSON entry exceeds the documented export bound.");
-        }
 
-        return [("manifest.json", json), ("coverage-draft.json", coverageJson),
-            ("annotation-draft.json", annotationJson), ("quality-receipt.json", qualityJson),
-            ("README.txt", Encoding.UTF8.GetBytes(CreateReadme(snapshot, drafts.Quality)))];
+    private static async Task WriteJsonEntryAsync<T>(ZipArchive archive, string name,
+        T content, JsonSerializerOptions options, CancellationToken cancellationToken)
+    {
+        var entry = archive.CreateEntry(name, CompressionLevel.Optimal);
+        await using var entryStream = entry.Open();
+        await JsonSerializer.SerializeAsync(entryStream, content, options, cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task WriteEntryAsync(
