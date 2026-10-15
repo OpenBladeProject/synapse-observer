@@ -1,7 +1,8 @@
-# Prototype validation
+# Validation record
 
-The implementation is a development prototype. Synthetic checks and the live
-trials below do not establish complete Synapse coverage or all-model compatibility.
+Each check below applies to its recorded source and conditions. Synthetic checks
+and individual live trials do not establish complete Synapse coverage or
+all-model compatibility.
 
 ## Completed locally
 
@@ -228,7 +229,7 @@ runs both unchanged native owned-process fixtures. No new live attachment,
 setting change, input recording, or physical-model validation occurred. Package
 revision and hashes remain in build-manifest.json.
 
-## Pending before public release
+## Remaining coverage limits
 
 - Typed setting-change response payloads: the observed returned bodies remain
   metadata-only under the reviewed privacy grammar.
@@ -236,5 +237,102 @@ revision and hashes remain in build-manifest.json.
 - Security-software behavior with the intended signed release build.
 - Pending asynchronous I/O completion remains outside observer coverage.
 
-No driver installation, sleep/resume test, firmware-write validation, or public
-release is claimed. This records passive user-mode calls, not firmware readback.
+These checks do not include driver installation, sleep/resume testing, or
+firmware-write validation. The observer records passive user-mode calls, not
+firmware readback. Version 0.2.7 was published on 2026-10-15; its released-build
+checks are recorded below.
+
+## Released v0.2.7 inventory export, 2026-10-15
+
+The executable was freshly downloaded from the published GitHub release rather
+than rebuilt from current source. The release tag and embedded build manifest
+both identify source `476de1e47f563c650aa3828c694b2a0be49d48a0`.
+
+- Release ZIP SHA-256:
+  `7E84B1F06C1040DB5D7CEA664B1BEDD330CE2098898D0CE4DD872D5ED0F4B681`.
+- Released executable SHA-256:
+  `428ECBAC88DEBA47ED34CCF427F4B21B4D2AD537ACE710549EAC07C4A8534E2A`.
+- Local inventory ZIP SHA-256:
+  `3B2A0A57A4C711258BDF04B3E162762A1D64409CAED417CC849CE3D4FDD6DC64`.
+
+The released executable's read-only inventory export completed successfully.
+Its ZIP has the five expected entries: manifest.json, coverage-draft.json,
+annotation-draft.json, quality-receipt.json, and README.txt. Build identity,
+schemas, and cross-file counts reconcile. Of 170 checklist leaves, 13 contain
+captured inventory facts and 157 remain NotInvestigated. There are no action
+windows, control observations, special-key observations, or rejected records.
+All query, setter, and production-admission claims remain false.
+
+On this RZ09-0581, the export groups ten sanitized HID collections under one
+physical laptop root, including distinct 91-byte and 375-byte feature
+collections. It includes both Windows product-identity registry views, HID
+report geometry and capability counts, six driver ancestry records, signed/hash
+Synapse provenance, and Windows, CPU, GPU, display, and brightness information.
+This is useful for choosing the exact candidate interfaces. It supplies neither
+command semantics nor a physical keyboard-to-lighting map.
+
+The quality receipt contains 13 inventory gap records, representing eight
+distinct limits rather than 13 missing inventory sections. Display enumeration
+reached its 128-unique-mode bound. Windows returned no ACPI thermal zones or
+matching LampArray. EC/MCU queries and raw EDID were deliberately skipped;
+LampArray current-frame and control-availability data and VRR capability were
+unavailable from the implemented sources. An absent Windows source does not
+establish that the laptop lacks the corresponding hardware feature.
+
+This inventory export is not a complete support submission. A contributor still
+needs to record the relevant Synapse changes and prompted keys, and supply
+requested layout or adapter details. Unrecognized command bodies can require a
+reviewed privacy projection and a focused follow-up recording. User restoration
+markers and successful API calls remain separate from firmware readback.
+
+## Released v0.2.7 live performance export, 2026-10-15
+
+The same downloaded executable completed the GUI workflow on the RZ09-0581,
+BIOS 4.01, using the installed Razer-signed Synapse 4.0.827.114 engine and HID
+module. The GUI displays v0.2.7 and the exact release source in its version
+badge description. OpenBlade's service and processes were absent before each
+Synapse setting change.
+
+Synapse displayed Balanced and Auto (Default) fans before recording. The guide
+recorded Balanced as the starting value, Silent after the Synapse change, and
+Balanced after restoration. Synapse visibly confirmed both transitions, and
+Auto fans remained selected. All state choices used the dropdowns. No fan,
+battery, lighting, or key-probe action was performed. The existing lighting
+traffic was observed incidentally, without changing its effect.
+
+The recording lasted about 101.58 seconds. Stop completed and the GUI reported
+that hooks had stopped; the inert DLL remains resident until Synapse exits.
+Synapse remained responsive. No firmware readback or collector-issued device
+command is claimed.
+
+Local live ZIP SHA-256:
+`E2906C9C5AC9742087D70F8461742A57026FB77431EF1BE92CBFEBA47AC06A91`.
+
+The saved ZIP has the same five-entry schema and exact release build identity.
+Its 32 successful calls produce 38 observations, including six returned buffers.
+There are zero failed calls, reported recording gaps, or rejected records. One
+complete action window retains the starting, changed, and restoration markers.
+Three incidental observations lie outside that window and are reported as such.
+
+Twenty-six reports retain complete reviewed bytes: four 91-byte thermal setter
+requests, two adapter-power query requests, and twenty 375-byte matrix frames.
+The thermal requests contain numeric mode 5 during the Silent change and 0
+during restoration. Those are observed values, not newly admitted commands.
+Six GET_FEATURE input bodies and all six completed 90-byte returned bodies
+remain metadata-only. Response capacity 91, returned count 90, API status,
+completion time, and comparison metadata remain distinguishable from payload
+retention. This export therefore supplies useful setter evidence but cannot
+establish response semantics, getter behavior, or firmware readback.
+
+Fourteen of 170 support-checklist leaves are Captured; 156 remain
+NotInvestigated. The remaining forty guided activities are still Pending.
+The counts, retained byte lengths, redacted-body omissions, action associations,
+and false admission/readback claims pass focused assertions against the actual
+ZIP. Checks found no known local-path, account, device-instance, or serial-field
+sentinels in its exported text. This check is limited to those exclusions and
+the schema's reviewed projections.
+
+The collection and export workflow passes for this performance action. It does
+not prove that one ZIP contains everything needed for full support, especially
+while response bodies are withheld and the other feature actions remain
+unrecorded. Raw and exported evidence remain local and uncommitted.

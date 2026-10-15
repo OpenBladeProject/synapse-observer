@@ -22,9 +22,11 @@ useful. Do not infer a laptop lacks a capability from an unavailable recording.
 Feature reports can have unfamiliar lengths and command bodies. Their timing,
 API, selected interface, status, and shape stay in the evidence. Unknown bodies
 are metadata-only until a privacy review can define a safe projection. Complete
-91-byte envelopes matching the reviewed numeric grammar may include bytes;
-91 bytes is an export privacy rule, not an attachment requirement. A maintainer
-may need a focused follow-up when a new command needs more than this metadata.
+reports matching a reviewed privacy grammar may include bytes: 91-byte control
+envelopes, 375-byte matrix frames, and qualifying completed 90-byte bare
+responses. These shapes are export privacy rules, not attachment requirements.
+A maintainer may need a focused follow-up when a new command needs more than
+this metadata.
 
 The observer follows HID feature APIs only. Controls sent through other driver
 APIs or direct native syscalls are outside its coverage. Up to eight feature
@@ -32,8 +34,11 @@ collections on one physical laptop and bounded 4096-byte reports are supported;
 ambiguous roots or inaccessible descriptors leave a partial inventory bundle.
 It does not silently choose another device or weaken identity checks.
 
-The live trial so far covers one Blade 16 RZ09-0581 on the reviewed Synapse build.
-A ten-second idle session observed a completed 375-byte HidD_SetFeature call and
-confirmed observer stop. Its unfamiliar body was withheld. No setting was
-changed by the collector. Other models and setting changes still need contributor
-trials; see [validation status](../VALIDATION.md).
+Live trials cover one Blade 16 RZ09-0581. The released v0.2.7 GUI recorded
+Balanced to Silent and back to Balanced through Synapse, with Automatic fans
+retained. The ZIP preserves four thermal setter requests, two adapter-power
+query requests, and twenty incidental matrix frames. Six completed response
+bodies remain redacted, so this trial does not establish response semantics or
+firmware readback. The observer stopped its hooks without a reported recording
+gap. Other models and the remaining guided features still need contributor
+trials; see the exact sources and results in the [validation record](../VALIDATION.md).
