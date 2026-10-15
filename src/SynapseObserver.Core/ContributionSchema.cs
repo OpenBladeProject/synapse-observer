@@ -60,7 +60,10 @@ public sealed record ContributionMarkerDraft(
     EvidenceMarkerKind Kind,
     EvidenceProvenance Provenance,
     string Label,
-    string? Value);
+    string? Value)
+{
+    public PowerSourceKind? PowerSourceAtMarker { get; init; }
+}
 
 public sealed record ContributionObservationDraft(
     ContributionObservationLayer Layer,
@@ -84,7 +87,10 @@ public sealed record ContributionActionWindowDraft(
     bool CompleteUserReportedSequence,
     IReadOnlyList<ContributionMarkerDraft> Markers,
     IReadOnlyList<ContributionObservationDraft> Observations,
-    string? Gap);
+    string? Gap)
+{
+    public PowerSourceKind PowerSourceAtAction { get; init; } = PowerSourceKind.Unknown;
+}
 
 public sealed record ContributionSpecialKeyDraft(
     ContributionObservationLayer Layer,

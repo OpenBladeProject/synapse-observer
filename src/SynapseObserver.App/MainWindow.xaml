@@ -28,14 +28,6 @@
           </StackPanel>
         </Border>
         <TextBlock Text="{Binding DeviceSummary}" Foreground="{StaticResource MutedTextBrush}" Margin="0,0,0,12" Visibility="{Binding HasInventory, Converter={StaticResource VisibleWhenTrue}}" />
-        <Border x:Name="ExportCard" Style="{StaticResource Card}" Visibility="{Binding ShowExport, Converter={StaticResource VisibleWhenTrue}}">
-          <StackPanel>
-            <TextBlock Text="Save your evidence" FontSize="17" FontWeight="SemiBold" />
-            <TextBlock Text="{Binding ExportSummary}" Foreground="{StaticResource MutedTextBrush}" Margin="0,10,0,12" />
-            <Button x:Name="SaveEvidenceButton" Content="Save evidence ZIP…" Command="{Binding SaveCommand}" HorizontalAlignment="Left" Style="{StaticResource PrimaryButton}" />
-            <TextBlock Text="Attach the saved ZIP to your support request. Nothing is uploaded automatically." Foreground="{StaticResource MutedTextBrush}" Margin="0,12,0,0" FontSize="12" />
-          </StackPanel>
-        </Border>
         <Border Style="{StaticResource Card}" Visibility="{Binding HasInventory, Converter={StaticResource VisibleWhenTrue}}">
           <StackPanel>
             <TextBlock Text="Record Synapse changes" FontSize="17" FontWeight="SemiBold" />
@@ -90,6 +82,15 @@
               <WrapPanel><Button Content="Check key for 5 seconds" Command="{Binding ProbeSpecialKeyCommand}" Style="{StaticResource PrimaryButton}" /><Button Content="Cancel key check" Command="{Binding CancelSpecialKeyProbeCommand}" Visibility="{Binding IsProbingSpecialKey, Converter={StaticResource VisibleWhenTrue}}" /></WrapPanel>
             </StackPanel>
           </Expander>
+        </Border>
+        <Border x:Name="ExportCard" Style="{StaticResource Card}" Visibility="{Binding ShowExport, Converter={StaticResource VisibleWhenTrue}}">
+          <StackPanel>
+            <TextBlock Text="Review your collection" FontSize="17" FontWeight="SemiBold" />
+            <TextBlock Text="{Binding ReviewSummary}" Margin="0,10,0,0" />
+            <Expander Header="What is missing?" Margin="0,8,0,12"><TextBlock Text="{Binding ReviewNotes}" Foreground="{StaticResource MutedTextBrush}" FontSize="12" Margin="0,8,0,0" /></Expander>
+            <Button x:Name="SaveEvidenceButton" Content="Save evidence ZIP…" Command="{Binding SaveCommand}" HorizontalAlignment="Left" Style="{StaticResource PrimaryButton}" />
+            <TextBlock Text="Attach the saved ZIP to your support request. Nothing is uploaded automatically." Foreground="{StaticResource MutedTextBrush}" Margin="0,12,0,0" FontSize="12" />
+          </StackPanel>
         </Border>
       </StackPanel>
     </ScrollViewer>

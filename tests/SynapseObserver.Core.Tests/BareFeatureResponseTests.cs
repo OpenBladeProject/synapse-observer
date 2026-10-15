@@ -161,6 +161,66 @@ public sealed class BareFeatureResponseTests
         Assert.Null(stored.HeaderHints.FeatureReportId);
     }
 
+    [Fact]
+    public void AddObservation_AmbiguousNinetyByteResponse_DiagnosesBothLayoutsWithoutExposingValues()
+    {
+        var prefixed = FeatureReportTestData.Create(
+            0x0D, 0x02, [0x01, 0x01, 0x05, 0x00], ObservationDirection.Output)[..90];
+        var session = SyntheticPreview.CreateSession();
+
+        Assert.Equal(EvidenceAddResult.AddedPayloadRedacted,
+            session.AddObservation(CreateObservation(prefixed)));
+
+        var stored = Assert.Single(session.Snapshot().Observations);
+        Assert.Null(stored.PayloadHex);
+        Assert.Null(stored.HeaderHints);
+        var diagnostics = Assert.IsType<FeatureResponseStructureDiagnostics>(
+            stored.ResponseStructureDiagnostics);
+        Assert.False(diagnostics.BareLogicalPacket.MatchesAvailableBytes);
+        Assert.NotEmpty(diagnostics.BareLogicalPacket.Failures);
+        Assert.Equal(FeatureResponseCompleteness.Complete,
+            diagnostics.BareLogicalPacket.Completeness);
+        Assert.True(diagnostics.ReportIdPrefixedPacket.MatchesAvailableBytes);
+        Assert.Empty(diagnostics.ReportIdPrefixedPacket.Failures);
+        Assert.Equal(FeatureResponseCompleteness.MissingFinalPadding,
+            diagnostics.ReportIdPrefixedPacket.Completeness);
+    }
+
+    [Fact]
+    public void AddObservation_BareNinetyByteResponse_DiagnosesBareLayout()
+    {
+        var session = SyntheticPreview.CreateSession();
+
+        Assert.Equal(EvidenceAddResult.Added,
+            session.AddObservation(CreateObservation(CreateThermalResponse())));
+
+        var stored = Assert.Single(session.Snapshot().Observations);
+        var diagnostics = Assert.IsType<FeatureResponseStructureDiagnostics>(
+            stored.ResponseStructureDiagnostics);
+        Assert.True(diagnostics.BareLogicalPacket.MatchesAvailableBytes);
+        Assert.Empty(diagnostics.BareLogicalPacket.Failures);
+        Assert.False(diagnostics.ReportIdPrefixedPacket.MatchesAvailableBytes);
+        Assert.NotEmpty(diagnostics.ReportIdPrefixedPacket.Failures);
+    }
+
+    [Fact]
+    public void AddObservation_AmbiguousResponse_ReportsOnlyFixedInvariantFailures()
+    {
+        var prefixed = FeatureReportTestData.Create(
+            0x0D, 0x02, [0x01, 0x01, 0x05, 0x00], ObservationDirection.Output)[..90];
+        prefixed[3] = 1;
+        var session = SyntheticPreview.CreateSession();
+
+        session.AddObservation(CreateObservation(prefixed));
+
+        var diagnostics = Assert.IsType<FeatureResponseStructureDiagnostics>(
+            Assert.Single(session.Snapshot().Observations).ResponseStructureDiagnostics);
+        Assert.Contains(FeatureResponseInvariantFailure.ReservedBytesNonzero,
+            diagnostics.ReportIdPrefixedPacket.Failures);
+        Assert.Contains(FeatureResponseInvariantFailure.ChecksumMismatch,
+            diagnostics.ReportIdPrefixedPacket.Failures);
+    }
+
     [Theory]
     [InlineData(null)]
     [InlineData((byte)0x07)]

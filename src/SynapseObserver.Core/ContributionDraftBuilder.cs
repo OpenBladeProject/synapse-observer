@@ -150,6 +150,7 @@ public static class ContributionDraftBuilder
         "lifecycle.serviceRestart",
         "lifecycle.sleepResume",
         "lifecycle.deviceReconnect",
+        "power.externalPower",
         "power.fullAc",
         "power.usbCPowerClasses",
         "power.battery",
@@ -380,7 +381,8 @@ public static class ContributionDraftBuilder
     }
 
     private static ContributionMarkerDraft CreateMarkerDraft(EvidenceMarker marker) => new(
-        marker.RelativeMilliseconds, marker.Kind, marker.Provenance, marker.Label, marker.Value);
+        marker.RelativeMilliseconds, marker.Kind, marker.Provenance, marker.Label, marker.Value)
+    { PowerSourceAtMarker = marker.PowerSourceAtMarker };
 
     private static ContributionActionWindowDraft CreateActionWindow(
         EvidenceSessionSnapshot snapshot,
@@ -422,7 +424,20 @@ public static class ContributionDraftBuilder
             complete,
             markerDrafts,
             observations,
-            gap);
+            gap)
+        {
+            PowerSourceAtAction = GetActionPowerSource(markers),
+        };
+    }
+
+    private static PowerSourceKind GetActionPowerSource(IReadOnlyList<EvidenceMarker> markers)
+    {
+        var samples = markers.Where(marker => marker.Kind is EvidenceMarkerKind.UserReportedStartingValue
+            or EvidenceMarkerKind.UserReportedTargetValue or EvidenceMarkerKind.UserActionConfirmed
+            or EvidenceMarkerKind.UserReportedRestoration)
+            .Select(marker => marker.PowerSourceAtMarker).ToArray();
+        return samples.Length > 0 && samples.All(source => source is PowerSourceKind.Ac or PowerSourceKind.Battery)
+            && samples.Distinct().Count() == 1 ? samples[0]!.Value : PowerSourceKind.Unknown;
     }
 
     private static bool HasOrderedUserSequence(IReadOnlyList<EvidenceMarker> markers)
@@ -456,6 +471,18 @@ public static class ContributionDraftBuilder
         InventorySnapshot inventory,
         Dictionary<string, List<ContributionEvidenceReference>> evidence)
     {
+        if (IsUsable(inventory.PowerSource.State))
+        {
+            var path = inventory.PowerSource.Value?.Source switch
+            {
+                PowerSourceKind.Ac => "power.externalPower",
+                PowerSourceKind.Battery => "power.battery",
+                _ => null,
+            };
+            if (path is not null) Add(evidence, path, ContributionObservationLayer.WindowsInventory,
+                "inventory.powerSource", "Windows reported battery or external power at inventory time; adapter class is unknown.");
+        }
+
         if (IsUsable(inventory.MachineIdentity.State)
             && inventory.MachineIdentity.Value.Any(static item => !string.IsNullOrWhiteSpace(item.ProductName)))
         {
@@ -553,7 +580,6 @@ public static class ContributionDraftBuilder
         var sourceByReference = snapshot.Observations
             .Select((item, index) => (Item: item, Reference: ObservationReference(item, index)))
             .ToDictionary(static item => item.Reference, static item => item.Item, StringComparer.Ordinal);
-        var powerSource = snapshot.Inventory.PowerSource.Value?.Source ?? PowerSourceKind.Unknown;
         foreach (var window in windows.Where(static item => item.CompleteUserReportedSequence))
         {
             foreach (var observation in window.Observations.Where(static item =>
@@ -566,7 +592,7 @@ public static class ContributionDraftBuilder
                 }
 
                 var summary = $"Reviewed {observation.ProjectionKind} report inside action {window.ActivityId}.";
-                foreach (var path in MapFeatureCapability(source, powerSource))
+                foreach (var path in MapFeatureCapability(source, window.PowerSourceAtAction))
                 {
                     Add(evidence, path, ContributionObservationLayer.UserModeFeatureApi, observation.ReferenceId, summary);
                 }
@@ -872,6 +898,21 @@ public static class ContributionDraftBuilder
                 "RangeNotCollected",
                 "Windows reported variable-refresh support but did not provide the panel's validated refresh range."));
         }
+
+        foreach (var view in new[] { "Registry64", "Registry32" })
+        {
+            var rows = snapshot.Inventory.MachineIdentity.Value.Where(item => item.RegistryView == view
+                && item.Source is MachineIdentitySource.BiosRegistry or MachineIdentitySource.SystemInformationRegistry).ToArray();
+            if (rows.Select(item => item.Source).Distinct().Count() != 2
+                || rows.Any(item => string.IsNullOrWhiteSpace(item.Manufacturer) || string.IsNullOrWhiteSpace(item.ProductName)))
+                gaps.Add(new($"inventory.machineIdentity.{view}", "IdentitySourcesIncomplete", "Both independent Windows identity sources could not be compared completely in this registry view."));
+            else if (rows.Select(item => item.Manufacturer).Distinct(StringComparer.Ordinal).Count() != 1
+                || rows.Select(item => item.ProductName).Distinct(StringComparer.Ordinal).Count() != 1)
+                gaps.Add(new($"inventory.machineIdentity.{view}", "IdentitySourcesDisagree", "Windows identity sources disagree on manufacturer or product; all collected values are preserved."));
+        }
+
+        foreach (var window in windows.Where(item => item.CompleteUserReportedSequence && item.PowerSourceAtAction == PowerSourceKind.Unknown))
+            gaps.Add(new($"action.{window.ActivityId}", "ActionPowerContextUnknown", "Action power samples were missing, unknown, or changed; performance evidence is not assigned to a power context."));
 
         foreach (var window in windows.Where(static item => item.Gap is not null))
         {

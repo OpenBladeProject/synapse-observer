@@ -107,3 +107,28 @@ families, unfamiliar numeric values are retained with
 length, checksum, padding, source and status checks still apply. Query input
 arguments must match the reviewed zero-valued shape. This permits new-model
 values to be investigated without pretending to understand or support them.
+
+## Additive collection provenance in 0.2.8
+
+Session v2 records may include `source` on machine identity rows, distinguishing
+`BiosRegistry` from `SystemInformationRegistry` within each registry view. The
+quality receipt reports missing or disagreeing sources; no canonical product
+is guessed from a disagreement.
+
+Action markers may include `powerSourceAtMarker`, sampled from Windows at that
+marker. Annotation windows expose `powerSourceAtAction` only when all setting
+markers carry the same known source. Missing, unknown, or changed samples leave
+power-specific performance coverage open. Windows external power does not
+establish barrel versus USB-C class or adapter wattage. Inventory power is
+separate evidence about the initial collection time.
+
+Completed 90-byte feature responses with capacity for 91 bytes may carry
+`responseStructureDiagnostics`. Fixed reason codes check both the bare-packet
+and report-ID-prefixed interpretations of the available bytes. A prefixed
+candidate explicitly lacks final padding. The diagnostics contain no opaque
+bytes or header values and do not change payload privacy or claim a decoded
+response. Consumers may ignore these optional fields.
+
+The app and README.txt share a collection review showing retained bodies,
+unfinished actions, omitted response contents, and remaining evidence items.
+A documented sequence describes user markers, not successful firmware readback.

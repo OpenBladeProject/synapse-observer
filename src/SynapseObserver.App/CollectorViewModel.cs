@@ -54,6 +54,27 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
     private string recorderStatus = "Device information is available even if recording cannot start.";
     private string collectionDetails = "The observer collects selected laptop feature calls. An observed response is labeled as a user-mode returned buffer, not firmware confirmation.";
     private string status = "Start with your laptop's device information.";
+    private EvidenceCollectionReview? collectionReview;
+    public string ReviewSummary => collectionReview?.Summary ?? string.Empty;
+    public string ReviewNotes => collectionReview is null ? string.Empty : string.Join("\n\n", collectionReview.Notes);
+
+    private async Task UpdateCollectionReviewAsync()
+    {
+        if (session is null) return;
+        var wasBusy = busy;
+        busy = true;
+        RefreshCommands();
+        try
+        {
+            var snapshot = session.Snapshot();
+            collectionReview = await Task.Run(() => EvidenceCollectionReview.Create(snapshot));
+        }
+        finally
+        {
+            busy = wasBusy;
+            RefreshCommands();
+        }
+    }
 
     public CollectorViewModel(bool preview)
     {
@@ -194,6 +215,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
             }
 
             await DiscoverRecorderAsync();
+            await UpdateCollectionReviewAsync();
             status = "Device information collected. You can save it now or add a recording.";
         }
         finally
@@ -306,50 +328,78 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
         Refresh();
     }
 
-    private Task MarkAsync()
+    internal Func<ValueTask<PowerSourceKind>>? ActionPowerSourceForTest { get; set; }
+
+    private async ValueTask<PowerSourceKind> ReadActionPowerSourceAsync()
     {
-        if (CurrentActivity.IsReadOnly)
+        if (ActionPowerSourceForTest is not null) return await ActionPowerSourceForTest();
+        if (preview) return PowerSourceKind.Ac;
+        try
         {
-            if (!Marker(EvidenceMarkerKind.UserReportedCurrentState, CurrentActivity.Id, "User reported current state or known behavior", EvidenceProvenance.UserReported, StartingEntry.Value)) return Task.CompletedTask;
-            SetCurrentCoverage(CoverageState.Completed, CoverageReason.None);
-            NextStep();
-            Refresh();
-            return Task.CompletedTask;
+            var result = await inventorySource.CollectPowerSourceAsync(CancellationToken.None);
+            return result.Value?.Source ?? PowerSourceKind.Unknown;
         }
-
-        if (stepPhase == 0)
+        catch (Exception ex) when (ex is not OutOfMemoryException and not StackOverflowException)
         {
-            startingSetting = StartingEntry.Value;
-            if (!Marker(EvidenceMarkerKind.UserReportedStartingValue, CurrentActivity.Id, "Starting setting reported", EvidenceProvenance.UserReported, startingSetting)) return Task.CompletedTask;
-            stepStartCount = observedCalls;
-            stepStartGaps = gaps;
-            stepPhase = 1;
+            return PowerSourceKind.Unknown;
         }
-        else if (stepPhase == 1)
-        {
-            if (!Marker(EvidenceMarkerKind.UserReportedTargetValue, CurrentActivity.Id, "Changed setting reported", EvidenceProvenance.UserReported, ChangedEntry.Value)) return Task.CompletedTask;
-            if (!Marker(EvidenceMarkerKind.UserActionConfirmed, CurrentActivity.Id, "User marked the setting change", EvidenceProvenance.UserReported)) return Task.CompletedTask;
-            stepPhase = 2;
-        }
-        else
-        {
-            if (!Marker(EvidenceMarkerKind.UserReportedRestoration, CurrentActivity.Id, "User reported restoration of starting setting", EvidenceProvenance.UserReported, startingSetting)) return Task.CompletedTask;
-            SetCurrentCoverage(observedCalls > stepStartCount && gaps == stepStartGaps ? CoverageState.Completed : CoverageState.CompletedWithGaps,
-                gaps > stepStartGaps ? CoverageReason.CaptureFailed : observedCalls <= stepStartCount ? CoverageReason.NoMatchingEvents : CoverageReason.None);
-            NextStep();
-        }
-
-        Refresh();
-        return Task.CompletedTask;
     }
 
-    private Task SkipAsync(bool unavailable)
+    private async Task MarkAsync()
     {
-        if (!Marker(EvidenceMarkerKind.ItemSkipped, CurrentActivity.Id, unavailable ? "User reported this item unavailable" : "User skipped this item", EvidenceProvenance.UserReported)) return Task.CompletedTask;
+        busy = true;
+        RefreshCommands();
+        try
+        {
+            var actionPower = await ReadActionPowerSourceAsync();
+            if (CurrentActivity.IsReadOnly)
+            {
+                if (!Marker(EvidenceMarkerKind.UserReportedCurrentState, CurrentActivity.Id, "User reported current state or known behavior", EvidenceProvenance.UserReported, StartingEntry.Value, actionPower)) return;
+                SetCurrentCoverage(CoverageState.Completed, CoverageReason.None);
+                NextStep();
+                if (!recording) await UpdateCollectionReviewAsync();
+                Refresh();
+                return;
+            }
+
+            if (stepPhase == 0)
+            {
+                startingSetting = StartingEntry.Value;
+                if (!Marker(EvidenceMarkerKind.UserReportedStartingValue, CurrentActivity.Id, "Starting setting reported", EvidenceProvenance.UserReported, startingSetting, actionPower)) return;
+                stepStartCount = observedCalls;
+                stepStartGaps = gaps;
+                stepPhase = 1;
+            }
+            else if (stepPhase == 1)
+            {
+                if (!Marker(EvidenceMarkerKind.UserReportedTargetValue, CurrentActivity.Id, "Changed setting reported", EvidenceProvenance.UserReported, ChangedEntry.Value, actionPower)) return;
+                if (!Marker(EvidenceMarkerKind.UserActionConfirmed, CurrentActivity.Id, "User marked the setting change", EvidenceProvenance.UserReported, powerSource: actionPower)) return;
+                stepPhase = 2;
+            }
+            else
+            {
+                if (!Marker(EvidenceMarkerKind.UserReportedRestoration, CurrentActivity.Id, "User reported restoration of starting setting", EvidenceProvenance.UserReported, startingSetting, actionPower)) return;
+                SetCurrentCoverage(observedCalls > stepStartCount && gaps == stepStartGaps ? CoverageState.Completed : CoverageState.CompletedWithGaps,
+                    gaps > stepStartGaps ? CoverageReason.CaptureFailed : observedCalls <= stepStartCount ? CoverageReason.NoMatchingEvents : CoverageReason.None);
+                NextStep();
+            }
+
+        }
+        finally
+        {
+            busy = false;
+            Refresh();
+        }
+    }
+
+    private async Task SkipAsync(bool unavailable)
+    {
+        if (!Marker(EvidenceMarkerKind.ItemSkipped, CurrentActivity.Id, unavailable ? "User reported this item unavailable" : "User skipped this item", EvidenceProvenance.UserReported)) return;
         SetCurrentCoverage(unavailable ? CoverageState.Unavailable : CoverageState.Skipped, CoverageReason.UserSkipped);
         NextStep();
+        if (!recording) await UpdateCollectionReviewAsync();
         Refresh();
-        return Task.CompletedTask;
+        return;
     }
 
     private void NextStep()
@@ -472,6 +522,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
             // Preserve the incomplete-restoration evidence and reminder, but
             // permit subsequent inventory-only reports after recording ends.
             ResetEntries();
+            await UpdateCollectionReviewAsync();
 
             Refresh();
         }
@@ -745,9 +796,10 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
         session?.Dispose();
     }
 
-    private bool Marker(EvidenceMarkerKind kind, string activity, string label, EvidenceProvenance provenance, string? value = null)
+    private bool Marker(EvidenceMarkerKind kind, string activity, string label, EvidenceProvenance provenance, string? value = null, PowerSourceKind? powerSource = null)
     {
-        var result = session?.AddMarker(new EvidenceMarker(RelativeMilliseconds, kind, activity, label, provenance, value));
+        var result = session?.AddMarker(new EvidenceMarker(RelativeMilliseconds, kind, activity, label, provenance, value)
+        { PowerSourceAtMarker = powerSource });
         if (result == EvidenceAddResult.RejectedInvalid)
         {
             throw new InvalidDataException("The marker was rejected. Use a short setting value without personal details or paths.");

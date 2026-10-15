@@ -31,7 +31,10 @@ public sealed record MachineIdentity(
     string? ProductName,
     string? SystemSku,
     string? BiosVersion,
-    string? BiosReleaseDate);
+    string? BiosReleaseDate)
+{
+    public MachineIdentitySource Source { get; init; }
+}
 
 public enum PowerSourceKind
 {
@@ -141,7 +144,11 @@ public sealed record EvidenceMarker(
     string ActivityId,
     string Label,
     EvidenceProvenance Provenance,
-    string? Value = null);
+    string? Value = null)
+{
+    // Sampled from Windows when this marker is recorded, not copied from inventory.
+    public PowerSourceKind? PowerSourceAtMarker { get; init; }
+}
 
 public enum ObservationSource
 {
@@ -235,6 +242,8 @@ public sealed record FeaturePayloadProjection(
 {
     public bool NumericMeaningUninterpreted { get; init; }
 
+    public FeatureResponseStructureDiagnostics? ResponseStructureDiagnostics { get; init; }
+
     public bool IncludesPayload => PayloadHex is not null;
 }
 
@@ -270,6 +279,8 @@ public sealed record SanitizedControlObservation(
     public bool NumericMeaningUninterpreted { get; init; }
 
     public bool ReturnedLengthUnknown { get; init; }
+
+    public FeatureResponseStructureDiagnostics? ResponseStructureDiagnostics { get; init; }
 
     public bool CompletePayloadRetained => PayloadHex is not null;
 }

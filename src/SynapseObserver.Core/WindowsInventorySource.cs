@@ -12,6 +12,9 @@ namespace SynapseObserver.Core;
 public sealed partial class WindowsInventorySource : IInventorySource
 {
     private const ushort RazerVendorId = 0x1532;
+    private const string BiosIdentityKey = @"HARDWARE\DESCRIPTION\System\BIOS";
+    private const string SystemInformationIdentityKey =
+        @"SYSTEM\CurrentControlSet\Control\SystemInformation";
     private const uint DigcfPresent = 0x00000002;
     private const uint DigcfDeviceInterface = 0x00000010;
     private const uint OpenExisting = 3;
@@ -25,53 +28,98 @@ public sealed partial class WindowsInventorySource : IInventorySource
 
     public ValueTask<SectionResult<IReadOnlyList<MachineIdentity>>> CollectMachineIdentityAsync(
         CancellationToken cancellationToken)
+        => ValueTask.FromResult(CollectMachineIdentity(
+            ReadMachineIdentitySource,
+            cancellationToken));
+
+    internal static SectionResult<IReadOnlyList<MachineIdentity>> CollectMachineIdentity(
+        Func<RegistryView, MachineIdentitySource, (MachineIdentity? Identity, bool Complete)> readSource,
+        CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(readSource);
         cancellationToken.ThrowIfCancellationRequested();
-        var identities = new List<MachineIdentity>(2);
+        var identities = new List<MachineIdentity>(4);
         var failures = 0;
 
         foreach (var view in new[] { RegistryView.Registry64, RegistryView.Registry32 })
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            try
+            foreach (var source in new[]
+                     {
+                         MachineIdentitySource.BiosRegistry,
+                         MachineIdentitySource.SystemInformationRegistry,
+                     })
             {
-                using var baseKey = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, view);
-                using var bios = baseKey.OpenSubKey(@"HARDWARE\DESCRIPTION\System\BIOS", writable: false);
-                if (bios is null)
+                cancellationToken.ThrowIfCancellationRequested();
+                try
+                {
+                    var result = readSource(view, source);
+                    if (result.Identity is not null)
+                    {
+                        identities.Add(result.Identity);
+                    }
+
+                    if (!result.Complete)
+                    {
+                        failures++;
+                    }
+                }
+                catch (Exception ex) when (ex is
+                    UnauthorizedAccessException or
+                    System.Security.SecurityException or
+                    IOException)
                 {
                     failures++;
-                    continue;
                 }
-
-                identities.Add(new MachineIdentity(
-                    view == RegistryView.Registry64 ? "Registry64" : "Registry32",
-                    ReadRegistryText(bios, "SystemManufacturer"),
-                    ReadRegistryText(bios, "SystemProductName"),
-                    ReadRegistryText(bios, "SystemSKU"),
-                    ReadRegistryText(bios, "BIOSVersion"),
-                    ReadRegistryText(bios, "BIOSReleaseDate")));
-            }
-            catch (Exception ex) when (ex is UnauthorizedAccessException or System.Security.SecurityException or IOException)
-            {
-                failures++;
             }
         }
 
         if (identities.Count == 0)
         {
-            return ValueTask.FromResult(SectionResult<IReadOnlyList<MachineIdentity>>.Unavailable(
+            return SectionResult<IReadOnlyList<MachineIdentity>>.Unavailable(
                 identities,
-                "Windows BIOS identity registry values were unavailable."));
+                "Windows identity registry values were unavailable.");
         }
 
         if (failures > 0)
         {
-            return ValueTask.FromResult(SectionResult<IReadOnlyList<MachineIdentity>>.Partial(
+            return SectionResult<IReadOnlyList<MachineIdentity>>.Partial(
                 identities,
-                "One Windows registry view was unavailable."));
+                "One or more Windows identity registry sources were unavailable.");
         }
 
-        return ValueTask.FromResult(SectionResult<IReadOnlyList<MachineIdentity>>.Collected(identities));
+        return SectionResult<IReadOnlyList<MachineIdentity>>.Collected(identities);
+    }
+
+    private static (MachineIdentity? Identity, bool Complete) ReadMachineIdentitySource(
+        RegistryView view,
+        MachineIdentitySource source)
+    {
+        using var baseKey = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, view);
+        string keyPath = source switch
+        {
+            MachineIdentitySource.BiosRegistry => BiosIdentityKey,
+            MachineIdentitySource.SystemInformationRegistry => SystemInformationIdentityKey,
+            _ => throw new ArgumentOutOfRangeException(nameof(source)),
+        };
+        using var key = baseKey.OpenSubKey(keyPath, writable: false);
+        if (key is null)
+        {
+            return (null, false);
+        }
+
+        string? manufacturer = ReadRegistryText(key, "SystemManufacturer");
+        string? productName = ReadRegistryText(key, "SystemProductName");
+        var identity = new MachineIdentity(
+            view == RegistryView.Registry64 ? "Registry64" : "Registry32",
+            manufacturer,
+            productName,
+            source == MachineIdentitySource.BiosRegistry ? ReadRegistryText(key, "SystemSKU") : null,
+            source == MachineIdentitySource.BiosRegistry ? ReadRegistryText(key, "BIOSVersion") : null,
+            source == MachineIdentitySource.BiosRegistry ? ReadRegistryText(key, "BIOSReleaseDate") : null)
+        {
+            Source = source,
+        };
+        return (identity, !string.IsNullOrWhiteSpace(manufacturer) && !string.IsNullOrWhiteSpace(productName));
     }
 
     public ValueTask<SectionResult<PowerSourceEvidence?>> CollectPowerSourceAsync(

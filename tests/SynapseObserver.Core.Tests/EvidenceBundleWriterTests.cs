@@ -103,7 +103,7 @@ public sealed class EvidenceBundleWriterTests
     {
         using var session = new EvidenceSession(SyntheticPreview.CreateInventory(), DateTimeOffset.UnixEpoch);
         session.AddMarker(new EvidenceMarker(1, EvidenceMarkerKind.UserReportedStartingValue,
-            "performance", "Starting value", EvidenceProvenance.UserReported, "Balanced"));
+            "performance", "Starting value", EvidenceProvenance.UserReported, "Balanced") { PowerSourceAtMarker = PowerSourceKind.Ac });
         session.AddObservation(new ControlObservation(
             "op-thermal",
             2,
@@ -123,11 +123,11 @@ public sealed class EvidenceBundleWriterTests
             PayloadDisposition.ProvenFeatureControl,
             2.1));
         session.AddMarker(new EvidenceMarker(3, EvidenceMarkerKind.UserReportedTargetValue,
-            "performance", "Changed value", EvidenceProvenance.UserReported, "Silent"));
+            "performance", "Changed value", EvidenceProvenance.UserReported, "Silent") { PowerSourceAtMarker = PowerSourceKind.Ac });
         session.AddMarker(new EvidenceMarker(4, EvidenceMarkerKind.UserActionConfirmed,
-            "performance", "Change marked", EvidenceProvenance.UserReported));
+            "performance", "Change marked", EvidenceProvenance.UserReported) { PowerSourceAtMarker = PowerSourceKind.Ac });
         session.AddMarker(new EvidenceMarker(5, EvidenceMarkerKind.UserReportedRestoration,
-            "performance", "Restored", EvidenceProvenance.UserReported, "Balanced"));
+            "performance", "Restored", EvidenceProvenance.UserReported, "Balanced") { PowerSourceAtMarker = PowerSourceKind.Ac });
 
         var draft = ContributionDraftBuilder.CreateCoverageDraft(session.Snapshot());
 
@@ -616,12 +616,12 @@ public sealed class EvidenceBundleWriterTests
     private static void AddCompleteMarkers(EvidenceSession session, string activity, double start, double end)
     {
         session.AddMarker(new EvidenceMarker(start, EvidenceMarkerKind.UserReportedStartingValue,
-            activity, "Start", EvidenceProvenance.UserReported, "Balanced"));
+            activity, "Start", EvidenceProvenance.UserReported, "Balanced") { PowerSourceAtMarker = PowerSourceKind.Ac });
         session.AddMarker(new EvidenceMarker(start + 1, EvidenceMarkerKind.UserReportedTargetValue,
-            activity, "Target", EvidenceProvenance.UserReported, "Silent"));
+            activity, "Target", EvidenceProvenance.UserReported, "Silent") { PowerSourceAtMarker = PowerSourceKind.Ac });
         session.AddMarker(new EvidenceMarker(end - 1, EvidenceMarkerKind.UserActionConfirmed,
-            activity, "Action", EvidenceProvenance.UserReported));
+            activity, "Action", EvidenceProvenance.UserReported) { PowerSourceAtMarker = PowerSourceKind.Ac });
         session.AddMarker(new EvidenceMarker(end, EvidenceMarkerKind.UserReportedRestoration,
-            activity, "Restore", EvidenceProvenance.UserReported, "Balanced"));
+            activity, "Restore", EvidenceProvenance.UserReported, "Balanced") { PowerSourceAtMarker = PowerSourceKind.Ac });
     }
 }

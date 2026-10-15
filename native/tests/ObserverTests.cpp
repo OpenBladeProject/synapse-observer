@@ -61,8 +61,10 @@ int main() {
     returnedOverride = 90;
     FakeIoctl(owned, GetCode, capacityBuffer, 1, capacityBuffer, 90, &bytes, nullptr);
     Check(Poll(e) && e.outputLength == 90 && e.returnedBytes == 90 && e.outputBufferCapacity == 90 && e.gap == Gap::None, "exact IOCTL output capacity retained");
+    capacityBuffer[89] = 0x5A;
+    capacityBuffer[90] = 0xC7;
     FakeIoctl(owned, GetCode, capacityBuffer, 1, capacityBuffer, 91, &bytes, nullptr);
-    Check(Poll(e) && e.outputLength == 90 && e.returnedBytes == 90 && e.outputBufferCapacity == 91 && e.gap == Gap::None, "IOCTL output capacity independent from returned bytes and input size");
+    Check(Poll(e) && e.outputLength == 90 && e.returnedBytes == 90 && e.outputBufferCapacity == 91 && e.output[89] == 0x5A && e.output[90] == 0 && e.gap == Gap::None, "IOCTL copies exactly returned bytes while retaining larger capacity");
     returnedOverride = 91;
     FakeIoctl(owned, GetCode, capacityBuffer, 1, capacityBuffer, 90, &bytes, nullptr);
     Check(Poll(e) && !e.outputLength && e.returnedBytes == 0 && e.outputBufferCapacity == 90 && e.gap == Gap::BufferTooLarge, "IOCTL return cannot exceed output capacity");
