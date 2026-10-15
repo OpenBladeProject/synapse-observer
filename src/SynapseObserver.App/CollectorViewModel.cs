@@ -33,6 +33,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
     private bool nativeFailureGapCounted;
     private bool malformedLossMarkerEmitted;
     private bool cleanupRequested;
+    private bool readerFaulted;
     private int gaps;
     private int droppedEvents;
     private int stepStartGaps;
@@ -284,9 +285,8 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
         {
             if (!preview)
             {
-                // Recheck the current process and selected laptop for every
-                // user-started recording, including reuse after a clean stop.
-                await DiscoverRecorderAsync();
+                // The backend performs fresh process, payload and device checks
+                // on every start. Reuse the UI candidate without another HID scan.
                 if (backendCandidate is null)
                 {
                     status = recorderStatus;
@@ -306,6 +306,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
             nativeFailureGapCounted = false;
             malformedLossMarkerEmitted = false;
             cleanupRequested = false;
+            readerFaulted = false;
             recordingStartGaps = gaps;
             recordingNumber++;
             recording = true;
@@ -476,6 +477,8 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
             }
             if (observer is not null)
             {
+                if (readerFaulted || stopFailure is not null || nativeStatus is not { Finished: true, Failure: 0 })
+                    observer.InvalidateReuse();
                 try
                 {
                     await observer.DisposeAsync();
@@ -484,6 +487,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
                 {
                     if (stopFailure is null) gaps++;
                     stopFailure ??= ex;
+                    observer.InvalidateReuse();
                 }
 
                 observer = null;
@@ -495,7 +499,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
             recording = false;
             stopping = false;
             busy = false;
-            var cleanStop = stopFailure is null
+            var cleanStop = !readerFaulted && stopFailure is null
                 && (nativeStatus is { Finished: true, Failure: 0 }
                     || preview && nativeStatus is null);
             if (!cleanStop)
@@ -511,7 +515,9 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
             }
 
             session?.AddMarker(new EvidenceMarker(RelativeMilliseconds, EvidenceMarkerKind.RecordingStopped, "session", "Recording stopped", EvidenceProvenance.Observer));
-            recorderStatus = nativeStatus?.Diagnostic ?? "Recording stopped. Gaps and user-reported restoration remain labeled in the evidence.";
+            recorderStatus = !cleanStop
+                ? "Recording cleanup was not fully verified. Restart Synapse normally before another recording."
+                : nativeStatus?.Diagnostic ?? "Recording stopped. Gaps and user-reported restoration remain labeled in the evidence.";
             if (nativeStatus is { Failure: not 0 }) CountNativeFailureGap();
             if (!cleanStop)
             {
@@ -568,6 +574,8 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
                     // Rejected slots have been released and valid events retained.
                     // The ring remains readable; keep one reader through stop so
                     // buffered events do not overflow its smaller shared ring.
+                    readerFaulted = true;
+                    observer?.InvalidateReuse();
                     observerEnded = true;
                     cleanupRequested = true;
                     if (!malformedLossMarkerEmitted)
@@ -619,6 +627,8 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
         catch (Exception ex) when (ex is not OutOfMemoryException and not StackOverflowException)
         {
+            readerFaulted = true;
+            observer?.InvalidateReuse();
             observerEnded = true;
             cleanupRequested = true;
             gaps++;
@@ -758,7 +768,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
         if (result is not (EvidenceAddResult.RejectedInvalid or EvidenceAddResult.RejectedLimit)) return;
         gaps++;
         retentionGapDetails = result == EvidenceAddResult.RejectedLimit
-            ? $"The session reached its {EvidenceLimits.MaxObservations} observation limit. Further observations are counted as gaps. Save this evidence, then reopen the collector to record more settings."
+            ? $"The session reached its {EvidenceLimits.MaxObservations} observation limit. Further observations are counted as gaps. Save this evidence, close the collector, restart Synapse normally, then reopen the collector to record more settings."
             : "An invalid observation could not be retained. Its rejection is counted as a recording gap in the evidence.";
     }
 
@@ -816,7 +826,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
         }
         if (result == EvidenceAddResult.RejectedLimit)
         {
-            retentionGapDetails = $"The session reached its {EvidenceLimits.MaxMarkers} action-marker limit. Further markers are counted as rejected in the ZIP. Stop and save this evidence, then reopen the collector to report more items.";
+            retentionGapDetails = $"The session reached its {EvidenceLimits.MaxMarkers} action-marker limit. Further markers are counted as rejected in the ZIP. Stop and save this evidence, close the collector, restart Synapse normally, then reopen the collector to report more items.";
             status = "This action could not be recorded because the session is full. Stop and save the evidence.";
             Refresh();
             return false;

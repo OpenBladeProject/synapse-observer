@@ -40,8 +40,10 @@ public sealed class ReaderFailureRecoveryTests
         Assert.Single(model.Evidence!.Observations);
         Assert.Single(model.Evidence.Markers, marker => marker.Kind == EvidenceMarkerKind.RecordingStopped);
         Assert.All(late.RequestBytes, value => Assert.Equal((byte)0, value));
-        if (failure != 0) Assert.Contains("not confirmed", model.RecorderStatus);
-        else Assert.DoesNotContain("restart Synapse", model.Status);
+        Assert.Contains("Restart Synapse", model.RecorderStatus);
+        Assert.Contains("restart Synapse", model.Status);
+        Assert.True(observer.Invalidations > 0);
+        Assert.False(model.AttachConsent);
     }
 
     [Fact]
@@ -58,6 +60,22 @@ public sealed class ReaderFailureRecoveryTests
         Assert.All(valid.RequestBytes, value => Assert.Equal((byte)0, value));
         Assert.Equal(1, observer.Stops);
         Assert.Equal(1, observer.Disposals);
+        Assert.True(observer.Invalidations > 0);
+        Assert.Contains("Restart Synapse", model.RecorderStatus);
+        Assert.False(model.AttachConsent);
+    }
+
+    [Fact]
+    public async Task DisposalFailureInvalidatesReuseEvenAfterCleanNativeStop()
+    {
+        var model = await Recording();
+        var observer = new OwnedObserver { ThrowDispose = true };
+        model.SetOwnedTestObserver(observer, [Candidate]);
+        await Run(model.StopCommand);
+        Assert.True(observer.Invalidations > 0);
+        Assert.Contains("Restart Synapse", model.RecorderStatus);
+        Assert.Contains("restart Synapse", model.Status);
+        Assert.False(model.AttachConsent);
     }
 
     [Fact]
@@ -124,6 +142,8 @@ public sealed class ReaderFailureRecoveryTests
         public int Dropped { get; set; }
         public int Stops { get; private set; }
         public int Disposals { get; private set; }
+        public int Invalidations { get; private set; }
+        public bool ThrowDispose { get; set; }
         public int MaximumConcurrentPolls { get; private set; }
         private int polls, activePolls;
         public TaskCompletionSource StopEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -152,6 +172,12 @@ public sealed class ReaderFailureRecoveryTests
             GateStop = false;
             return GetStatus();
         }
-        public ValueTask DisposeAsync() { Disposals++; return ValueTask.CompletedTask; }
+        public void InvalidateReuse() => Invalidations++;
+        public ValueTask DisposeAsync()
+        {
+            Disposals++;
+            if (ThrowDispose) throw new System.IO.IOException("Owned disposal failure");
+            return ValueTask.CompletedTask;
+        }
     }
 }

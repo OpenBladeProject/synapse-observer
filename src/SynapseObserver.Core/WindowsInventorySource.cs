@@ -172,6 +172,8 @@ public sealed partial class WindowsInventorySource : IInventorySource
     public SectionResult<IReadOnlyList<LocalHidCandidate>> DiscoverLocalControlCandidates(
         CancellationToken cancellationToken = default)
     {
+        // Never expose descriptor rows from an earlier scan after cancellation or failure.
+        _lastHidDescriptorSupport = [];
         cancellationToken.ThrowIfCancellationRequested();
         var interfaces = new List<LocalHidCandidate>();
         var descriptorDetails = new List<HidDescriptorSupportEvidence>();

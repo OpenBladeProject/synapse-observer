@@ -12,6 +12,8 @@ public interface INativeObservationSession : IAsyncDisposable
     NativeSessionStatus GetStatus();
     Task<IReadOnlyList<NativeObservationEvent>> PollAsync(CancellationToken cancellationToken = default);
     Task<NativeSessionStatus> StopAsync(CancellationToken cancellationToken = default);
+    // Owned test fixtures without a resident registration need no invalidation state.
+    void InvalidateReuse() { }
 }
 
 public sealed class NativeObservationSession : INativeObservationSession
@@ -115,6 +117,16 @@ public sealed class NativeObservationSession : INativeObservationSession
                 Residents.Add(candidate.ProcessId, resident);
             }
 
+            ResidentStartDecision decision = resident!.TryBegin(currentIdentity);
+            if (decision != ResidentStartDecision.Started)
+                throw new InvalidOperationException(decision switch
+                {
+                    ResidentStartDecision.Busy => "The resident observer is still recording or its previous worker has not completed.",
+                    ResidentStartDecision.IdentityMismatch => "The resident observer identity changed. Restart Synapse before another recording.",
+                    _ => "The resident observer had an uncertain cleanup and cannot be reused. Restart Synapse before another recording.",
+                });
+            recordingClaimed = true;
+
             IntPtr local = Native.LoadLibraryExW(dll, IntPtr.Zero, 1); // map only; do not execute DllMain locally
             if (local == IntPtr.Zero) throw new Win32Exception();
             IntPtr start;
@@ -127,18 +139,6 @@ public sealed class NativeObservationSession : INativeObservationSession
             for (int i = 0; i < selectedNames.Length; ++i) Encoding.Unicode.GetBytes(selectedNames[i]).CopyTo(config, 268 + i * 1024);
             for (int i = 0; i < selected.Length; ++i) BitConverter.GetBytes((uint)selected[i]!.ReportGeometry!.FeatureBytes).CopyTo(config, 8460 + 4 * i);
             IntPtr remoteConfig = WriteRemote(process, config);
-            ResidentStartDecision decision = resident!.TryBegin(currentIdentity);
-            if (decision != ResidentStartDecision.Started)
-            {
-                Native.VirtualFreeEx(process, remoteConfig, 0, 0x8000);
-                throw new InvalidOperationException(decision switch
-                {
-                    ResidentStartDecision.Busy => "The resident observer is still recording or its previous worker has not completed.",
-                    ResidentStartDecision.IdentityMismatch => "The resident observer identity changed. Restart Synapse before another recording.",
-                    _ => "The resident observer had an uncertain cleanup and cannot be reused. Restart Synapse before another recording.",
-                });
-            }
-            recordingClaimed = true;
             worker = Native.CreateRemoteThread(process, IntPtr.Zero, 0, start, remoteConfig, 0, out _);
             if (worker.IsInvalid) { Native.VirtualFreeEx(process, remoteConfig, 0, 0x8000); throw new Win32Exception(); }
             var session = new NativeObservationSession(mapping, view, process, worker, origin, resident);
@@ -171,7 +171,11 @@ public sealed class NativeObservationSession : INativeObservationSession
         var events = new List<NativeObservationEvent>();
         int read = view.ReadInt32(20), write = view.ReadInt32(16);
         Thread.MemoryBarrier();
-        if (read < 0 || write < read || write - read > Slots) throw new InvalidDataException("Observer ring counters are invalid.");
+        if (read < 0 || write < read || write - read > Slots)
+        {
+            InvalidateReuse();
+            throw new InvalidDataException("Observer ring counters are invalid.");
+        }
         int rejected = 0;
         try
         {
@@ -198,9 +202,14 @@ public sealed class NativeObservationSession : INativeObservationSession
         catch
         {
             ClearEvents(events);
+            InvalidateReuse();
             throw;
         }
-        if (rejected != 0) throw new NativeObservationPollException(events, rejected);
+        if (rejected != 0)
+        {
+            InvalidateReuse();
+            throw new NativeObservationPollException(events, rejected);
+        }
         return Task.FromResult<IReadOnlyList<NativeObservationEvent>>(events);
     }
 
@@ -258,25 +267,38 @@ public sealed class NativeObservationSession : INativeObservationSession
     public async ValueTask DisposeAsync()
     {
         if (disposed) return;
-        // Explicit callers own bounded waits and final evidence collection.
-        // Do not hide another wait after their last status/record read.
         try
         {
-            if (!stopRequested) await StopAsync().ConfigureAwait(false);
-            else if (Volatile.Read(ref cleanupResolution) == 0) ResolveCleanup(false);
+            try
+            {
+                // Explicit callers own bounded waits and final evidence collection.
+                // Do not hide another wait after their last status/record read.
+                if (!stopRequested) await StopAsync().ConfigureAwait(false);
+                else if (Volatile.Read(ref cleanupResolution) == 0) ResolveCleanup(false);
+            }
+            finally
+            {
+                disposed = true;
+                worker.Dispose(); process.Dispose(); view.Dispose(); mapping.Dispose(); stopGate.Dispose();
+            }
         }
-        finally
+        catch
         {
-            disposed = true;
-            worker.Dispose(); process.Dispose(); view.Dispose(); mapping.Dispose(); stopGate.Dispose();
+            InvalidateReuse();
+            throw;
         }
     }
+    public void InvalidateReuse() => ResolveCleanup(false);
     private void ResolveCleanup(bool confirmed)
     {
         int resolution = confirmed ? 1 : 2;
         int prior = Interlocked.CompareExchange(ref cleanupResolution, resolution, 0);
         if (prior == 0) resident?.Complete(confirmed);
-        else if (!confirmed && prior == 1) resident?.Fault();
+        else if (!confirmed && prior == 1)
+        {
+            Interlocked.Exchange(ref cleanupResolution, 2);
+            resident?.Fault();
+        }
     }
     private static IntPtr WriteRemote(SafeProcessHandle process, byte[] bytes)
     {

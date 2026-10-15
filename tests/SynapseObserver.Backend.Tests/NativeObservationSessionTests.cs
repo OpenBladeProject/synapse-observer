@@ -25,7 +25,14 @@ public sealed class NativeObservationSessionTests
         WriteSlot(writer, 2, Record(3, 3));
         writer.Write(16, 3);
 
-        await using var session = new NativeObservationSession(mapping, Origin);
+        var identity = new ResidentObserverIdentity(11, 12, "observer.dll", new string('A', 64), (nint)13);
+        var resident = new ResidentObserverRegistration(identity);
+        Assert.Equal(ResidentStartDecision.Started, resident.TryBegin(identity));
+        await using var session = new NativeObservationSession(
+            mapping,
+            Origin,
+            resident,
+            new SafeFileHandle(IntPtr.Zero, ownsHandle: false));
         var failure = await Assert.ThrowsAsync<NativeObservationPollException>(() => session.PollAsync());
         IReadOnlyList<NativeObservationEvent> next = [];
         try
@@ -35,6 +42,7 @@ public sealed class NativeObservationSessionTests
             Assert.Equal<byte>([1, 3], failure.Events.Select(item => item.RequestBytes[0]));
             Assert.Equal(3, writer.ReadInt32(20));
             AssertSlotsCleared(writer, 0, 1, 2);
+            Assert.Equal(ResidentObserverState.Faulted, resident.State);
 
             WriteSlot(writer, 3, Record(4, 4));
             writer.Write(16, 4);
@@ -65,14 +73,80 @@ public sealed class NativeObservationSessionTests
         writer.Write(20, read);
         writer.Write(16, write);
 
-        await using var session = new NativeObservationSession(mapping, Origin);
+        var identity = new ResidentObserverIdentity(21, 22, "observer.dll", new string('A', 64), (nint)23);
+        var resident = new ResidentObserverRegistration(identity);
+        Assert.Equal(ResidentStartDecision.Started, resident.TryBegin(identity));
+        await using var session = new NativeObservationSession(
+            mapping,
+            Origin,
+            resident,
+            new SafeFileHandle(IntPtr.Zero, ownsHandle: false));
         await Assert.ThrowsAsync<InvalidDataException>(() => session.PollAsync());
 
+        Assert.Equal(ResidentObserverState.Faulted, resident.State);
         Assert.Equal(read, writer.ReadInt32(20));
         var retained = new byte[NativeEventParser.RecordSize];
         Assert.Equal(retained.Length, writer.ReadArray(NativeObservationSession.HeaderSize, retained, 0, retained.Length));
         Assert.Equal((byte)0x5A, retained[52]);
         CryptographicOperations.ZeroMemory(retained);
+    }
+
+    [Fact]
+    public async Task CallerCancellationBeforePollingDoesNotInvalidateResidentReuse()
+    {
+        var mapping = MemoryMappedFile.CreateNew(null,
+            NativeObservationSession.HeaderSize + NativeObservationSession.Slots * NativeEventParser.RecordSize,
+            MemoryMappedFileAccess.ReadWrite);
+        using var writer = mapping.CreateViewAccessor();
+        writer.Write(4, 1);
+        var identity = new ResidentObserverIdentity(31, 32, "observer.dll", new string('A', 64), (nint)33);
+        var resident = new ResidentObserverRegistration(identity);
+        Assert.Equal(ResidentStartDecision.Started, resident.TryBegin(identity));
+        await using var session = new NativeObservationSession(
+            mapping,
+            Origin,
+            resident,
+            new SafeFileHandle(IntPtr.Zero, ownsHandle: false));
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => session.PollAsync(cancellation.Token));
+
+        Assert.Equal(ResidentObserverState.Recording, resident.State);
+    }
+
+    [Fact]
+    public async Task ExplicitInvalidationOverridesCleanCompletionAndRemainsSafeAfterDisposal()
+    {
+        var mapping = MemoryMappedFile.CreateNew(null,
+            NativeObservationSession.HeaderSize + NativeObservationSession.Slots * NativeEventParser.RecordSize,
+            MemoryMappedFileAccess.ReadWrite);
+        using var writer = mapping.CreateViewAccessor();
+        writer.Write(0, 1);
+        writer.Write(4, 1);
+        var identity = new ResidentObserverIdentity(41, 42, "observer.dll", new string('A', 64), (nint)43);
+        var resident = new ResidentObserverRegistration(identity);
+        Assert.Equal(ResidentStartDecision.Started, resident.TryBegin(identity));
+        var session = new NativeObservationSession(
+            mapping,
+            Origin,
+            resident,
+            new SafeFileHandle(IntPtr.Zero, ownsHandle: false));
+
+        NativeSessionStatus status = await session.StopAsync();
+        Assert.Equal(0, status.Failure);
+        Assert.Equal(ResidentObserverState.Idle, resident.State);
+
+        session.InvalidateReuse();
+        Assert.Equal(ResidentObserverState.Faulted, resident.State);
+        NativeSessionStatus invalidated = await session.StopAsync();
+        Assert.Equal(170, invalidated.Failure);
+        Assert.Contains("previously uncertain", invalidated.Diagnostic, StringComparison.Ordinal);
+        await session.DisposeAsync();
+
+        session.InvalidateReuse();
+        Assert.Equal(ResidentObserverState.Faulted, resident.State);
+        Assert.Equal(ResidentStartDecision.Faulted, resident.TryBegin(identity));
     }
 
     [Fact]

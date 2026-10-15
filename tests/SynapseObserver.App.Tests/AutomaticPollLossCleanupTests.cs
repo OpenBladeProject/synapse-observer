@@ -44,8 +44,9 @@ public sealed class AutomaticPollLossCleanupTests
             status => status.Contains("time limit", StringComparison.OrdinalIgnoreCase));
         Assert.DoesNotContain(statuses,
             status => status.Contains("Stop and save", StringComparison.Ordinal));
-        Assert.Contains("Recording stopped with gaps", model.Status);
-        Assert.Contains("Save the partial evidence ZIP", model.Status);
+        Assert.Contains("Recording ended with a gap", model.Status);
+        Assert.Contains("Save the partial evidence", model.Status);
+        Assert.Contains("Restart Synapse", model.RecorderStatus);
         Assert.Equal(1, observer.Stops);
         Assert.Equal(1, observer.Disposals);
     }
