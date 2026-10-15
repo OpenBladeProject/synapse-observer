@@ -13,8 +13,15 @@ internal sealed class CaptureActivity(string id, string title, string guidance, 
     public IReadOnlyList<SettingChoice> Choices { get; } = [.. choices,
         new("Other state…", "State or value shown (required)", "Use a short description without personal information.", true)];
     public CoverageState State { get; private set; } = CoverageState.Pending;
+    public bool SavedInEarlierZip { get; private set; }
+    public void ResetForNewZip(bool savedEarlier)
+    {
+        SavedInEarlierZip = savedEarlier;
+        State = CoverageState.Pending;
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(DisplayLabel)));
+    }
     public string DisplayLabel => $"{Title} · {StateLabel}";
-    private string StateLabel => State switch
+    private string StateLabel => SavedInEarlierZip ? "Saved in an earlier ZIP" : State switch
     {
         CoverageState.Pending => "Not recorded",
         CoverageState.Completed => IsReadOnly ? "Reported" : "Recorded",
@@ -26,6 +33,7 @@ internal sealed class CaptureActivity(string id, string title, string guidance, 
     public event PropertyChangedEventHandler? PropertyChanged;
     public void SetState(CoverageState state)
     {
+        SavedInEarlierZip = false;
         State = state;
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(DisplayLabel)));
     }

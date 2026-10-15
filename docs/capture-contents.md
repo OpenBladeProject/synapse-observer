@@ -77,6 +77,7 @@ with the JSON files when attaching the ZIP to a support request.
 
 ## Collection limits
 
+- The app displays retained observation capacity and stops a recording when the ZIP fills. After cleanup, save the current ZIP and explicitly continue in a fresh part. An interrupted setting stays visible until you confirm restoration in its original controls; this checkbox is not firmware readback or a captured restoration marker. Partial save remains available without that confirmation. Each part retains its own evidence and the original inventory timestamp. Earlier checklist progress is shown only in the UI, not copied as completed coverage into the new part. Keep all parts together. Up to 256 parts can be saved in one collection; the final part can still be saved. Cleanup failures retain the existing manual Synapse restart requirement.
 - A recording lasts at most ten minutes.
 - One identified physical Blade laptop can contribute up to eight feature
   collections during live observation.

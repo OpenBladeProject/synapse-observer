@@ -4,7 +4,6 @@ using System.IO;
 using System.Runtime.CompilerServices;
 using System.Reflection;
 using System.Security.Cryptography;
-using Microsoft.Win32;
 using SynapseObserver.Core;
 using SynapseObserver.Backend;
 
@@ -90,14 +89,17 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
             RefreshCommands();
         };
         CollectCommand = new AsyncCommand(() => GuardAsync(CollectAsync), () => !closing && !busy && !collecting && !recording && !IsProbingSpecialKey);
-        StartCommand = new AsyncCommand(() => GuardAsync(StartAsync), () => !closing && !busy && !IsProbingSpecialKey && HasInventory && consent && !recording && (preview || backendCandidate is not null));
+        StartCommand = new AsyncCommand(() => GuardAsync(StartAsync), () => !closing && !busy && !IsProbingSpecialKey && !capacityReached && HasInventory && consent && !recording && (preview || backendCandidate is not null));
         StopCommand = new AsyncCommand(() => GuardAsync(StopAsync), () => recording && !busy && !closing);
-        MarkCommand = new AsyncCommand(() => GuardAsync(MarkAsync), () => !closing && !busy && !IsProbingSpecialKey && HasInventory && HasCurrentStep
+        MarkCommand = new AsyncCommand(() => GuardAsync(MarkAsync), () => !closing && !busy && !IsProbingSpecialKey && !capacityReached && HasInventory && HasCurrentStep
             && (CurrentActivity.IsReadOnly || (recording && !observerEnded))
             && (stepPhase == 2 || (stepPhase == 0 ? StartingEntry.HasValue : HasDistinctChangedSetting)));
         SkipCommand = new AsyncCommand(() => GuardAsync(() => SkipAsync(false)), () => CanSelectActivity && HasCurrentStep);
         UnavailableCommand = new AsyncCommand(() => GuardAsync(() => SkipAsync(true)), () => CanSelectActivity && HasCurrentStep);
-        SaveCommand = new AsyncCommand(() => GuardAsync(SaveAsync), () => !preview && !busy && !IsProbingSpecialKey && HasInventory && !recording);
+        SaveCommand = new AsyncCommand(() => GuardAsync(SaveAsync), CanSaveEvidence);
+        SaveAndContinueCommand = new AsyncCommand(() => GuardAsync(SaveAndContinueAsync), () => CanSaveEvidence() && ShowCapacityRecovery
+            && !MarkCommand.IsRunning && (!CapacityRestorationRequired || CapacityRestorationConfirmed) && evidencePart < MaxEvidenceParts);
+        MarkCommand.CanExecuteChanged += (_, _) => SaveAndContinueCommand.Refresh();
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -133,7 +135,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
     public bool ShowExport => HasInventory && !recording;
     public bool IsRecording => recording;
     public bool HasCurrentStep => step >= 0 && step < Activities.Count;
-    public bool CanSelectActivity => !closing && HasInventory && !busy && !IsProbingSpecialKey && (!recording || !observerEnded) && stepPhase == 0;
+    public bool CanSelectActivity => !closing && !capacityReached && HasInventory && !busy && !IsProbingSpecialKey && (!recording || !observerEnded) && stepPhase == 0;
     public int SelectedActivityIndex
     {
         get => HasCurrentStep ? step : -1;
@@ -148,7 +150,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
     private CaptureActivity CurrentActivity => Activities[step];
     private bool HasDistinctChangedSetting => ChangedEntry.HasValue
         && !SettingValueComparison.AreEquivalent(startingSetting, ChangedEntry.Value);
-    public string CoverageSummary => $"{Activities.Count(activity => activity.State != CoverageState.Pending)} of {Activities.Count} items handled. Choose any item; stop and save whenever you are ready.";
+    public string CoverageSummary => $"{Activities.Count(activity => activity.State != CoverageState.Pending || activity.SavedInEarlierZip)} of {Activities.Count} items handled. Choose any item; stop and save whenever you are ready.";
     public string StartingValueLabel => HasCurrentStep && CurrentActivity.IsReadOnly ? "Current state or known behavior" : "Starting setting";
     public string ActivityGuidance => HasCurrentStep ? CurrentActivity.Guidance : string.Empty;
     public bool ShowStartingValue => HasCurrentStep && stepPhase == 0;
@@ -162,7 +164,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
     public string CollectionDetails => string.IsNullOrEmpty(retentionGapDetails) ? collectionDetails : $"{collectionDetails}\n{retentionGapDetails}";
     public string Status => status;
     public string StepTitle => HasCurrentStep ? $"{step + 1} of {Activities.Count} · {CurrentActivity.Title}" : "Checklist finished";
-    public string StepInstructions => HasCurrentStep
+    public string StepInstructions => capacityReached ? CapacityInstructions : HasCurrentStep
         ? CurrentActivity.IsReadOnly ? "Report the current state or behavior you have already observed. Save the report without changing a setting."
         : !recording ? "Start recording before changing this setting, or choose a current-state report to continue without recording."
         : observerEnded ? EndedRecordingInstructions
@@ -174,7 +176,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
         ? $"Restore the starting setting: {startingSetting}. " : "Recording is unavailable. ")
         + (stopping || cleanupRequested ? "Wait for recording cleanup, then save the partial evidence."
             : "Stop recording and save the partial evidence.");
-    public string StepStatus => !HasCurrentStep ? "Your setting changes and restoration markers are recorded." : CurrentActivity.IsReadOnly ? "This is your report, not a hardware measurement or firmware confirmation."
+    public string StepStatus => capacityReached ? "Save this part before recording more settings. Share all saved ZIP parts together." : !HasCurrentStep ? "Your setting changes and restoration markers are recorded." : CurrentActivity.IsReadOnly ? "This is your report, not a hardware measurement or firmware confirmation."
         : !recording ? "Current-state reports are available without observing Synapse. Setting changes need a recording."
         : observerEnded ? "Recording is unavailable. Restore any unfinished setting and save the evidence after cleanup."
         : stepPhase == 0 ? "If Synapse shows \"Syncing Profiles\", wait before changing a setting. Skip anything you cannot test."
@@ -387,6 +389,8 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
 
     private async Task MarkAsync()
     {
+        var actionSession = session;
+        var actionStep = step;
         var activity = CurrentActivity;
         var phase = stepPhase;
         var startingValue = StartingEntry.Value;
@@ -414,6 +418,9 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
         try
         {
             var actionPower = await ReadActionPowerSourceAsync();
+            // Discovery yields to the reader and cleanup. Discard late actions.
+            if (closing || capacityReached || !ReferenceEquals(session, actionSession) || step != actionStep || stepPhase != phase
+                || !activity.IsReadOnly && (!recording || observerEnded || stopping)) return;
             if (activity.IsReadOnly)
             {
                 if (!Marker(EvidenceMarkerKind.UserReportedCurrentState, activity.Id, "User reported current state or known behavior", EvidenceProvenance.UserReported, startingValue, actionPower)) return;
@@ -467,7 +474,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
     private void NextStep()
     {
         var next = Enumerable.Range(1, Activities.Count).Select(offset => (step + offset) % Activities.Count)
-            .FirstOrDefault(index => Activities[index].State == CoverageState.Pending, -1);
+            .FirstOrDefault(index => Activities[index].State == CoverageState.Pending && !Activities[index].SavedInEarlierZip, -1);
         step = next;
         ResetEntries();
     }
@@ -649,6 +656,15 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
                     requestStop();
                     nativeStatus = observer!.GetStatus();
                 }
+                if (capacityReached && !stopping && !cleanupRequested)
+                {
+                    observerEnded = true;
+                    cleanupRequested = true;
+                    status = CapacityInstructions;
+                    recorderStatus = "This ZIP is full. Stopping the observer and retaining buffered-call loss counts.";
+                    Refresh();
+                    requestStop();
+                }
                 if (nativeStatus is { Finished: true })
                 {
                     observerEnded = true;
@@ -817,47 +833,21 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
         Changed(nameof(ObservationSummary));
         Changed(nameof(CollectionDetails));
         Changed(nameof(ExportSummary));
+        Changed(nameof(CapacitySummary));
     }
 
     private void AddControlObservation(ControlObservation observation)
     {
         var result = session!.AddObservation(observation);
+        if (session.ObservationCount >= EvidenceLimits.MaxObservations) ReachCapacity();
         if (result is not (EvidenceAddResult.RejectedInvalid or EvidenceAddResult.RejectedLimit)) return;
         gaps++;
         retentionGapDetails = result == EvidenceAddResult.RejectedLimit
-            ? $"The session reached its {EvidenceLimits.MaxObservations} observation limit. Further observations are counted as gaps. Save this evidence, close the collector, restart Synapse normally, then reopen the collector to record more settings."
+            ? $"The session reached its {EvidenceLimits.MaxObservations} observation limit. Further observations are counted as gaps. Save this ZIP and continue in a new part after recording cleanup."
             : "An invalid observation could not be retained. Its rejection is counted as a recording gap in the evidence.";
     }
 
-    private async Task SaveAsync()
-    {
-        var dialog = new SaveFileDialog
-        {
-            Title = "Save device evidence",
-            Filter = "Evidence ZIP (*.zip)|*.zip",
-            FileName = $"blade-evidence-{DateTime.UtcNow:yyyyMMdd-HHmm}.zip",
-            DefaultExt = ".zip",
-            AddExtension = true,
-            OverwritePrompt = true,
-        };
-        if (dialog.ShowDialog() != true)
-        {
-            return;
-        }
-
-        busy = true;
-        Refresh();
-        try
-        {
-            await EvidenceBundleWriter.WriteAsync(session!, dialog.FileName, CancellationToken.None);
-            status = "Evidence ZIP saved. Attach it to your support request.";
-        }
-        finally
-        {
-            busy = false;
-            Refresh();
-        }
-    }
+    private Task SaveAsync() => ExportEvidenceAsync(continueInNewPart: false);
 
     public async Task CloseAsync()
     {
@@ -866,6 +856,8 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
         await CollectCommand.CurrentExecution;
         await StartCommand.CurrentExecution;
         await SaveCommand.CurrentExecution;
+        await SaveAndContinueCommand.CurrentExecution;
+        await MarkCommand.CurrentExecution;
         if (recording || observer is not null)
         {
             await GuardAsync(StopAsync);
@@ -883,7 +875,8 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
         }
         if (result == EvidenceAddResult.RejectedLimit)
         {
-            retentionGapDetails = $"The session reached its {EvidenceLimits.MaxMarkers} action-marker limit. Further markers are counted as rejected in the ZIP. Stop and save this evidence, close the collector, restart Synapse normally, then reopen the collector to report more items.";
+            ReachCapacity();
+            retentionGapDetails = $"The session reached its {EvidenceLimits.MaxMarkers} action-marker limit. Further markers are counted as rejected in the ZIP. Stop and save this ZIP, then continue in a new part.";
             status = "This action could not be recorded because the session is full. Stop and save the evidence.";
             Refresh();
             return false;
@@ -932,6 +925,14 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
             }
         }
 
+        if (stage == 4)
+        {
+            startingSetting = "Custom: CPU Boost, GPU High";
+            ReachCapacity();
+            recording = false;
+            ResetEntries();
+            status = CapacityInstructions;
+        }
         Refresh();
     }
 
@@ -953,7 +954,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
     {
         ProbeSpecialKeyCommand?.Refresh(); CancelSpecialKeyProbeCommand?.Refresh();
         CollectCommand.Refresh(); StartCommand.Refresh(); StopCommand.Refresh(); MarkCommand.Refresh();
-        SkipCommand.Refresh(); UnavailableCommand.Refresh(); SaveCommand.Refresh();
+        SkipCommand.Refresh(); UnavailableCommand.Refresh(); SaveCommand.Refresh(); SaveAndContinueCommand.Refresh();
     }
 
     private void Changed([CallerMemberName] string? property = null) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(property));

@@ -5,6 +5,7 @@ namespace SynapseObserver.App;
 internal sealed class AsyncCommand(Func<Task> action, Func<bool>? canExecute = null) : ICommand
 {
     private bool running;
+    public bool IsRunning => running;
     public Task CurrentExecution { get; private set; } = Task.CompletedTask;
 
     public event EventHandler? CanExecuteChanged;

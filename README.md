@@ -73,6 +73,8 @@ and records your action markers. Recordings last up to ten minutes. Keep this
 window open to record more settings after stopping. If cleanup cannot be
 confirmed, the app asks you to restart Synapse before another recording.
 
+The app shows how much space remains in the current ZIP. When it fills, recording stops. Restore any unfinished setting, then choose **Save ZIP and continue…** to record more settings in a new part. Keep and submit all parts together. If you cannot restore the setting yet, choose **Save partial ZIP only…**.
+
 Wait for **Syncing Profiles** to finish before changing or restoring another
 setting. If Synapse stays stuck, stop recording and save the partial ZIP. Restore
 any unfinished setting when Synapse responds. A partial ZIP is still useful.

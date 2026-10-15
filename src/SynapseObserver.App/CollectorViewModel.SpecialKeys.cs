@@ -17,7 +17,7 @@ internal sealed partial class CollectorViewModel
         .Select(key => new SpecialKeyChoice(key, key == SpecialKeyExpectedKey.FnP ? "Fn + P" : key.ToString())).ToArray();
     public bool IsProbingSpecialKey => probingSpecialKey;
     public bool ShowSpecialKeyProbe => HasInventory;
-    public bool CanProbeSpecialKeys => HasInventory && !busy && !probingSpecialKey && !preview
+    public bool CanProbeSpecialKeys => HasInventory && !capacityReached && !closing && !busy && !probingSpecialKey && !preview
         && specialKeyProbe is not null && stepPhase == 0 && SpecialKeyProbeParser.IsSingleBladeRoot(inputCandidates)
         && inputCandidates.Any(SpecialKeyProbeParser.IsInputCandidate);
     public bool CanChooseSpecialKey => !probingSpecialKey;

@@ -113,12 +113,12 @@ public sealed class ObserverOutcomeTests
         Assert.Equal(0, commandNotifications);
         observer.Events = [new(1, 100, "HidD_SetFeature", "set-feature", true, 0, [0], [], null, 1, 0, 0, 101)];
         await Poll(model);
-        Assert.Equal(new[] { "ObservationSummary", "CollectionDetails", "ExportSummary" }, notifications);
+        Assert.Equal(new[] { "ObservationSummary", "CollectionDetails", "ExportSummary", "CapacitySummary" }, notifications);
         Assert.Equal(0, commandNotifications);
         notifications.Clear();
         observer.Dropped = 2;
         await Poll(model);
-        Assert.Equal(new[] { "ObservationSummary", "CollectionDetails", "ExportSummary" }, notifications);
+        Assert.Equal(new[] { "ObservationSummary", "CollectionDetails", "ExportSummary", "CapacitySummary" }, notifications);
         Assert.Contains("2 recording gaps", model.ObservationSummary);
         notifications.Clear();
         await Poll(model);

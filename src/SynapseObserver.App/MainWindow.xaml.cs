@@ -52,7 +52,7 @@ public partial class MainWindow : Window
                     if (!closing && IsEnabled && IsVisible && viewModel.ShowExport)
                     {
                         ExportCard.BringIntoView();
-                        SaveEvidenceButton.Focus();
+                        (viewModel.ShowCapacityRecovery ? SavePartialEvidenceButton : SaveEvidenceButton).Focus();
                     }
                 }));
             }
@@ -64,6 +64,11 @@ public partial class MainWindow : Window
         viewModel.SetPreviewStage(stage);
         Show();
         UpdateLayout();
+        if (stage == 4)
+        {
+            ExportCard.BringIntoView();
+            UpdateLayout();
+        }
         // The preview uses a real maximized window; record dimensions to catch
         // restored-size caps that also restrict Windows maximization.
         File.WriteAllText(Path.ChangeExtension(path, ".layout.json"), System.Text.Json.JsonSerializer.Serialize(new

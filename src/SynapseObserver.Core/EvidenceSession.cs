@@ -25,6 +25,10 @@ public sealed class EvidenceSession : IDisposable
         StartedAtUtc = startedAtUtc ?? DateTimeOffset.UtcNow;
     }
 
+    public int MarkerCount { get { lock (_sync) return _markers.Count; } }
+
+    public int ObservationCount { get { lock (_sync) return _observations.Count; } }
+
     public InventorySnapshot Inventory { get; }
 
     public DateTimeOffset StartedAtUtc { get; }
