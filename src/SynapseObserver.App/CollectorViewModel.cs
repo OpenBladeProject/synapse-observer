@@ -477,7 +477,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
             }
             if (observer is not null)
             {
-                if (readerFaulted || stopFailure is not null || nativeStatus is not { Finished: true, Failure: 0 })
+                if (readerFaulted || stopFailure is not null || nativeStatus is not { Finished: true, Failure: 0, ReuseAllowed: true })
                     observer.InvalidateReuse();
                 try
                 {
@@ -500,7 +500,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
             stopping = false;
             busy = false;
             var cleanStop = !readerFaulted && stopFailure is null
-                && (nativeStatus is { Finished: true, Failure: 0 }
+                && (nativeStatus is { Finished: true, Failure: 0, ReuseAllowed: true }
                     || preview && nativeStatus is null);
             if (!cleanStop)
             {
@@ -516,7 +516,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
 
             session?.AddMarker(new EvidenceMarker(RelativeMilliseconds, EvidenceMarkerKind.RecordingStopped, "session", "Recording stopped", EvidenceProvenance.Observer));
             recorderStatus = !cleanStop
-                ? "Recording cleanup was not fully verified. Restart Synapse normally before another recording."
+                ? "Recording stopped after an error. Restart Synapse normally before another recording."
                 : nativeStatus?.Diagnostic ?? "Recording stopped. Gaps and user-reported restoration remain labeled in the evidence.";
             if (nativeStatus is { Failure: not 0 }) CountNativeFailureGap();
             if (!cleanStop)

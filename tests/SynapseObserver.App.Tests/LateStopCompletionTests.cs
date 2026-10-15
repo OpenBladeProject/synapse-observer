@@ -29,12 +29,9 @@ public sealed class LateStopCompletionTests
         Assert.Contains(model.Evidence.Markers, marker => marker.Label == "Observer queue dropped events" && marker.Value == "count-7");
         Assert.Contains("partial evidence", model.Status);
         Assert.Single(model.Evidence.Markers, marker => marker.Kind == EvidenceMarkerKind.RecordingStopped);
-        if (lateFinish)
-        {
-            Assert.DoesNotContain(model.Evidence.Markers, marker => marker.Label == "Recording cleanup has a gap");
-            Assert.DoesNotContain("restart Synapse", model.Status);
-        }
-        else Assert.Contains(model.Evidence.Markers, marker => marker.Label == "Recording cleanup has a gap");
+        Assert.Contains(model.Evidence.Markers, marker => marker.Label == "Recording cleanup has a gap");
+        Assert.Contains("restart Synapse", model.Status);
+        Assert.False(model.AttachConsent);
         Assert.All(observer.Buffers, buffer => Assert.All(buffer, value => Assert.Equal((byte)0, value)));
     }
     private static async Task Run(AsyncCommand command)
@@ -76,7 +73,9 @@ public sealed class LateStopCompletionTests
                 return GetStatus() with { Failure = 170, Diagnostic = "Owned stop unconfirmed" };
             await drained.Task.WaitAsync(TimeSpan.FromSeconds(5));
             finished = true;
-            return GetStatus();
+            // A late finish retains evidence, but cannot clear the earlier
+            // uncertain cleanup or grant resident reuse.
+            return GetStatus() with { ReuseAllowed = false };
         }
         public ValueTask DisposeAsync() { Disposals++; return ValueTask.CompletedTask; }
     }

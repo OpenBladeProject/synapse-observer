@@ -3,7 +3,7 @@ using System.Diagnostics;
 namespace SynapseObserver.Backend;
 public sealed record BackendCandidate(int ProcessId, string Name, bool Eligible, string Diagnostic);
 public sealed record NativeObservationEvent(ulong Sequence, double RelativeMilliseconds, string Api, string Operation, bool Result, uint NativeError, byte[] RequestBytes, byte[] ResponseBytes, string? CompletionGap, uint RequestedBytes, uint ReturnedBytes, uint InterfaceIndex, double CompletionRelativeMilliseconds, uint OutputBufferCapacity = 0);
-public sealed record NativeSessionStatus(bool Started, bool Finished, int Failure, int DroppedEvents, string Diagnostic);
+public sealed record NativeSessionStatus(bool Started, bool Finished, int Failure, int DroppedEvents, string Diagnostic, bool ReuseAllowed = true);
 /// <summary>
 /// Reports rejected observer records while transferring ownership of valid events from the same poll.
 /// The caller must clear each event's request and response byte arrays after processing them.

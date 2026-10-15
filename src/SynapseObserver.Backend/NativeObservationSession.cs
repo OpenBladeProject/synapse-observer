@@ -26,21 +26,38 @@ public sealed class NativeObservationSession : INativeObservationSession
     private readonly SafeFileHandle worker;
     private readonly long origin;
     private readonly ResidentObserverRegistration? resident;
+    private readonly Func<SafeFileHandle, (bool Success, uint ExitCode)> workerExitCodeReader;
     private readonly SemaphoreSlim stopGate = new(1, 1);
     public long OriginTimestampTicks => origin;
     private bool disposed;
     private bool stopRequested;
     private int cleanupResolution;
-    private NativeObservationSession(MemoryMappedFile mapping, MemoryMappedViewAccessor view, SafeProcessHandle process, SafeFileHandle worker, long origin, ResidentObserverRegistration? resident)
-    { this.mapping = mapping; this.view = view; this.process = process; this.worker = worker; this.origin = origin; this.resident = resident; }
+    private NativeObservationSession(
+        MemoryMappedFile mapping,
+        MemoryMappedViewAccessor view,
+        SafeProcessHandle process,
+        SafeFileHandle worker,
+        long origin,
+        ResidentObserverRegistration? resident,
+        Func<SafeFileHandle, (bool Success, uint ExitCode)>? workerExitCodeReader = null)
+    {
+        this.mapping = mapping;
+        this.view = view;
+        this.process = process;
+        this.worker = worker;
+        this.origin = origin;
+        this.resident = resident;
+        this.workerExitCodeReader = workerExitCodeReader ?? ReadWorkerExitCode;
+    }
     internal NativeObservationSession(MemoryMappedFile mapping, long origin)
-        : this(mapping, mapping.CreateViewAccessor(), new SafeProcessHandle(IntPtr.Zero, false), new SafeFileHandle(IntPtr.Zero, false), origin, null) { }
+        : this(mapping, mapping.CreateViewAccessor(), new SafeProcessHandle(IntPtr.Zero, false), new SafeFileHandle(IntPtr.Zero, false), origin, null, _ => (true, 0)) { }
     internal NativeObservationSession(
         MemoryMappedFile mapping,
         long origin,
         ResidentObserverRegistration resident,
-        SafeFileHandle worker)
-        : this(mapping, mapping.CreateViewAccessor(), new SafeProcessHandle(IntPtr.Zero, false), worker, origin, resident) { }
+        SafeFileHandle worker,
+        uint workerExitCode = 0)
+        : this(mapping, mapping.CreateViewAccessor(), new SafeProcessHandle(IntPtr.Zero, false), worker, origin, resident, _ => (true, workerExitCode)) { }
     private static readonly SemaphoreSlim StartGate = new(1, 1);
     private static readonly Dictionary<int, ResidentObserverRegistration> Residents = [];
     public static Task<NativeObservationSession> StartAsync(BackendCandidate candidate, string selectedInterfacePath, CancellationToken cancellationToken = default) => StartAsync(candidate, new[] { selectedInterfacePath }, cancellationToken);
@@ -163,7 +180,15 @@ public sealed class NativeObservationSession : INativeObservationSession
         ObjectDisposedException.ThrowIf(disposed, this);
         bool started = view.ReadInt32(0) != 0, finished = view.ReadInt32(4) != 0;
         int failure = view.ReadInt32(8), dropped = view.ReadInt32(24);
-        return new(started, finished, failure, dropped, failure != 0 ? "Observation failed or detachment was not confirmed. Restart Synapse manually before another session." : finished ? "Hooks stopped. The inert observer DLL remains resident until Synapse exits; pending asynchronous completions were not captured." : "Observing completed feature API calls. Pending asynchronous completions are reported as gaps.");
+        bool reuseAllowed = IsReuseAllowed(failure);
+        string diagnostic = failure != 0
+            ? "Observation failed or detachment was not confirmed. Restart Synapse manually before another session."
+            : !reuseAllowed
+                ? "Observation evidence remains available, but the resident observer cannot be reused. Restart Synapse before another recording."
+                : finished
+                    ? "Hooks stopped. The inert observer DLL remains resident until Synapse exits; pending asynchronous completions were not captured."
+                    : "Observing completed feature API calls. Pending asynchronous completions are reported as gaps.";
+        return new(started, finished, failure, dropped, diagnostic, reuseAllowed);
     }
     public Task<IReadOnlyList<NativeObservationEvent>> PollAsync(CancellationToken cancellationToken = default)
     {
@@ -234,7 +259,7 @@ public sealed class NativeObservationSession : INativeObservationSession
             if (!status.Finished)
             {
                 ResolveCleanup(false);
-                return status with { Failure = 170, Diagnostic = "Stop was requested but hook cleanup was not confirmed. The resident observer is blocked until Synapse restarts." };
+                return status with { Failure = 170, ReuseAllowed = false, Diagnostic = "Stop was requested but hook cleanup was not confirmed. The resident observer is blocked until Synapse restarts." };
             }
 
             bool workerFinished = worker.IsInvalid;
@@ -246,16 +271,41 @@ public sealed class NativeObservationSession : INativeObservationSession
             if (!workerFinished)
             {
                 ResolveCleanup(false);
-                return status with { Failure = 170, Diagnostic = "Hooks stopped, but the observer worker did not complete. The resident observer is blocked until Synapse restarts." };
+                return status with { Failure = 170, ReuseAllowed = false, Diagnostic = "Hooks stopped, but the observer worker did not complete. The resident observer is blocked until Synapse restarts." };
             }
 
-            bool cleanupWasAlreadyUncertain = Volatile.Read(ref cleanupResolution) == 2;
+            (bool exitCodeRead, uint workerExitCode) = workerExitCodeReader(worker);
+            if (!exitCodeRead || workerExitCode != 0)
+            {
+                ResolveCleanup(false);
+                int failure = status.Failure != 0
+                    ? status.Failure
+                    : exitCodeRead && workerExitCode <= int.MaxValue
+                        ? (int)workerExitCode
+                        : 170;
+                return status with
+                {
+                    Failure = failure,
+                    ReuseAllowed = false,
+                    Diagnostic = "The observer worker reported an unsuccessful exit. Restart Synapse before another recording.",
+                };
+            }
+
             ResolveCleanup(status.Failure == 0);
-            if (cleanupWasAlreadyUncertain)
-                return status with { Failure = 170, Diagnostic = "Hook cleanup was previously uncertain. Late completion cannot make the resident observer reusable; restart Synapse before another recording." };
-            return status.Failure == 0
-                ? status with { Diagnostic = "Hooks stopped and the observer worker completed. The verified resident observer can serve another recording." }
-                : status with { Diagnostic = "Observation failed or hook cleanup was uncertain. Restart Synapse before another recording." };
+            bool reuseAllowed = IsReuseAllowed(status.Failure);
+            if (!reuseAllowed)
+                return status with
+                {
+                    ReuseAllowed = false,
+                    Diagnostic = status.Failure == 0
+                        ? "Observation evidence remains available, but the resident observer cannot be reused. Restart Synapse before another recording."
+                        : "Observation failed or hook cleanup was uncertain. Restart Synapse before another recording.",
+                };
+            return status with
+            {
+                ReuseAllowed = true,
+                Diagnostic = "Hooks stopped and the observer worker completed. The verified resident observer can serve another recording.",
+            };
         }
         catch
         {
@@ -289,6 +339,12 @@ public sealed class NativeObservationSession : INativeObservationSession
         }
     }
     public void InvalidateReuse() => ResolveCleanup(false);
+    private bool IsReuseAllowed(int failure) =>
+        failure == 0
+        && Volatile.Read(ref cleanupResolution) != 2
+        && resident?.State != ResidentObserverState.Faulted;
+    private static (bool Success, uint ExitCode) ReadWorkerExitCode(SafeFileHandle worker) =>
+        Native.GetExitCodeThread(worker, out uint exitCode) ? (true, exitCode) : (false, 0);
     private void ResolveCleanup(bool confirmed)
     {
         int resolution = confirmed ? 1 : 2;

@@ -40,6 +40,8 @@ int main() {
         }
         InterlockedExchange(&shared->stop, 1);
         Check(WaitForSingleObject(worker, 3000) == WAIT_OBJECT_0, "bounded stop completes");
+        DWORD workerResult = STILL_ACTIVE;
+        Check(GetExitCodeThread(worker, &workerResult) && workerResult == ERROR_SUCCESS, "final worker cleanup succeeds before reuse");
         Check(shared->finished == 1 && shared->failure == 0 && shared->writeIndex == 0, "no-data session is explicit and detached");
         CloseHandle(worker); UnmapViewOfFile(shared); CloseHandle(mapping);
     }

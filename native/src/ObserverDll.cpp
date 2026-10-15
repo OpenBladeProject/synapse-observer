@@ -65,8 +65,11 @@ extern "C" __declspec(dllexport) DWORD WINAPI ObserverStart(LPVOID argument) {
     }
     const bool unmapped = UnmapViewOfFile(shared) != FALSE;
     const bool closed = CloseHandle(mapping) != FALSE;
-    CompleteWorker(cleanupConfirmed && unmapped && closed);
+    const bool reusable = cleanupConfirmed && unmapped && closed;
+    CompleteWorker(reusable);
+    // The shared view is already unmapped; the thread result reports final
+    // cleanup failures that could not be published in the shared header.
     // The DLL and trampolines remain pinned until the vendor process exits.
-    return ERROR_SUCCESS;
+    return reusable ? ERROR_SUCCESS : ERROR_INVALID_STATE;
 }
 BOOL APIENTRY DllMain(HMODULE, DWORD, LPVOID) { return TRUE; }
