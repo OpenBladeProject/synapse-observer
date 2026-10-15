@@ -126,6 +126,38 @@ public sealed record DisplayModeEvidence(
     int BitsPerPixel,
     int RefreshRateHertz);
 
+public enum DisplayColorProfileScope
+{
+    SystemWide,
+    CurrentUser,
+}
+
+public enum DisplayColorProfileSubtype
+{
+    StandardSdr,
+    ExtendedHdr,
+}
+
+public sealed record DisplayColorProfileEvidence(
+    string ProfileLabel,
+    string? FileName,
+    string? Sha256,
+    bool IsAssociated,
+    IReadOnlyList<DisplayColorProfileSubtype> DefaultSubtypes);
+
+public sealed record DisplayColorProfileScopeEvidence(
+    DisplayColorProfileScope Scope,
+    CollectionState State,
+    IReadOnlyList<DisplayColorProfileEvidence> Profiles,
+    bool Truncated,
+    string? Issue);
+
+public sealed record DisplayColorProfileInventoryEvidence(
+    DisplayColorProfileScope? SelectedScope,
+    CollectionState State,
+    IReadOnlyList<DisplayColorProfileScopeEvidence> Scopes,
+    string? Issue);
+
 public sealed record DisplayEvidence(
     string DisplayLabel,
     string? DisplayName,
@@ -154,6 +186,8 @@ public sealed record DisplayEvidence(
     public string? EdidManufacturerCode { get; init; }
 
     public string? EdidProductCode { get; init; }
+
+    public DisplayColorProfileInventoryEvidence? ColorProfiles { get; init; }
 }
 
 public sealed record BrightnessEvidence(
@@ -368,6 +402,7 @@ internal static class SupportInventorySanitizer
                     EdidProductCode = EdidProduct(item.EdidProductCode),
                     DisplayName = Text(item.DisplayName),
                     CurrentMode = ValidMode(item.CurrentMode),
+                    ColorProfiles = SanitizeColorProfiles(item.ColorProfiles),
                     AvailableModes = item.AvailableModes
                         .Where(static mode => ValidMode(mode) is not null)
                         .Take(MaxDisplayModes)
@@ -530,6 +565,76 @@ internal static class SupportInventorySanitizer
                 || bounded
                 || descriptor.CapabilityShapeState == CollectionState.Collected
                     && totalDeclaredShapes > EvidenceLimits.MaxHidCapabilityShapesPerInterface,
+        };
+    }
+
+    private static DisplayColorProfileInventoryEvidence? SanitizeColorProfiles(
+        DisplayColorProfileInventoryEvidence? inventory)
+    {
+        if (inventory is null)
+        {
+            return null;
+        }
+
+        var partial = inventory.SelectedScope is not null && !Enum.IsDefined(inventory.SelectedScope.Value);
+        DisplayColorProfileScope? selectedScope = partial ? null : inventory.SelectedScope;
+        var scopes = new List<DisplayColorProfileScopeEvidence>(2);
+        var seenScopes = new HashSet<DisplayColorProfileScope>();
+        foreach (var scope in inventory.Scopes.Take(2))
+        {
+            if (!Enum.IsDefined(scope.Scope) || !seenScopes.Add(scope.Scope))
+            {
+                partial = true;
+                continue;
+            }
+
+            var profiles = scope.Profiles
+                .Take(WindowsInventorySource.MaxColorProfileRecordsPerScope)
+                .Where(static profile => IsToken(profile.ProfileLabel))
+                .Select(static profile => profile with
+                {
+                    FileName = WindowsInventorySource.GetSafeColorProfileFileName(profile.FileName),
+                    Sha256 = Sha256(profile.Sha256),
+                    DefaultSubtypes = profile.DefaultSubtypes
+                        .Where(Enum.IsDefined)
+                        .Distinct()
+                        .Take(2)
+                        .ToArray(),
+                })
+                .ToArray();
+            bool scopePartial = scope.Profiles.Count > WindowsInventorySource.MaxColorProfileRecordsPerScope
+                || profiles.Length != Math.Min(scope.Profiles.Count, WindowsInventorySource.MaxColorProfileRecordsPerScope)
+                || scope.Profiles.Any(static profile => profile.FileName is not null
+                    && WindowsInventorySource.GetSafeColorProfileFileName(profile.FileName) is null
+                    || profile.Sha256 is not null && Sha256(profile.Sha256) is null
+                    || profile.DefaultSubtypes.Any(static subtype => !Enum.IsDefined(subtype)));
+            CollectionState state = !Enum.IsDefined(scope.State) || scopePartial
+                ? CollectionState.Partial
+                : scope.State;
+            partial |= scopePartial || state is CollectionState.Partial or CollectionState.Unavailable;
+            scopes.Add(scope with
+            {
+                State = state,
+                Profiles = profiles,
+                Truncated = scope.Truncated
+                    || scope.Profiles.Count > WindowsInventorySource.MaxColorProfileRecordsPerScope,
+                Issue = Issue(state, scope.Issue),
+            });
+        }
+
+        partial |= inventory.Scopes.Count > 2
+            || !scopes.Any(static scope => scope.Scope == DisplayColorProfileScope.CurrentUser)
+            || selectedScope == DisplayColorProfileScope.SystemWide
+                && !scopes.Any(static scope => scope.Scope == DisplayColorProfileScope.SystemWide);
+        CollectionState inventoryState = !Enum.IsDefined(inventory.State) || partial
+            ? CollectionState.Partial
+            : inventory.State;
+        return inventory with
+        {
+            SelectedScope = selectedScope,
+            State = inventoryState,
+            Scopes = scopes,
+            Issue = Issue(inventoryState, inventory.Issue),
         };
     }
 

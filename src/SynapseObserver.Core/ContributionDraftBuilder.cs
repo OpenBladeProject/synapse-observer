@@ -541,6 +541,23 @@ public static class ContributionDraftBuilder
                 "inventory.support.displays", "Windows returned HDR capability or active-state metadata.");
         }
 
+        if (IsUsable(inventory.Support.Displays.State))
+        {
+            var profileDefaults = inventory.Support.Displays.Value
+                .Where(static display => display.ColorProfiles is { } profiles && IsUsable(profiles.State))
+                .SelectMany(static display => display.ColorProfiles!.Scopes)
+                .Where(static scope => IsUsable(scope.State))
+                .SelectMany(static scope => scope.Profiles)
+                .SelectMany(static profile => profile.DefaultSubtypes)
+                .ToHashSet();
+            if (profileDefaults.Contains(DisplayColorProfileSubtype.StandardSdr))
+                Add(evidence, "display.colorProfilesSdr", ContributionObservationLayer.WindowsInventory,
+                    "inventory.support.displays.colorProfiles", "Windows identified a standard SDR default profile.");
+            if (profileDefaults.Contains(DisplayColorProfileSubtype.ExtendedHdr))
+                Add(evidence, "display.colorProfilesHdr", ContributionObservationLayer.WindowsInventory,
+                    "inventory.support.displays.colorProfiles", "Windows identified an extended HDR default profile.");
+        }
+
         if (IsUsable(inventory.Support.LampArrays.State) && inventory.Support.LampArrays.Value.Count > 0)
         {
             Add(evidence, "keyboardLighting.lampArrayInterfaceDiscovery", ContributionObservationLayer.WindowsInventory,

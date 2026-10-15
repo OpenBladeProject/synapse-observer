@@ -90,7 +90,9 @@ with the JSON files when attaching the ZIP to a support request.
   adapters, 16 displays with 512 modes each, 16 brightness entries with 101
   levels each, 16 thermal zones, 8 processors, and 32 explicit gaps. It accepts
   16 LampArrays with 4,096 lamps, 256 key mappings, and 512 lamp indices per key
-  for each array.
+  for each array. HID capability summaries are limited to 128 shapes per interface;
+  color-profile lists retain up to 32 associations plus the two default-profile
+  records for each queried scope, with profile hashing limited to 16 MiB per file.
 - Each JSON entry is limited to 16 MiB. Export writes a private temporary file,
   flushes it, and replaces the selected ZIP only after every entry succeeds.
 
@@ -110,3 +112,11 @@ values to be investigated without pretending to understand or support them.
 Keyboard modes are internal evidence. Contributors are not asked to identify
 Normal or Driver mode. Mode feature reports remain in passive observation;
 prompted key checks use Unknown mode context rather than guessing from keys.
+
+Color-profile evidence includes Windows associations and SDR/HDR defaults. It
+does not include profile contents or establish calibration or gamut accuracy.
+The collector does not yet enumerate the separate control and virtual-interface
+topology required for an unfamiliar native-brightness driver stack. Driver-file
+signature checks do not separately verify catalog signatures: an `Unsigned`
+result is not proof that a Windows driver lacks a valid catalog signature.
+These collection limits are included in the quality receipt.

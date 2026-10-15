@@ -147,3 +147,11 @@ bit sizes, report counts, logical ranges, and flags. At most 128 shapes are kept
 per interface, with an explicit partial or truncated state. Button report counts
 are null on HID parser API 1, where that field is reserved. These are descriptor
 metadata; no input report bodies or ordinary key presses are collected.
+
+Each active display may also carry bounded `colorProfiles` metadata: selected
+Windows scope, associated profiles, and separately identified SDR and HDR
+defaults. An association has no inferred subtype. Profiles use per-session
+opaque labels and, when a file can be safely read from the Windows color
+directory, SHA-256. Only recognized preset filenames are retained; custom names,
+paths, and profile contents are omitted. Missing APIs, inaccessible files, and
+bounds remain explicit partial results without removing the display's modes.

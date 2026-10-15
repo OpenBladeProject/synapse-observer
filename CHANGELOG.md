@@ -7,6 +7,9 @@
 - Include independent Windows identity sources, per-action power context, parsed
   HID capabilities, and a collection review in the GUI and exported ZIP
   ([#7](https://github.com/OpenBladeProject/synapse-observer/pull/7)).
+- Collect Windows color-profile associations and SDR/HDR defaults, keeping custom
+  names and file contents private and reporting missing inventory explicitly
+  ([#7](https://github.com/OpenBladeProject/synapse-observer/pull/7)).
 - Retain up to 512 display modes per display so higher resolution and refresh
   choices are less likely to be clipped from device information
   ([#7](https://github.com/OpenBladeProject/synapse-observer/pull/7)).
