@@ -167,3 +167,29 @@ loses its verified reuse record; restart Synapse before collecting with another
 window or build. The observer and fixed Windows API owners stay loaded until
 the vendor process exits; no trampolines are freed while other threads may use
 them.
+
+## Derived draft schemas in 0.2.8
+
+`coverage-draft.json`, `annotation-draft.json`, and `quality-receipt.json` use
+`synapse-observer.coverage-draft.v2`, `synapse-observer.annotation-draft.v2`, and
+`synapse-observer.quality-receipt.v2`, respectively. Consumers must check each
+file's `schemaVersion`. The outer `synapse-observer.bundle.v2` manifest and raw
+session/native protocol versions are unchanged; their versions do not select
+the semantics of a nested draft.
+
+An annotation window's `completeUserReportedSequence` requires the ordered
+starting, target, action, and restoration markers and excludes known unchanged
+starting/target values. `unchangedReportedValues` identifies that exclusion.
+Comparison ignores case and repeated whitespace; it preserves punctuation and
+substantive details. Missing values remain unknown. These are reported values,
+not an independent test that a device changed state.
+
+Quality `completeActionWindows` counts and derived capability promotion use the
+same validity rule. Raw guided coverage and markers remain unchanged as
+provenance. An annotation window's singular `gap` summarizes its primary
+problem; its observations remain available separately. The quality receipt
+records independent facts: `UnchangedReportedValues` or
+`IncompleteActionMarkers`, plus `NoMatchingObservation` when the window has no
+feature-call observations. An empty unchanged sequence retains both diagnoses.
+A completed restoration of an unchanged value is not presented as an unfinished
+restoration; it still does not establish a setting change.

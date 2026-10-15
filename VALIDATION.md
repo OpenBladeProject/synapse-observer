@@ -343,11 +343,30 @@ The framework-dependent `66b5dd6` package passed 511 managed tests and both nati
 owned-process fixtures. Its disconnected preview showed the unchanged-value
 explanation beside a disabled change button and rejected `Windows/Copilot` with
 an explanatory hint. Preview evidence is separate from live Synapse evidence.
-Claude's follow-up review identified an additional editable-input race during
-the asynchronous power-context query. The follow-up fix snapshots and validates
-the submitted value before that query; three delayed-query regressions cover
+Claude's follow-up review prompted submission-value hardening around the power
+query. Production currently completes this Win32 lookup synchronously; the
+delayed-query scenarios exist only through the internal test seam. The fix
+snapshots validated submitted values; three delayed-query regressions cover
 starting, changed, and report-only values. App tests pass 118 cases.
 Annotation, quality, and capability coverage draft schemas advance together to
 v2 for the corrected validity/count/promotion semantics; raw session and native
 protocol versions remain unchanged. Independent no-observation gaps survive
 alongside unchanged or incomplete marker diagnoses. Core tests pass 311 cases.
+Runtime source `7c0c8d794890d4bfb0549ccc8df9298e69205cdd` passed the complete
+package script: 514 managed tests (311 Core, 118 App, 85 Backend) and both native
+owned-process fixtures. Its executable SHA-256 is
+`14922E4A07944BD49A54853D92FAFD9CC9412D570A8E3EE273528D750B04CB6E`.
+Following the already authorized Synapse restart, this package collected actual
+inventory, attached for a short passive recording, stopped, and saved a new ZIP.
+No setting was changed in this smoke recording. Post-restart Synapse inspection
+still showed all saved starting selections. The broader twelve-window capture
+remains separately identified by its `6c61570` source.
+
+The corrective Claude review completed. Additional claimed stop/close/timeout
+races required an incomplete power await; the concrete shipped Windows provider
+returns a completed ValueTask from GetSystemPowerStatus, and AsyncCommand has no
+yield before invoking the marker action. No such production race was reproduced.
+The one-shot delayed test gate is intentional. Independent source triage also
+confirmed that nested draft versions are separate from the unchanged outer
+bundle format, and that a primary annotation summary need not duplicate every
+quality diagnostic. The missing format documentation was corrected.
