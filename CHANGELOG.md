@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Fixed
+
+- Explain when to wait for Synapse profile syncing before changing or restoring
+  settings, and how to save partial evidence if syncing stays stuck. Make the
+  separate Fn key check easier to find and distinguish a completed no-input
+  check from an interrupted probe
+  ([#13](https://github.com/OpenBladeProject/synapse-observer/pull/13)).
+
 ## [0.2.8] - 2026-10-15
 
 ### Improved
