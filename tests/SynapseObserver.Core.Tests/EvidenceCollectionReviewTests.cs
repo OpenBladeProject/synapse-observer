@@ -32,7 +32,7 @@ public sealed class EvidenceCollectionReviewTests
         session.AddMarker(new(6, EvidenceMarkerKind.UserReportedRestoration, "performance", "Restored", EvidenceProvenance.UserReported, "Balanced"));
         var snapshot = session.Snapshot();
         var review = EvidenceCollectionReview.Create(snapshot);
-        Assert.Contains("1 documented setting change", review.Summary);
+        Assert.Contains("1 complete action sequence", review.Summary);
         Assert.Contains("1 complete report body retained", review.Summary);
         Assert.Contains(review.Notes, note => note.StartsWith("1 of 1 returned report body was omitted", StringComparison.Ordinal));
         Assert.DoesNotContain(review.Notes, note => note.Contains("recording data could not", StringComparison.Ordinal));
@@ -76,6 +76,21 @@ public sealed class EvidenceCollectionReviewTests
         Assert.Contains(review.Notes, note => note.Contains("same starting and changed value", StringComparison.Ordinal));
         Assert.DoesNotContain(review.Notes, note => note.Contains("unfinished", StringComparison.Ordinal));
         Assert.DoesNotContain(review.Notes, note => note.Contains("Restore any changed setting", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void CompleteMissingValueSequenceIsNotCalledASettingChange()
+    {
+        using var session = new EvidenceSession(SyntheticPreview.CreateInventory());
+        session.AddMarker(new(1, EvidenceMarkerKind.UserReportedStartingValue, "performance", "Starting", EvidenceProvenance.UserReported));
+        session.AddMarker(new(2, EvidenceMarkerKind.UserReportedTargetValue, "performance", "Changed", EvidenceProvenance.UserReported));
+        session.AddMarker(new(3, EvidenceMarkerKind.UserActionConfirmed, "performance", "Change marked", EvidenceProvenance.UserReported));
+        session.AddMarker(new(4, EvidenceMarkerKind.UserReportedRestoration, "performance", "Restored", EvidenceProvenance.UserReported));
+
+        var review = EvidenceCollectionReview.Create(session.Snapshot());
+
+        Assert.Contains("1 complete action sequence", review.Summary);
+        Assert.DoesNotContain("setting change", review.Summary, StringComparison.Ordinal);
     }
 
     private static ControlObservation Observation(string operation, double time, ObservationSource source,

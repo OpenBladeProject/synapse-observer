@@ -17,7 +17,7 @@ public sealed record EvidenceCollectionReview(string Summary, IReadOnlyList<stri
     {
         var counts = quality.Counts;
         var retained = snapshot.Observations.Count(item => item.CompletePayloadRetained);
-        var summary = $"{Count(counts.CompleteActionWindows, "documented setting change")} · "
+        var summary = $"{Count(counts.CompleteActionWindows, "complete action sequence")} · "
             + $"{Count(snapshot.SpecialKeyProbes.Count, "key check")} · "
             + $"{Count(retained, "complete report body", "complete report bodies")} retained.";
         if (snapshot.Observations.Count == 0 && counts.ActionWindows == 0 && snapshot.SpecialKeyProbes.Count == 0)
