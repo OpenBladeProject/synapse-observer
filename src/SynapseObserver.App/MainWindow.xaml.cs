@@ -13,6 +13,7 @@ public partial class MainWindow : Window
     private bool closing;
     private bool wasRecording;
     private bool hadInventory;
+    private bool pendingExportFocus;
     private SpecialKeyProbe? specialKeyProbe;
 
     public MainWindow(bool preview)
@@ -45,14 +46,20 @@ public partial class MainWindow : Window
             }
             var finished = wasRecording && !viewModel.IsRecording;
             wasRecording = viewModel.IsRecording;
-            if (finished)
+            pendingExportFocus |= finished;
+            if (pendingExportFocus && !viewModel.IsBusy)
             {
+                pendingExportFocus = false;
                 Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, new Action(() =>
                 {
                     if (!closing && IsEnabled && IsVisible && viewModel.ShowExport)
                     {
                         ExportCard.BringIntoView();
-                        (viewModel.ShowCapacityRecovery ? SavePartialEvidenceButton : SaveEvidenceButton).Focus();
+                        if (!viewModel.ShowCapacityRecovery) SaveEvidenceButton.Focus();
+                        else if (viewModel.CapacityRestorationRequired && !viewModel.CapacityRestorationConfirmed)
+                            CapacityRestorationCheckBox.Focus();
+                        else if (viewModel.SaveAndContinueCommand.CanExecute(null)) ContinueEvidenceButton.Focus();
+                        else SavePartialEvidenceButton.Focus();
                     }
                 }));
             }

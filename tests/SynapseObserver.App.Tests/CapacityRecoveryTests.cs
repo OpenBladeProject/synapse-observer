@@ -58,6 +58,7 @@ public sealed class CapacityRecoveryTests
     public async Task CapacityDuringPendingPowerReadCannotAdvanceMarkerPhase()
     {
         var model = await RecordingAsync();
+        model.EvidenceDestinationForTest = () => Path.Combine(Path.GetTempPath(), $"unused-{Guid.NewGuid():N}.zip");
         var observer = CapacityObserver.BeforeBoundary();
         model.SetOwnedTestObserver(observer, [Candidate]);
         await Poll(model);
@@ -77,15 +78,81 @@ public sealed class CapacityRecoveryTests
         observer.EnqueueBoundary();
         model.SetOwnedTestObserver(observer, startPump: true);
         await WaitUntilAsync(() => model.ShowCapacityRecovery);
+        await WaitForCapacityStopAsync(model, observer);
+        Assert.False(model.SaveAndContinueCommand.CanExecute(null));
+        Assert.False(model.MarkCommand.CurrentExecution.IsCompleted);
         releasePower.SetResult(PowerSourceKind.Ac);
         await model.MarkCommand.CurrentExecution;
-        await WaitForCapacityStopAsync(model, observer);
 
         Assert.True(model.ShowStartingValue);
         Assert.False(model.CapacityRestorationRequired);
+        Assert.True(model.SaveAndContinueCommand.CanExecute(null));
         Assert.DoesNotContain(model.Evidence!.Markers,
             marker => marker.Kind == EvidenceMarkerKind.UserReportedStartingValue);
         Assert.All(observer.RawBuffers, buffer => Assert.All(buffer, value => Assert.Equal((byte)0, value)));
+        await model.CloseAsync();
+    }
+
+    [Fact]
+    public async Task ReadOnlyReportAtMarkerReserveCleansUpAnAlreadyEndedReader()
+    {
+        var model = await RecordingAsync();
+        model.EvidenceDestinationForTest = () => Path.Combine(Path.GetTempPath(), $"unused-{Guid.NewGuid():N}.zip");
+        model.SelectedActivityIndex = ActivityIndex(model, "power-source");
+        var observer = CapacityObserver.Empty();
+        observer.FinishNaturally();
+        model.SetOwnedTestObserver(observer, [Candidate], startPump: true);
+        await CurrentPump(model).WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(model.IsRecording);
+
+        FillMarkersTo(model, EvidenceLimits.MaxMarkers - 6);
+        model.StartingSetting = "Battery";
+        await Run(model.MarkCommand);
+        await WaitForCapacityStopAsync(model, observer);
+
+        var evidence = model.Evidence!;
+        Assert.Equal(EvidenceLimits.MaxMarkers - 4, evidence.Markers.Count);
+        Assert.Equal(0, evidence.RejectedMarkerCount);
+        Assert.Contains(evidence.Markers, marker => marker.Kind == EvidenceMarkerKind.UserReportedCurrentState);
+        Assert.Contains(evidence.Markers, marker => marker.Kind == EvidenceMarkerKind.RecordingStopped);
+        Assert.Contains(evidence.Coverage, item =>
+            item.ActivityId == "power-source" && item.State == CoverageState.Completed);
+        Assert.False(model.CapacityRestorationRequired);
+        Assert.True(model.SaveAndContinueCommand.CanExecute(null));
+        Assert.Equal(1, observer.Stops);
+        Assert.Equal(0, observer.Invalidations);
+        await model.CloseAsync();
+    }
+
+    [Fact]
+    public async Task RestorationAtMarkerReserveRemainsCompleteAndLeavesCleanupRoom()
+    {
+        var model = await RecordingAsync();
+        model.EvidenceDestinationForTest = () => Path.Combine(Path.GetTempPath(), $"unused-{Guid.NewGuid():N}.zip");
+        var observer = CapacityObserver.Empty();
+        model.SetOwnedTestObserver(observer, [Candidate], startPump: true);
+        model.StartingSetting = "Balanced";
+        await Run(model.MarkCommand);
+        model.ChangedSetting = "Silent";
+        await Run(model.MarkCommand);
+        FillMarkersTo(model, EvidenceLimits.MaxMarkers - 6);
+
+        await Run(model.MarkCommand);
+        await WaitForCapacityStopAsync(model, observer);
+
+        var evidence = model.Evidence!;
+        Assert.Equal(EvidenceLimits.MaxMarkers - 4, evidence.Markers.Count);
+        Assert.Equal(0, evidence.RejectedMarkerCount);
+        Assert.Contains(evidence.Markers, marker => marker.Kind == EvidenceMarkerKind.UserReportedRestoration
+            && marker.Value == "Balanced");
+        Assert.Contains(evidence.Markers, marker => marker.Kind == EvidenceMarkerKind.RecordingStopped);
+        Assert.DoesNotContain(evidence.Coverage, item =>
+            item.ActivityId == "performance" && item.Reason == CoverageReason.IncompleteRestoration);
+        Assert.True(Assert.Single(ContributionDraftBuilder.CreateAnnotationDraft(evidence).ActionWindows)
+            .CompleteUserReportedSequence);
+        Assert.False(model.CapacityRestorationRequired);
+        Assert.False(model.CapacityRestorationConfirmed);
+        Assert.True(model.SaveAndContinueCommand.CanExecute(null));
         await model.CloseAsync();
     }
 
@@ -166,6 +233,12 @@ public sealed class CapacityRecoveryTests
             Assert.Empty(fresh.SpecialKeyObservations);
             Assert.Empty(fresh.SpecialKeyProbes);
             Assert.All(fresh.Coverage, item => Assert.Equal(CoverageState.Pending, item.State));
+            var firstPartIdentity = Assert.Single(first.Markers,
+                marker => marker.Kind == EvidenceMarkerKind.SessionStarted).Value!;
+            var secondPartIdentity = Assert.Single(fresh.Markers,
+                marker => marker.Kind == EvidenceMarkerKind.SessionStarted).Value!;
+            Assert.Matches("^collection-[0-9a-f]{32}-part-001$", firstPartIdentity);
+            Assert.Equal(firstPartIdentity[..^3] + "002", secondPartIdentity);
             Assert.Equal(model.Activities.Count - 1, model.Activities.Count(item => item.SavedInEarlierZip));
             Assert.True(model.Activities[power].SavedInEarlierZip);
             Assert.False(model.Activities[performance].SavedInEarlierZip);
@@ -200,11 +273,18 @@ public sealed class CapacityRecoveryTests
             var secondSession = secondManifest.RootElement.GetProperty("session");
             Assert.Equal(firstSession.GetProperty("schemaVersion").GetString(),
                 secondSession.GetProperty("schemaVersion").GetString());
+            Assert.Equal(firstPartIdentity, SessionStartedValue(firstSession));
+            Assert.Equal(secondPartIdentity, SessionStartedValue(secondSession));
             Assert.Equal(EvidenceLimits.MaxObservations,
                 firstSession.GetProperty("observations").GetArrayLength());
             Assert.Single(secondSession.GetProperty("observations").EnumerateArray());
             Assert.Equal(firstSession.GetProperty("inventory").GetProperty("collectedAtUtc").GetString(),
                 secondSession.GetProperty("inventory").GetProperty("collectedAtUtc").GetString());
+            var firstOperations = firstSession.GetProperty("observations").EnumerateArray()
+                .Select(item => item.GetProperty("operationId").GetString()).ToHashSet(StringComparer.Ordinal);
+            var secondOperations = secondSession.GetProperty("observations").EnumerateArray()
+                .Select(item => item.GetProperty("operationId").GetString()).ToHashSet(StringComparer.Ordinal);
+            Assert.Empty(firstOperations.Intersect(secondOperations, StringComparer.Ordinal));
             Assert.All(secondObserver.RawBuffers, buffer =>
                 Assert.All(buffer, value => Assert.Equal((byte)0, value)));
             await model.CloseAsync();
@@ -320,6 +400,21 @@ public sealed class CapacityRecoveryTests
             .GetMethod("PollOnceAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
             .Invoke(model, null)!;
 
+    private static Task CurrentPump(CollectorViewModel model) =>
+        (Task)typeof(CollectorViewModel)
+            .GetField("pump", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(model)!;
+
+    private static void FillMarkersTo(CollectorViewModel model, int count)
+    {
+        var session = CurrentSession(model);
+        while (session.MarkerCount < count)
+        {
+            Assert.Equal(EvidenceAddResult.Added, session.AddMarker(new EvidenceMarker(
+                0, EvidenceMarkerKind.Failure, "owned-marker", "Owned marker reserve fixture", EvidenceProvenance.Collector)));
+        }
+    }
+
     private static JsonDocument ReadManifest(string path)
     {
         using var archive = ZipFile.OpenRead(path);
@@ -327,6 +422,11 @@ public sealed class CapacityRecoveryTests
         using var stream = entry.Open();
         return JsonDocument.Parse(stream);
     }
+
+    private static string SessionStartedValue(JsonElement session) =>
+        session.GetProperty("markers").EnumerateArray()
+            .Single(marker => marker.GetProperty("kind").GetString() == "sessionStarted")
+            .GetProperty("value").GetString()!;
 
     private static async Task WaitUntilAsync(Func<bool> predicate)
     {
@@ -340,9 +440,11 @@ public sealed class CapacityRecoveryTests
     private static async Task WaitForCapacityStopAsync(CollectorViewModel model, CapacityObserver observer)
     {
         await observer.Disposed.Task.WaitAsync(TimeSpan.FromSeconds(10));
-        var stop = (Task?)typeof(CollectorViewModel)
-            .GetField("stopTask", BindingFlags.Instance | BindingFlags.NonPublic)!
-            .GetValue(model);
+        var stopField = typeof(CollectorViewModel).GetField("stopTask", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        // Owned observers can dispose synchronously before StopAsync publishes
+        // its task; test continuations run concurrently without a UI dispatcher.
+        await WaitUntilAsync(() => stopField.GetValue(model) is Task);
+        var stop = (Task?)stopField.GetValue(model);
         Assert.NotNull(stop);
         await stop.WaitAsync(TimeSpan.FromSeconds(10));
         await WaitUntilAsync(() => !model.IsRecording && !model.IsBusy && model.ShowCapacityRecovery);
@@ -404,6 +506,8 @@ public sealed class CapacityRecoveryTests
             var at = (System.Diagnostics.Stopwatch.GetTimestamp() - OriginTimestampTicks) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
             Enqueue([Event(1, includeResponse: false) with { RelativeMilliseconds = at, CompletionRelativeMilliseconds = at }]);
         }
+
+        public void FinishNaturally() => finished = true;
 
         public void EnqueueBoundary() => Enqueue([
             Event((ulong)EvidenceLimits.MaxObservations, includeResponse: true),

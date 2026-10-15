@@ -90,8 +90,8 @@
             <TextBlock Text="{Binding ReviewSummary}" Margin="0,10,0,0" />
             <StackPanel Visibility="{Binding ShowCapacityRecovery, Converter={StaticResource VisibleWhenTrue}}" Margin="0,12,0,0">
               <TextBlock Text="This ZIP is full. Save it before recording more settings." />
-              <CheckBox IsChecked="{Binding CapacityRestorationConfirmed}" IsEnabled="{Binding CanConfirmCapacityRestoration}" Visibility="{Binding CapacityRestorationRequired, Converter={StaticResource VisibleWhenTrue}}" Margin="0,10,0,0"><TextBlock Text="{Binding CapacityRestorationLabel}" TextWrapping="Wrap" /></CheckBox>
-              <Button Content="Save ZIP and continue…" Command="{Binding SaveAndContinueCommand}" HorizontalAlignment="Left" Style="{StaticResource PrimaryButton}" Margin="0,12,0,0" />
+              <CheckBox x:Name="CapacityRestorationCheckBox" IsChecked="{Binding CapacityRestorationConfirmed}" IsEnabled="{Binding CanConfirmCapacityRestoration}" Visibility="{Binding CapacityRestorationRequired, Converter={StaticResource VisibleWhenTrue}}" Margin="0,10,0,0"><TextBlock Text="{Binding CapacityRestorationLabel}" TextWrapping="Wrap" /></CheckBox>
+              <Button x:Name="ContinueEvidenceButton" Content="Save ZIP and continue…" Command="{Binding SaveAndContinueCommand}" HorizontalAlignment="Left" Style="{StaticResource PrimaryButton}" Margin="0,12,0,0" />
               <TextBlock Text="Keep every ZIP part and share them together. Saved checklist items stay visible; each new part records its own evidence." Foreground="{StaticResource MutedTextBrush}" FontSize="12" Margin="0,8,0,0" />
             </StackPanel>
             <Button x:Name="SaveEvidenceButton" Margin="0,12,0,0" Content="Save evidence ZIP…" Command="{Binding SaveCommand}" HorizontalAlignment="Left" Style="{StaticResource PrimaryButton}" Visibility="{Binding ShowStandardSave, Converter={StaticResource VisibleWhenTrue}}" />

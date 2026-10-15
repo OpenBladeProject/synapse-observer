@@ -56,8 +56,9 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
     private string collectionDetails = "The observer collects selected laptop feature calls. An observed response is labeled as a user-mode returned buffer, not firmware confirmation.";
     private string status = "Start with your laptop's device information.";
     private EvidenceCollectionReview? collectionReview;
-    public string ReviewSummary => collectionReview?.Summary ?? string.Empty;
-    public string ReviewNotes => collectionReview is null ? string.Empty : string.Join("\n\n", collectionReview.Notes);
+    public string ReviewSummary => (evidencePart > 1 ? "This review covers the current ZIP part only. " : string.Empty) + (collectionReview?.Summary ?? string.Empty);
+    public string ReviewNotes => collectionReview is null ? string.Empty
+        : (evidencePart > 1 ? "Earlier saved items are in the previous ZIP parts. Share all parts together.\n\n" : string.Empty) + string.Join("\n\n", collectionReview.Notes);
 
     private async Task UpdateCollectionReviewAsync()
     {
@@ -225,7 +226,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
             var identities = inventory.MachineIdentity.Value;
             var identity = identities.FirstOrDefault();
             deviceSummary = $"{identity?.ProductName ?? "Laptop identity unavailable"} · BIOS {identity?.BiosVersion ?? "unavailable"}\n{inventory.RazerHidInterfaces.Value.Count} Razer HID interfaces · {inventory.SynapseProcesses.Value.Count} related software processes";
-            Marker(EvidenceMarkerKind.SessionStarted, "session", "Device information collected", EvidenceProvenance.Collector);
+            Marker(EvidenceMarkerKind.SessionStarted, "session", "Device information collected", EvidenceProvenance.Collector, CollectionPartLabel);
             foreach (var activity in Activities)
             {
                 session.SetCoverage(new CoverageItem(activity.Id, activity.Title, CoverageState.Pending, CoverageReason.None));
@@ -239,6 +240,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
         {
             collecting = false;
             busy = false;
+            if (capacityReached) status = CapacityInstructions;
             Refresh();
         }
     }
@@ -599,6 +601,9 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
 
             status = WithRestorationReminder(status);
 
+            CheckMarkerCapacity();
+            if (capacityReached) status = CapacityInstructions;
+
             // Preserve the incomplete-restoration evidence and reminder, but
             // permit subsequent inventory-only reports after recording ends.
             ResetEntries();
@@ -808,6 +813,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
                 CryptographicOperations.ZeroMemory(observed.RequestBytes);
                 CryptographicOperations.ZeroMemory(observed.ResponseBytes);
             }
+            CheckMarkerCapacity();
             if (visibleStateChanged) NotifyObservationSummaries();
         }
 
@@ -877,7 +883,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
         {
             ReachCapacity();
             retentionGapDetails = $"The session reached its {EvidenceLimits.MaxMarkers} action-marker limit. Further markers are counted as rejected in the ZIP. Stop and save this ZIP, then continue in a new part.";
-            status = "This action could not be recorded because the session is full. Stop and save the evidence.";
+            status = "This action could not be recorded because the session is full. " + CapacityInstructions;
             Refresh();
             return false;
         }
@@ -895,6 +901,10 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
             status = $"This step could not finish ({ex.GetType().Name}). Collected information is still available.";
             session?.AddMarker(new EvidenceMarker(RelativeMilliseconds, EvidenceMarkerKind.Failure, "session", "Collector step failed", EvidenceProvenance.Collector, ex.GetType().Name));
             Refresh();
+        }
+        finally
+        {
+            CheckMarkerCapacity();
         }
     }
 

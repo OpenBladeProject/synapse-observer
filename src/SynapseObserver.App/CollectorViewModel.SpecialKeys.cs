@@ -61,6 +61,13 @@ internal sealed partial class CollectorViewModel
             RefreshSpecialKeyProbe();
             return Task.CompletedTask;
         }
+        CheckMarkerCapacity();
+        if (capacityReached)
+        {
+            probingSpecialKey = false;
+            RefreshSpecialKeyProbe();
+            return Task.CompletedTask;
+        }
         RefreshSpecialKeyProbe();
         try
         {

@@ -10,6 +10,10 @@ internal sealed partial class CollectorViewModel
     // Each part keeps the existing schema and memory/export bounds. Paths remain
     // local, and only the latest saved copy of each part needs overwrite protection.
     private const int MaxEvidenceParts = 256;
+    // Leave room for the bounded user-action tail and cleanup diagnostics.
+    private const int CleanupMarkerReserve = 5;
+    private readonly string collectionToken = "collection-" + Guid.NewGuid().ToString("N");
+    private string CollectionPartLabel => $"{collectionToken}-part-{evidencePart:D3}";
     private readonly Dictionary<int, string> savedPartPaths = [];
     private int evidencePart = 1;
     private bool capacityReached;
@@ -38,6 +42,13 @@ internal sealed partial class CollectorViewModel
     private bool CanSaveEvidence() => !closing && (!preview || EvidenceDestinationForTest is not null)
         && !busy && !IsProbingSpecialKey && HasInventory && !recording;
 
+    private void CheckMarkerCapacity()
+    {
+        if (capacityReached || session is null || session.MarkerCount < EvidenceLimits.MaxMarkers - CleanupMarkerReserve) return;
+        retentionGapDetails = "The action-marker capacity is reserved for cleanup. Save this ZIP and continue in a new part.";
+        ReachCapacity();
+    }
+
     private void ReachCapacity()
     {
         if (capacityReached) return;
@@ -50,6 +61,10 @@ internal sealed partial class CollectorViewModel
         CancelSpecialKeyProbe();
         status = CapacityInstructions;
         Refresh();
+        // Normal expiry leaves recording=true until cleanup. A completed reader
+        // can no longer see the capacity flag or signal its stop coordinator.
+        // The active-reader path keeps using its existing request/drain loop.
+        if (recording && !stopping && pump is { IsCompleted: true }) _ = GuardAsync(StopAsync);
     }
 
     private Task SaveAndContinueAsync() => ExportEvidenceAsync(continueInNewPart: true);
@@ -89,7 +104,7 @@ internal sealed partial class CollectorViewModel
             savedSession.Dispose();
             evidencePart++;
             sessionOriginTicks = Stopwatch.GetTimestamp();
-            observedCalls = failedCalls = gaps = droppedEvents = recordingNumber = probeSequence = stepStartCount = stepStartGaps = recordingStartGaps = 0;
+            observedCalls = failedCalls = gaps = droppedEvents = stepStartCount = stepStartGaps = recordingStartGaps = 0;
             observerOrigin = probeOrigin = 0;
             capacityReached = capacityRestorationConfirmed = observerEnded = cleanupRequested = readerFaulted = nativeFailureGapCounted = malformedLossMarkerEmitted = false;
             capacityStartingSetting = retentionGapDetails = string.Empty;
@@ -100,7 +115,7 @@ internal sealed partial class CollectorViewModel
             activeProbeLabel = string.Empty;
             collectionDetails = "The observer collects selected laptop feature calls. An observed response is labeled as a user-mode returned buffer, not firmware confirmation.";
             specialKeyStatus = SpecialKeySelectionGuidance(expectedSpecialKey);
-            Marker(EvidenceMarkerKind.SessionStarted, "session", "New ZIP part; original device inventory reused", EvidenceProvenance.Collector);
+            Marker(EvidenceMarkerKind.SessionStarted, "session", "New ZIP part; original device inventory reused", EvidenceProvenance.Collector, CollectionPartLabel);
             await UpdateCollectionReviewAsync();
             status = "Previous ZIP saved. Start recording when ready to continue; share all saved ZIP parts together.";
         }
