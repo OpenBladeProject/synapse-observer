@@ -24,8 +24,9 @@ public sealed class RecoverablePollLossTests
         Assert.Equal(128, model.Evidence!.Observations.Count);
         Assert.Contains("128 observed calls", model.ObservationSummary);
         Assert.Contains("1 recording gaps", model.ObservationSummary);
-        Assert.Single(model.Evidence.Markers, marker => marker.Kind == EvidenceMarkerKind.Failure
+        Assert.Contains(model.Evidence.Markers, marker => marker.Kind == EvidenceMarkerKind.Failure
             && marker.ActivityId == "observer" && marker.Provenance == EvidenceProvenance.Observer);
+        Assert.Contains("Restart Synapse", model.RecorderStatus);
         Assert.Equal(1, observer.MaximumConcurrentPolls);
         Assert.Equal(1, observer.Stops);
         Assert.Equal(1, observer.Disposals);

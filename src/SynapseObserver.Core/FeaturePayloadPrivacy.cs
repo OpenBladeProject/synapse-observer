@@ -1,7 +1,7 @@
 namespace SynapseObserver.Core;
 
 /// <summary>
-/// Projects only reviewed, structurally complete Razer feature reports. This is a
+/// Projects reviewed complete reports and strictly bounded incomplete response semantics. This is a
 /// privacy decision for evidence export and does not authorize a device or command.
 /// </summary>
 public static class FeaturePayloadPrivacy
@@ -34,19 +34,33 @@ public static class FeaturePayloadPrivacy
         ArgumentNullException.ThrowIfNull(observation);
 
         var buffer = observation.Buffer.Span;
+        var structureDiagnostics = DiagnoseAmbiguousResponse(observation);
         if (buffer.IsEmpty || !IsFeatureContext(observation))
         {
-            return MetadataOnly(null);
+            return MetadataOnly(null, structureDiagnostics);
         }
 
         if (buffer.Length < 9)
         {
-            return MetadataOnly(null);
+            return MetadataOnly(null, structureDiagnostics);
         }
 
         if (buffer.Length == 375)
         {
             return ClassifyMatrixFrame(observation);
+        }
+
+        if (TryProjectIncompleteThermalAcknowledgement(
+                observation, structureDiagnostics, out var semanticResponse))
+        {
+            return new FeaturePayloadProjection(
+                FeaturePayloadProjectionKind.ReviewedThermalMode,
+                null,
+                null)
+            {
+                ResponseStructureDiagnostics = structureDiagnostics,
+                SemanticResponse = semanticResponse,
+            };
         }
 
         // A completed HID_GET_FEATURE IOCTL may return the logical packet
@@ -55,7 +69,7 @@ public static class FeaturePayloadPrivacy
         var bareResponse = IsCompletedBareFeatureResponse(observation);
         if (!bareResponse && (buffer.Length != 91 || buffer[0] != 0))
         {
-            return MetadataOnly(null);
+            return MetadataOnly(null, structureDiagnostics);
         }
 
         byte? reportId = bareResponse ? null : buffer[0];
@@ -70,7 +84,7 @@ public static class FeaturePayloadPrivacy
         // envelope. Do not reinterpret arbitrary opaque buffer bytes as hints.
         if (!reservedBytesZero || !checksumValid || dataSize > 80)
         {
-            return MetadataOnly(null);
+            return MetadataOnly(null, structureDiagnostics);
         }
 
         var hints = new FeatureReportHeaderHints(
@@ -94,15 +108,100 @@ public static class FeaturePayloadPrivacy
                 && observation.ReturnedBytes is uint returned && returned != buffer.Length
             || !HasExpectedStatus(observation, report[0]))
         {
-            return MetadataOnly(hints);
+            return MetadataOnly(hints, structureDiagnostics);
         }
 
         var payload = report.Slice(8, dataSize);
         var kind = ClassifyReviewedPayload(report[6], report[7], payload, observation.Direction);
         return kind == FeaturePayloadProjectionKind.MetadataOnly
-            ? MetadataOnly(hints)
+            ? MetadataOnly(hints, structureDiagnostics)
             : new FeaturePayloadProjection(kind, hints, Convert.ToHexString(buffer))
-            { NumericMeaningUninterpreted = IsUninterpretedNumericValue(kind, payload, report[7], observation.Direction) };
+            {
+                NumericMeaningUninterpreted = IsUninterpretedNumericValue(kind, payload, report[7], observation.Direction),
+                ResponseStructureDiagnostics = structureDiagnostics,
+            };
+    }
+
+    internal static FeatureResponseStructureDiagnostics? DiagnoseAmbiguousResponse(ControlObservation observation)
+    {
+        if (!IsCompletedBareFeatureResponse(observation))
+        {
+            return null;
+        }
+
+        var buffer = observation.Buffer.Span;
+        return new FeatureResponseStructureDiagnostics(
+            DiagnoseLayout(
+                FeatureResponseLayout.BareLogicalPacket,
+                FeatureResponseCompleteness.Complete,
+                buffer,
+                reportOffset: 0,
+                checksumIndex: 88,
+                paddingEndExclusive: 88,
+                requireZeroReportId: false),
+            DiagnoseLayout(
+                FeatureResponseLayout.ReportIdPrefixedPacket,
+                FeatureResponseCompleteness.MissingFinalPadding,
+                buffer,
+                reportOffset: 1,
+                checksumIndex: 89,
+                paddingEndExclusive: 89,
+                requireZeroReportId: true));
+    }
+
+    private static FeatureResponseLayoutDiagnostic DiagnoseLayout(
+        FeatureResponseLayout layout,
+        FeatureResponseCompleteness completeness,
+        ReadOnlySpan<byte> buffer,
+        int reportOffset,
+        int checksumIndex,
+        int paddingEndExclusive,
+        bool requireZeroReportId)
+    {
+        var failures = new List<FeatureResponseInvariantFailure>();
+        if (requireZeroReportId && buffer[0] != 0)
+        {
+            failures.Add(FeatureResponseInvariantFailure.UnexpectedReportId);
+        }
+
+        if (buffer[reportOffset] != 0x02)
+        {
+            failures.Add(FeatureResponseInvariantFailure.UnexpectedStatus);
+        }
+
+        if (buffer.Slice(reportOffset + 2, 3).IndexOfAnyExcept((byte)0) >= 0)
+        {
+            failures.Add(FeatureResponseInvariantFailure.ReservedBytesNonzero);
+        }
+
+        var dataSize = buffer[reportOffset + 5];
+        if (dataSize > 80)
+        {
+            failures.Add(FeatureResponseInvariantFailure.DataSizeOutOfRange);
+        }
+
+        byte checksum = 0;
+        for (var index = reportOffset + 2; index <= reportOffset + 87; index++)
+        {
+            checksum ^= buffer[index];
+        }
+
+        if (checksum != buffer[checksumIndex])
+        {
+            failures.Add(FeatureResponseInvariantFailure.ChecksumMismatch);
+        }
+
+        if (dataSize <= 80)
+        {
+            var paddingStart = reportOffset + 8 + dataSize;
+            if (buffer.Slice(paddingStart, paddingEndExclusive - paddingStart).IndexOfAnyExcept((byte)0) >= 0
+                || completeness == FeatureResponseCompleteness.Complete && buffer[89] != 0)
+            {
+                failures.Add(FeatureResponseInvariantFailure.PaddingNonzero);
+            }
+        }
+
+        return new FeatureResponseLayoutDiagnostic(layout, completeness, failures.Count == 0, failures.AsReadOnly());
     }
 
     internal static bool IsCompletedBareFeatureResponse(ControlObservation observation) =>
@@ -120,6 +219,51 @@ public static class FeaturePayloadPrivacy
         && observation.CompletedRelativeMilliseconds is double completed
         && double.IsFinite(completed)
         && completed >= observation.RelativeMilliseconds;
+
+    private static bool TryProjectIncompleteThermalAcknowledgement(
+        ControlObservation observation,
+        FeatureResponseStructureDiagnostics? diagnostics,
+        out ReviewedFeatureResponseProjection? projection)
+    {
+        projection = null;
+        if (observation.ReturnedLengthUnknown
+            || observation.ReturnedBytes != 90
+            || diagnostics?.ReportIdPrefixedPacket is not
+            {
+                Completeness: FeatureResponseCompleteness.MissingFinalPadding,
+                MatchesAvailableBytes: false,
+                Failures.Count: 1,
+            } shifted
+            || shifted.Failures[0] != FeatureResponseInvariantFailure.UnexpectedReportId)
+        {
+            return false;
+        }
+
+        // The leading byte is neither interpreted nor retained. Bytes 1..89
+        // independently contain the logical report through its checksum, but
+        // the final logical padding byte was not returned by the API.
+        var report = observation.Buffer.Span[1..];
+        if (report[0] != 0x02
+            || report[2] != 0 || report[3] != 0 || report[4] != 0
+            || report[5] != 4
+            || report[6] != 0x0D || report[7] != 0x02
+            || !ReviewedThermalEncoding.TryDecode(report.Slice(8, 4), out var channel, out var mode)
+            || report[12..88].IndexOfAnyExcept((byte)0) >= 0
+            || report[88] != CalculateChecksum(report))
+        {
+            return false;
+        }
+
+        projection = new ReviewedFeatureResponseProjection(
+            ReviewedFeatureResponseKind.ThermalSetterAcknowledgement,
+            ReviewedFeatureResponseStatus.Successful,
+            report[1],
+            channel,
+            mode,
+            FeatureResponseCompleteness.MissingFinalPadding,
+            OpaquePrefixDisposition.Excluded);
+        return true;
+    }
 
     private static FeaturePayloadProjectionKind ClassifyReviewedPayload(
         byte commandClass,
@@ -250,19 +394,7 @@ public static class FeaturePayloadPrivacy
         payload.Length == 4 && payload[0] == 0x01 && payload[1] is 0x01 or 0x02;
 
     private static bool IsKnownThermalValue(ReadOnlySpan<byte> payload) =>
-        payload.Length == 4
-        && payload[0] == 0x01
-        && payload[1] is 0x01 or 0x02
-        && (payload[2], payload[3]) is
-            (0x00, 0x00) or
-            (0x05, 0x00) or
-            (0x02, 0x00) or
-            (0x04, 0x00) or
-            (0x03, 0x00) or
-            (0x06, 0x00) or
-            (0x07, 0x00) or
-            (0x00, 0x01) or
-            (0x04, 0x01);
+        ReviewedThermalEncoding.TryDecode(payload, out _, out _);
 
     private static bool IsFanSpeed(ReadOnlySpan<byte> payload) =>
         payload.Length == 3
@@ -346,6 +478,11 @@ public static class FeaturePayloadPrivacy
         return checksum;
     }
 
-    private static FeaturePayloadProjection MetadataOnly(FeatureReportHeaderHints? hints) =>
-        new(FeaturePayloadProjectionKind.MetadataOnly, hints, null);
+    private static FeaturePayloadProjection MetadataOnly(
+        FeatureReportHeaderHints? hints,
+        FeatureResponseStructureDiagnostics? structureDiagnostics = null) =>
+        new(FeaturePayloadProjectionKind.MetadataOnly, hints, null)
+        {
+            ResponseStructureDiagnostics = structureDiagnostics,
+        };
 }

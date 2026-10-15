@@ -109,3 +109,96 @@ families, unfamiliar numeric values are retained with
 length, checksum, padding, source and status checks still apply. Query input
 arguments must match the reviewed zero-valued shape. This permits new-model
 values to be investigated without pretending to understand or support them.
+
+## Additive collection provenance in 0.2.8
+
+Session v2 records may include `source` on machine identity rows, distinguishing
+`BiosRegistry` from `SystemInformationRegistry` within each registry view. The
+quality receipt reports missing or disagreeing sources; no canonical product
+is guessed from a disagreement.
+
+Action markers may include `powerSourceAtMarker`, sampled from Windows at that
+marker. Annotation windows expose `powerSourceAtAction` only when all setting
+markers carry the same known source. Missing, unknown, or changed samples leave
+power-specific performance coverage open. Windows external power does not
+establish barrel versus USB-C class or adapter wattage. Inventory power is
+separate evidence about the initial collection time.
+
+Completed 90-byte feature responses with capacity for 91 bytes may carry
+`responseStructureDiagnostics`. Fixed reason codes check both the bare-packet
+and report-ID-prefixed interpretations of the available bytes. A prefixed
+candidate explicitly lacks final padding. The diagnostics contain no opaque
+bytes or header values. A narrower `semanticResponse` is emitted only when the
+shifted logical bytes pass every available invariant, the sole layout failure
+is a nonzero opaque leading byte, and the body is a reviewed successful thermal
+setter acknowledgement with a known channel and mode. It retains the
+transaction and closed semantic fields while excluding the leading byte, the
+body, and the unavailable final padding. `completePayloadRetained` remains
+false and `headerHints` remains null. The annotation draft links this receipt
+to a setter request only when interface, transaction, command, semantic value,
+and ordering identify one unique unmatched request. This is acknowledgement
+evidence, not firmware readback or a complete HID envelope.
+
+The app and README.txt share a collection review showing retained bodies,
+unfinished actions, omitted response contents, and remaining evidence items.
+A documented sequence describes user markers, not successful firmware readback.
+
+HID descriptors also include bounded parsed button and value capabilities for
+input, output, and feature reports: report IDs, usage ranges, link collections,
+bit sizes, report counts, logical ranges, and flags. At most 128 shapes are kept
+per interface, with an explicit partial or truncated state. Button report counts
+are null on HID parser API 1, where that field is reserved. These are descriptor
+metadata; no input report bodies or ordinary key presses are collected.
+
+Each active display may also carry bounded `colorProfiles` metadata: selected
+Windows scope, associated profiles, and separately identified SDR and HDR
+defaults. An association has no inferred subtype. Profiles use per-session
+opaque labels. Only recognized preset filenames and their SHA-256 hashes are
+retained, after a bounded read from the Windows color directory. Custom names,
+custom content hashes, paths, and all profile contents are omitted. Missing APIs, inaccessible files, and
+bounds remain explicit partial results without removing the display's modes.
+
+A clean recording can reuse the exact observer DLL verified by the same open
+collector. Each recording uses a fresh mapping and repeats process and device
+checks. Hooks, callback completion, successful worker exit, and the loaded
+module's identity must all be confirmed. Reader or evidence-processing errors
+block reuse independently from the native call and cleanup status. A competing start cannot replace an active
+recording, and uncertain cleanup permanently blocks reuse in that Synapse
+process. A late completion does not remove that block. Closing the collector
+loses its verified reuse record; restart Synapse before collecting with another
+window or build. The observer and fixed Windows API owners stay loaded until
+the vendor process exits; no trampolines are freed while other threads may use
+them.
+
+## Derived draft schemas in 0.2.8
+
+`coverage-draft.json`, `annotation-draft.json`, and `quality-receipt.json` use
+`synapse-observer.coverage-draft.v2`, `synapse-observer.annotation-draft.v2`, and
+`synapse-observer.quality-receipt.v2`, respectively. Consumers must check each
+file's `schemaVersion`. The outer `synapse-observer.bundle.v2` manifest and raw
+session/native protocol versions are unchanged; their versions do not select
+the semantics of a nested draft.
+
+Development builds before `7c0c8d7` used v1 draft schemas while also reporting
+collector version 0.2.8. Inspect each file's schema rather than inferring it
+from the collector version.
+
+An annotation window's `completeUserReportedSequence` requires the ordered
+starting, target, action, and restoration markers and excludes known unchanged
+starting/target values. `unchangedReportedValues` identifies that exclusion.
+Comparison trims leading and trailing whitespace, collapses whitespace separators,
+and uses ordinal case-insensitive comparison. It preserves punctuation and
+substantive details. Null or blank values are not classified as unchanged: an
+otherwise ordered sequence can still count as complete and contribute capability
+evidence. Its actual values and whether the device changed remain unproven.
+The GUI requires nonblank values, but the underlying marker format permits them.
+
+Quality `completeActionWindows` counts and derived capability promotion use the
+same validity rule. Raw guided coverage and markers remain unchanged as
+provenance. An annotation window's singular `gap` summarizes its primary
+problem; its observations remain available separately. The quality receipt
+records independent facts: `UnchangedReportedValues` or
+`IncompleteActionMarkers`, plus `NoMatchingObservation` when the window has no
+feature-call observations. An empty unchanged sequence retains both diagnoses.
+A completed restoration of an unchanged value is not presented as an unfinished
+restoration; it still does not establish a setting change.

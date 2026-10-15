@@ -1,9 +1,10 @@
-# Prototype validation
+# Validation record
 
 English | [简体中文](docs/zh-CN/VALIDATION.md) | [Русский](docs/ru-RU/VALIDATION.md)
 
-The implementation is a development prototype. Synthetic checks and the live
-trials below do not establish complete Synapse coverage or all-model compatibility.
+Each check below applies to its recorded source and conditions. Synthetic checks
+and individual live trials do not establish complete Synapse coverage or
+all-model compatibility.
 
 ## Completed locally
 
@@ -230,7 +231,7 @@ runs both unchanged native owned-process fixtures. No new live attachment,
 setting change, input recording, or physical-model validation occurred. Package
 revision and hashes remain in build-manifest.json.
 
-## Pending before public release
+## Remaining coverage limits
 
 - Typed setting-change response payloads: the observed returned bodies remain
   metadata-only under the reviewed privacy grammar.
@@ -238,5 +239,442 @@ revision and hashes remain in build-manifest.json.
 - Security-software behavior with the intended signed release build.
 - Pending asynchronous I/O completion remains outside observer coverage.
 
-No driver installation, sleep/resume test, firmware-write validation, or public
-release is claimed. This records passive user-mode calls, not firmware readback.
+These checks do not include driver installation, sleep/resume testing, or
+firmware-write validation. The observer records passive user-mode calls, not
+firmware readback. Version 0.2.7 was published on 2026-10-15; its released-build
+checks are recorded below.
+
+## Released v0.2.7 inventory export, 2026-10-15
+
+The executable was freshly downloaded from the published GitHub release rather
+than rebuilt from current source. The release tag and embedded build manifest
+both identify source `476de1e47f563c650aa3828c694b2a0be49d48a0`.
+
+- Release ZIP SHA-256:
+  `7E84B1F06C1040DB5D7CEA664B1BEDD330CE2098898D0CE4DD872D5ED0F4B681`.
+- Released executable SHA-256:
+  `428ECBAC88DEBA47ED34CCF427F4B21B4D2AD537ACE710549EAC07C4A8534E2A`.
+- Local inventory ZIP SHA-256:
+  `3B2A0A57A4C711258BDF04B3E162762A1D64409CAED417CC849CE3D4FDD6DC64`.
+
+The released executable's read-only inventory export completed successfully.
+Its ZIP has the five expected entries: manifest.json, coverage-draft.json,
+annotation-draft.json, quality-receipt.json, and README.txt. Build identity,
+schemas, and cross-file counts reconcile. Of 170 checklist leaves, 13 contain
+captured inventory facts and 157 remain NotInvestigated. There are no action
+windows, control observations, special-key observations, or rejected records.
+All query, setter, and production-admission claims remain false.
+
+On this RZ09-0581, the export groups ten sanitized HID collections under one
+physical laptop root, including distinct 91-byte and 375-byte feature
+collections. It includes both Windows product-identity registry views, HID
+report geometry and capability counts, six driver ancestry records, signed/hash
+Synapse provenance, and Windows, CPU, GPU, display, and brightness information.
+This is useful for choosing the exact candidate interfaces. It supplies neither
+command semantics nor a physical keyboard-to-lighting map.
+
+The quality receipt contains 13 inventory gap records, representing eight
+distinct limits rather than 13 missing inventory sections. Display enumeration
+reached its 128-unique-mode bound. Windows returned no ACPI thermal zones or
+matching LampArray. EC/MCU queries and raw EDID were deliberately skipped;
+LampArray current-frame and control-availability data and VRR capability were
+unavailable from the implemented sources. An absent Windows source does not
+establish that the laptop lacks the corresponding hardware feature.
+
+This inventory export is not a complete support submission. A contributor still
+needs to record the relevant Synapse changes and prompted keys, and supply
+requested layout or adapter details. Unrecognized command bodies can require a
+reviewed privacy projection and a focused follow-up recording. User restoration
+markers and successful API calls remain separate from firmware readback.
+
+## Released v0.2.7 live performance export, 2026-10-15
+
+The same downloaded executable completed the GUI workflow on the RZ09-0581,
+BIOS 4.01, using the installed Razer-signed Synapse 4.0.827.114 engine and HID
+module. The GUI displays v0.2.7 and the exact release source in its version
+badge description. OpenBlade's service and processes were absent before each
+Synapse setting change.
+
+Synapse displayed Balanced and Auto (Default) fans before recording. The guide
+recorded Balanced as the starting value, Silent after the Synapse change, and
+Balanced after restoration. Synapse visibly confirmed both transitions, and
+Auto fans remained selected. All state choices used the dropdowns. No fan,
+battery, lighting, or key-probe action was performed. The existing lighting
+traffic was observed incidentally, without changing its effect.
+
+The recording lasted about 101.58 seconds. Stop completed and the GUI reported
+that hooks had stopped; the inert DLL remains resident until Synapse exits.
+Synapse remained responsive. No firmware readback or collector-issued device
+command is claimed.
+
+Local live ZIP SHA-256:
+`E2906C9C5AC9742087D70F8461742A57026FB77431EF1BE92CBFEBA47AC06A91`.
+
+The saved ZIP has the same five-entry schema and exact release build identity.
+Its 32 successful calls produce 38 observations, including six returned buffers.
+There are zero failed calls, reported recording gaps, or rejected records. One
+complete action window retains the starting, changed, and restoration markers.
+Three incidental observations lie outside that window and are reported as such.
+
+Twenty-six reports retain complete reviewed bytes: four 91-byte thermal setter
+requests, two adapter-power query requests, and twenty 375-byte matrix frames.
+The thermal requests contain numeric mode 5 during the Silent change and 0
+during restoration. Those are observed values, not newly admitted commands.
+Six GET_FEATURE input bodies and all six completed 90-byte returned bodies
+remain metadata-only. Response capacity 91, returned count 90, API status,
+completion time, and comparison metadata remain distinguishable from payload
+retention. This export therefore supplies useful setter evidence but cannot
+establish response semantics, getter behavior, or firmware readback.
+
+Fourteen of 170 support-checklist leaves are Captured; 156 remain
+NotInvestigated. The remaining forty guided activities are still Pending.
+The counts, retained byte lengths, redacted-body omissions, action associations,
+and false admission/readback claims pass focused assertions against the actual
+ZIP. Checks found no known local-path, account, device-instance, or serial-field
+sentinels in its exported text. This check is limited to those exclusions and
+the schema's reviewed projections.
+
+The collection and export workflow passes for this performance action. It does
+not prove that one ZIP contains everything needed for full support, especially
+while response bodies are withheld and the other feature actions remain
+unrecorded. Raw and exported evidence remain local and uncommitted.
+
+## Recording reuse and support evidence, 2026-10-15
+
+Runtime source: `78c9395ccd5ff54bd8453fb8f81553656a87f7ed`.
+The framework-dependent package passed 478 managed tests and both native owned
+fixtures. Independent Claude reviews were completed, with confirmed findings
+fixed and other claims checked against reachable source paths. Cleanup
+uncertainty remains a permanent reuse refusal for that Synapse process.
+
+The GUI completed two passive recordings in the same Synapse process without
+restarting it between recordings. Both recordings captured calls and confirmed
+hook and worker shutdown. The explicit GUI export retained both recordings with
+separate operation IDs and the five expected evidence files. Local inspection
+checked ZIP structure and excluded local paths and device instance identifiers.
+The ZIP remains private.
+
+A third recording in the same process completed the reversible battery preset
+workflow and restored the starting selection in Synapse. The action markers
+used the actual battery context even though the inventory was collected while
+external power was present. Reviewed semantic acknowledgement summaries were
+linked to their prior requests; opaque bytes and incomplete payload envelopes
+remained omitted. No failed calls, recording drops, or rejected evidence were
+reported. Automatic fans remained selected in the vendor UI.
+
+This validates passive observation, guided restoration markers, conservative
+response summaries, resident reuse, and export retention on the exercised
+laptop. It does not establish independent firmware readback, prompted-key
+coverage, another feature's behavior, or physical compatibility with another
+Blade model. Later presentation changes improve recording status and recovery
+and add Battery Saver to the suggested presets. Discovery also reports blocked
+resident observers before offering Start. These changes do not alter the tested
+native hook lifecycle or evidence decoder. Raw local evidence remains private.
+
+## Broader Synapse workflow trial, 2026-10-15
+
+Live package source: `6c61570e6863cc98e5e24c12051fca0939f11a60`.
+Executable SHA-256: `4AF8B3B3DB59642A1959FEC584A03104688529B3CC22664AE3C12728365B253B`.
+The laptop was Blade 16 RZ09-0581, HID `1532:02E0`, BIOS 4.01, with Synapse
+4.0.827.114. Synapse reported insufficient external power and disabled its
+higher performance presets. The connector and adapter wattage were not inferred.
+
+Twelve guided setting windows completed with restoration checked in Synapse:
+
+| Evidence item | Starting selection | Temporary selection | Restored selection |
+| --- | --- | --- | --- |
+| Keyboard lighting | Quick Static green preset | Red preset | Same green preset |
+| Logo lighting | Off | Static | Off |
+| Function row | Multimedia keys | Function keys | Multimedia keys |
+| Gaming mode | On, Windows/Copilot disabled, Alt+Tab/Alt+F4 allowed | Off | Same On settings |
+| Charge limit | 80%, optimizer On | 70% | 80% |
+| Battery protection | Optimizer On, 80% | Off | On, 80% |
+| Full charge override | Off, optimizer On, 80% | On | Off, optimizer On, 80% |
+| Keyboard brightness | Plugged In, 6% | 7% | 6% |
+| Animated lighting frames | Quick Static green, 6%, logo Off | Spectrum Cycling, default animation | Same Static green, 6%, logo Off |
+| Fans | Auto | Fixed, displayed 5400 RPM | Auto |
+| Display refresh | 60 Hz | 240 Hz | 60 Hz |
+| Display color mode | Native | sRGB | Native |
+
+The collector completed eleven passive recordings in the same Synapse process,
+with confirmed hook and worker shutdown after each. The first recording reached
+its normal five-minute bound; its completed lighting window remained intact,
+and clean stop allowed reuse. No failed feature calls or recording drops were
+shown. One rejected Gaming description remains in the quality history: a slash
+passed the old UI validation but failed the evidence text validator before any
+setting was changed. The later valid Gaming window completed and restored.
+
+The report-only flow saved Synapse's displayed 2560 x 1600 panel resolution
+without a recording. Skip and Setting unavailable advanced the guide. The
+five-second prompted M1 check ended with Timeout and zero input observations;
+no physical key was pressed and no key coverage is claimed.
+
+The first nine-window checkpoint contains exactly the five expected ZIP files,
+nine ordered complete/restored windows, 2,124 observations, and 2,024 retained
+reviewed input bodies. All 44 output bodies remained excluded. A bounded privacy
+scan found no local paths, accounts, device instance paths, or serial fields.
+The rejected marker remains visible as a global quality gap. Raw ZIPs stay local.
+
+This trial found two collector defects. The fixes prevent identical reported
+starting and changed values from completing a change, conservatively flag known
+legacy no-op windows in exports, and apply the evidence text validator before
+allowing a UI marker. Focused regressions and the Release suite pass 511 tests
+(Core 311, App 115, Backend 85). These results cover the code changes; the live
+setting trial above used the separately identified frozen package.
+
+Remaining evidence includes disabled Custom/Performance controls and tuning,
+physical M/Fn keys and keyboard legends, per-key color mapping, and features not
+exposed by this Synapse UI. HDR, VRR, dynamic refresh, panel brightness, EC/MCU
+versions, and cooling-pad behavior were not exercised. Manual fan-curve editing
+was not part of the Fixed fan-mode round trip. No model beyond this laptop,
+firmware readback, physical lighting observation, or signed-build antivirus
+compatibility is established by these results.
+The final frozen-package ZIP retained all nine earlier action-window objects
+unchanged and added the fan, refresh, and color windows. All twelve windows have
+exact restoration strings and no window gaps. Eleven recording start/stop pairs
+are present, all with clean-stop markers. The bundle contains 2,458 control
+observations, 2,182 reviewed input bodies, and four semantic-only returned
+summaries; all 132 output bodies remain excluded. The current-state resolution
+report is separate from action windows. The M1 timeout retains NoMatchingInput,
+and the rejected Gaming marker remains in global quality history. The same
+bounded privacy scan found no excluded identifiers or local paths.
+
+The framework-dependent `66b5dd6` package passed 511 managed tests and both native
+owned-process fixtures. Its disconnected preview showed the unchanged-value
+explanation beside a disabled change button and rejected `Windows/Copilot` with
+an explanatory hint. Preview evidence is separate from live Synapse evidence.
+Claude's follow-up review prompted submission-value hardening around the power
+query. Production currently completes this Win32 lookup synchronously; the
+delayed-query scenarios exist only through the internal test seam. The fix
+snapshots validated submitted values; three delayed-query regressions cover
+starting, changed, and report-only values. App tests pass 118 cases.
+Annotation, quality, and capability coverage draft schemas advance together to
+v2 for the corrected validity/count/promotion semantics; raw session and native
+protocol versions remain unchanged. Independent no-observation gaps survive
+alongside unchanged or incomplete marker diagnoses. Core tests pass 311 cases.
+Runtime source `7c0c8d794890d4bfb0549ccc8df9298e69205cdd` passed the complete
+package script: 514 managed tests (311 Core, 118 App, 85 Backend) and both native
+owned-process fixtures. Its executable SHA-256 is
+`14922E4A07944BD49A54853D92FAFD9CC9412D570A8E3EE273528D750B04CB6E`.
+Following the already authorized Synapse restart, this package collected actual
+inventory, attached for a short passive recording, stopped, and saved a new ZIP.
+No setting was changed in this smoke recording. Post-restart Synapse inspection
+still showed all saved starting selections. The broader twelve-window capture
+remains separately identified by its `6c61570` source.
+
+The corrective Claude review completed. Additional claimed stop/close/timeout
+races required an incomplete power await; the concrete shipped Windows provider
+returns a completed ValueTask from GetSystemPowerStatus, and AsyncCommand has no
+yield before invoking the marker action. No such production race was reproduced.
+The one-shot delayed test gate is intentional. Independent source triage also
+confirmed that nested draft versions are separate from the unchanged outer
+bundle format, and that a primary annotation summary need not duplicate every
+quality diagnostic. The missing format documentation was corrected.
+
+## AC controls follow-up, 2026-10-15
+
+Live runtime source: `7c0c8d794890d4bfb0549ccc8df9298e69205cdd`,
+using the executable hash recorded above. The same Blade 16 RZ09-0581,
+`1532:02E0`, BIOS 4.01 and Synapse 4.0.827.114 were used. Synapse now
+exposed its AC performance controls; connector type and wattage remain unknown.
+
+| Evidence item | Starting selection | Temporary selection | Restored selection |
+| --- | --- | --- | --- |
+| Performance mode | Balanced, Auto fans | Custom, CPU Medium, GPU High, GPU overclock Off | Balanced, Auto fans |
+| Fan mode | Automatic | Stored Manual Fan Curve, GPU source, percent display, use-both unchecked | Automatic |
+| Custom CPU level | Medium | Low | Medium |
+| Custom GPU level | High | Medium | High |
+
+No curve points were edited. Custom mode was entered to expose its level
+selectors; after restoring both stored levels, the overall mode was returned
+to the original Balanced selection. Restoration was checked in Synapse, not
+through independent firmware readback.
+
+The first recording reached its five-minute limit before the fan restoration
+marker could be saved. Automatic was restored in Synapse, but the incomplete
+window remains in the ZIP. A dedicated shorter fan recording completed all
+four markers. Separate CPU and GPU recordings also completed and stopped.
+
+The final private ZIP has SHA-256
+`CD13EAB2EB6C5F0A13A000F8F7606B24F03DB9E7A40F5C1C0499D73B64CE8F30`.
+It contains the five expected files, four paired recording starts/stops,
+five action windows (four complete and the retained incomplete fan attempt),
+3,150 successful observations, 1,194 complete reviewed input bodies, and ten
+semantic-only response summaries. All 978 output bodies remain excluded.
+There are no failed calls, rejected records, dropped-event or cleanup-failure
+markers. The checkpoint's observations, markers, and two action-window objects
+are unchanged prefixes of the final export. A bounded scan found no local
+paths, accounts, instance identifiers, serial fields, or email addresses.
+
+HyperBoost and cooling-pad state were marked unavailable for this session.
+CPU power-limit and optimizer controls were not exposed in the inspected
+Custom panel. GPU overclocking was Off; its offsets were not exercised.
+Local exact-PID runtime metadata contains tuning-related fields, but that
+neither establishes editable UI availability nor admits commands. These are
+session-level limits, not permanent model capability claims.
+
+Windows Settings was subsequently opened with user approval. The display
+follow-up below records the exercised controls and distinguishes Windows UI
+observations from incomplete action markers. Physical M/Fn keys, keyboard
+legends, per-key color mapping, physical LED observations, EC/MCU versions,
+adapter rating, and cooling-pad behavior remain unverified. No sleep/resume or
+startup hardware test was attempted. Prior unchanged shared-path evidence is
+reused; no all-model or complete-support claim is made.
+
+A later presentation correction names the review count "complete action
+sequence" because the public marker API accepts omitted values. Its focused
+regression uses accepted null values; whitespace-only values are rejected by
+the session API. This wording change does not alter the native observer,
+recording lifecycle, evidence decoder, or the live runtime identified above.
+
+The final summary wording package at source
+`4be4f49b8dd768108520aca3e46da3e8462fd917` passed 515 managed tests
+(312 Core, 118 App, 85 Backend) and both native owned-process fixtures.
+Its executable SHA-256 is
+`903C002F58A9E58036FA1B23D7C25ADEEF062B52F7346CB8BAC975CEF0B82F7A`.
+This package remains framework-dependent and does not bundle .NET.
+
+## Windows display follow-up, 2026-10-15
+
+The live collector remained at `7c0c8d7`; the later wording and picker changes
+were verified separately. Windows Settings confirmed the initial 60 Hz mode,
+HDR Off, dynamic refresh Off, Native_CTR color profile, and brightness 61%.
+
+| Windows control | Starting selection | Temporary selection | Restored selection | Exported action evidence |
+| --- | --- | --- | --- | --- |
+| HDR | Off | On | Off, Native_CTR profile | Incomplete; starting marker only |
+| Dynamic refresh | Off, 60 Hz selected | 240 Hz selected, dynamic refresh On | Dynamic refresh Off, then original 60 Hz | Incomplete; starting marker only |
+| Variable refresh | On | Off | On | Complete four-marker sequence |
+| Display brightness | 61% | 62% | 61% | Complete four-marker sequence |
+
+At 60 Hz, Windows explicitly disabled dynamic refresh and requested a higher
+selected rate. At 240 Hz, the control became available; when On, desktop mode
+showed 60 Hz or 240 Hz. Advanced display reported VRR support at 48-240 Hz at
+240 Hz and 48-60 Hz after restoring 60 Hz. The separate Windows graphics VRR
+toggle was exercised; no game or frame-pacing result is claimed.
+
+HDR and dynamic refresh reached the native recording time bound before their
+changed/restored markers were saved. Physical restoration was checked in
+Windows, but their exported windows remain incomplete with no associated
+observations. The ZIP contains paired recording start/stop markers, not an
+explicit timeout-cause marker. No marker was backfilled. A preparation-only
+brightness recording also remains without action markers. These histories
+are preserved alongside the later successful VRR and brightness sequences.
+
+The final private archive has SHA-256
+`B2D4F1BAE48A14CF884009F522B0DFA879687836BAB645AB5EB616D521E577E1`.
+Its five files retain 3,405 successful observations, 1,431 complete reviewed
+input bodies, ten semantic-only response summaries, and all 986 output bodies
+excluded. Nine recordings have paired starts/stops. Of nine action windows,
+six are complete; the original fan, HDR, and dynamic-refresh attempts remain
+incomplete. The AC and subsequent export prefixes are unchanged. There are no
+failed calls, rejected records, dropped-event markers, cleanup failures, or
+session gaps. A bounded scan found no excluded paths, accounts, serial fields,
+instance identifiers, email addresses, or Windows SIDs. Successful HID calls
+within a Windows-setting action window do not establish a causal display
+command or firmware readback.
+
+The live test exposed two shared UI defects: timeout restoration guidance
+always named Synapse, and a state picker could retain the extent of a shorter
+previous catalog. Source `fe8aa7c190378c157b191fd5204f78988e38a6d1` corrects
+the guidance and uses a bounded, non-virtualized state-choice panel. Its full
+package script passed 516 managed tests (312 Core, 119 App, 85 Backend) and
+both native owned-process fixtures. The framework-dependent executable SHA-256
+is `BA19E53CA560B014E7B5BB4ED29EB30F14BD5D53ED5933B6916DB48E27C4D0C6`;
+the portable ZIP SHA-256 is
+`B3E98F891B0218D68476F9AB52C69CB51B79F2E79993D5FCB2D8EEBDFC7A35B0`.
+.NET remains unbundled. In its disconnected GUI, switching from a three-choice
+battery-protection list to six-choice keyboard brightness exposed all six
+options, including 75%, 100%, and Other state. Other state was selectable in
+the compact window. This is UI validation, not new live protocol evidence.
+
+Claude's narrow wording and picker reviews completed. Independent triage found
+no additional introduced defect requiring a change. The collector's native
+observer, backend, and decoder are unchanged by these two UI corrections.
+
+## Recording-length follow-up, 2026-10-15
+
+The unchanged `7c0c8d7` live collector retried HDR and dynamic refresh in separate
+recordings. HDR completed Off -> On -> Off with all four markers and 58
+associated observations. Its recording lasted 251.88 seconds and stopped
+cleanly. The dynamic-refresh retry retained Off -> Dynamic (60 Hz or 240 Hz,
+selected 240 Hz) and the action marker, but reached the native five-minute
+bound before its restoration marker. That recording's start/stop interval
+was 344.82 seconds; the interval includes time before the collector was stopped
+after the native observer ended. The ZIP does not encode the timeout cause.
+
+Dynamic refresh was restored Off. The original 60 Hz selection was restored
+through Synapse after Windows reverted its confirmation dialog twice. Synapse
+and Windows then showed 60 Hz selected; Windows desktop mode showed 60 Hz while
+active signal mode still showed 240 Hz. This records the observed distinction
+without claiming that the active signal had returned to 60 Hz. Native color
+profile and HDR Off were retained. The missing restoration marker was not
+backfilled.
+
+The retry ZIP SHA-256 is
+`B0A44FD7AAB600C9DE65EE4E79EEBB8A8617D1543D3D1EDC8012532C999BD13A`.
+It exactly preserves the preceding brightness ZIP and appends the two retries:
+3,563 successful observations, 1,555 complete reviewed input bodies, ten
+semantic-only responses, 1,002 excluded output bodies, eleven paired recording
+starts/stops, and eleven windows (seven complete). All earlier incomplete
+windows remain. No failed calls, rejected records, dropped-event markers,
+cleanup failures, session gaps, or excluded identifiers were found in the
+bounded audit. A full-charge report observed during HDR remains a temporal
+observation, not proof of an HDR command or a fresh battery-control test.
+
+The repeated DRR timeout established the need for a longer user workflow.
+Source `d58333f57050c90378fa490f29d462b2e1d223ea` raises both the default and
+maximum recording length from 300 to 600 seconds, with matching native input
+validation. The duration field and protocol layout are unchanged. Session,
+buffer, queue, retained-payload, and privacy limits remain unchanged. Managed
+boundaries cover 0, 1, 600, and 601 seconds; the owned DLL fixture rejects zero
+and 601 with otherwise valid configuration, accepts 600, and stops immediately.
+
+The exact-source package passed 520 managed tests (312 Core, 119 App, 89 Backend)
+and both native owned-process fixtures. Its framework-dependent executable
+SHA-256 is
+`98F95D2E47D87777D4F66007D236B21348545C2744093B11835D206E29433323`;
+the portable ZIP SHA-256 is
+`F175401371F3A686821D6B4A2C29ABDEDC690E5498506B78262BDACD5B6A0A36`.
+After the user restarted Synapse normally, this exact package completed a fresh
+Windows dynamic-refresh recording. Windows confirmed Off -> On (60 Hz or
+240 Hz desktop mode, 240 Hz selected) -> Off. All four action markers were
+recorded before stopping, with 48 associated observations and no DRR gap.
+The recording stopped cleanly after 352.945 seconds, 52.945 seconds beyond
+the former limit. This tests continued recording beyond five minutes; it does
+not exercise expiry at the full ten-minute deadline.
+
+After recording stopped, the original 60 Hz selection was restored through
+Synapse. Both Synapse and Windows showed 60 Hz selected; Windows reported
+60 Hz desktop mode, 240 Hz active signal, and dynamic refresh Off and disabled
+at the selected rate. These are separate UI observations; the ZIP's restored
+marker records DRR Off. HDR Off and the Native color profile were retained.
+
+The new private archive has SHA-256
+`675A2AF313EABC1B1D856E13D44490FFF75C551AE89BECDB353E562008B053DD`
+and is 26,642 bytes. Its five expected entries identify source `d58333f` and
+v2 bundle, session, and derived schemas. It contains 95 successful observations
+(87 input, eight output), 79 complete reviewed input bodies, sixteen redacted
+bodies, one paired recording start/stop, and one complete action window.
+There are no failed calls, rejected records, dropped-event markers, cleanup
+failures, or session gaps. The 47 observations outside the action window retain
+their diagnostic. A bounded scan found no excluded paths, account fields,
+serials, instance identifiers, email addresses, or Windows SIDs.
+
+This is a new session, separate from the older retry archive. Earlier partial
+attempts remain intact there. HDR and DRR now each have a successful complete
+retry; their historical incomplete windows have not been rewritten. The new
+archive still reports pending work and maintainer validation requirements;
+concurrent HID observations do not establish a Windows display command or
+firmware readback. The portable package's five entries match the local payload
+byte for byte, including its source manifest. .NET remains unbundled.
+
+With explicit authorization for the ten-file source payload, Claude Opus high
+completed its read-only review of `15633fc...d58333f`. Review run
+`ad25009a214948dd9b4c231d00ae1f70` completed successfully with the approved
+read-only tools and isolated settings. Independent triage found no additional
+introduced defect: unchanged evidence limits remain intentional bounded
+retention with explicit gaps; duration constants agree; exact DLL path/hash
+checks preserve pairing with the unchanged protocol layout. Countdown UX and
+future constant generation are possible follow-ups, not verified regressions.
+Historical five-minute validation above refers to the earlier runtime.

@@ -9,14 +9,17 @@ internal static class InventorySanitizer
             SanitizeSection(
                 snapshot.MachineIdentity,
                 snapshot.MachineIdentity.Value
-                    .Take(2)
+                    .Take(4)
                     .Select(static item => new MachineIdentity(
                         SanitizeToken(item.RegistryView) ?? "unavailable",
                         SanitizeText(item.Manufacturer),
                         SanitizeText(item.ProductName),
                         SanitizeText(item.SystemSku),
                         SanitizeText(item.BiosVersion),
-                        SanitizeText(item.BiosReleaseDate)))
+                        SanitizeText(item.BiosReleaseDate))
+                    {
+                        Source = item.Source,
+                    })
                     .ToArray()),
             SanitizeSection(snapshot.PowerSource, snapshot.PowerSource.Value),
             SanitizeSection(

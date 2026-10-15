@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using SynapseObserver.Core;
 
 namespace SynapseObserver.App;
 
@@ -37,10 +38,14 @@ internal sealed class SettingEntry : INotifyPropertyChanged
         : selectedChoice.IsOther ? details.Trim()
         : ShowDetails && !string.IsNullOrWhiteSpace(details) ? $"{selectedChoice.Label}: {details.Trim()}"
         : selectedChoice.Label;
-    public bool HasValue => selectedChoice is not null && (!ShowDetails || !string.IsNullOrWhiteSpace(details)) && Value.Length <= 80;
+    public bool HasValue => selectedChoice is not null && (!ShowDetails || !string.IsNullOrWhiteSpace(details))
+        && Value.Length <= 80 && EvidenceText.IsDisplayText(Value);
     public string ValidationHint => selectedChoice is null ? "Choose the current setting or observed state."
         : ShowDetails && string.IsNullOrWhiteSpace(details) ? "Add the displayed value or observed details."
         : Value.Length > 80 ? "Keep the setting and details within 80 characters."
+        : Value.IndexOfAny(['/', '\\']) >= 0 ? "Use words instead of slash or backslash characters."
+        : Value.Any(char.IsControl) ? "Use a single line without control characters."
+        : !EvidenceText.IsDisplayText(Value) ? "Use a short displayed value without personal details or paths."
         : string.Empty;
 
     public void Reset(int activity)

@@ -15,7 +15,7 @@ namespace SynapseObserver.Core;
 
 public sealed partial class WindowsInventorySource
 {
-    private const int MaxSupportDisplayModes = 128;
+    private const int MaxSupportDisplayModes = EvidenceLimits.MaxDisplayModesPerDisplay;
     private const int MaxSupportDevices = 24;
     private IReadOnlyList<HidDescriptorSupportEvidence> _lastHidDescriptorSupport = [];
 
@@ -102,6 +102,8 @@ public sealed partial class WindowsInventorySource
             new("EdidRawData", CollectionState.Skipped, "NotCollectedToAvoidSerialDisclosure"),
             new("LampArrayCurrentFrame", CollectionState.Unavailable, "WindowsApiHasNoCurrentFrameReadback"),
             new("LampArrayControlAvailability", CollectionState.Unavailable, "WindowsSdk22621DoesNotExposeAvailability"),
+            new("NativeBrightnessDriverTopology", CollectionState.Skipped, "ControlAndVirtualInterfacesNotCollected"),
+            new("DriverCatalogSignature", CollectionState.Skipped, "CatalogVerificationNotCollected"),
         };
         AddSectionGap(gaps, "HidDescriptors", hid.State);
         AddSectionGap(gaps, "DeviceDrivers", drivers.State);
@@ -1014,6 +1016,7 @@ public sealed partial class WindowsInventorySource
                 ActiveRefreshRateHertz = target?.ActiveRefreshRateHertz,
                 EdidManufacturerCode = target?.EdidManufacturerCode,
                 EdidProductCode = target?.EdidProductCode,
+                ColorProfiles = target?.ColorProfiles,
             });
         }
 
@@ -1043,6 +1046,7 @@ public sealed partial class WindowsInventorySource
     {
         const int maxRawModes = 4096;
         var modes = new List<DisplayModeEvidence>(MaxSupportDisplayModes);
+        var seenModes = new HashSet<DisplayModeEvidence>();
         var reachedEnd = false;
         var truncated = false;
         for (var modeIndex = 0; modeIndex < maxRawModes; modeIndex++)
@@ -1054,7 +1058,7 @@ public sealed partial class WindowsInventorySource
                 break;
             }
 
-            if (modes.Contains(mode))
+            if (!seenModes.Add(mode))
             {
                 continue;
             }
@@ -1077,7 +1081,7 @@ public sealed partial class WindowsInventorySource
         return new DisplayModeEnumerationResult(modes, truncated);
     }
 
-    private static DisplayConfigurationResult CollectDisplayConfiguration(CancellationToken cancellationToken)
+    private DisplayConfigurationResult CollectDisplayConfiguration(CancellationToken cancellationToken)
     {
         const uint flags = QdcOnlyActivePaths | QdcVirtualModeAware | QdcVirtualRefreshRateAware;
         var targets = new Dictionary<string, DisplayTargetMetadata>(StringComparer.OrdinalIgnoreCase);
@@ -1174,6 +1178,10 @@ public sealed partial class WindowsInventorySource
                         Marshal.SizeOf<DisplayConfigGetAdvancedColorInfo2>()),
                 };
                 var advancedAvailable = DisplayConfigGetAdvancedColorInfo2Native(ref advanced) == ErrorSuccess;
+                var colorProfiles = CollectDisplayColorProfiles(
+                    path.TargetInfo.AdapterId,
+                    path.SourceInfo.Id,
+                    cancellationToken);
                 var sourceName = source.ViewGdiDeviceName.TrimEnd('\0');
                 targets[sourceName] = new DisplayTargetMetadata(
                     targetAvailable ? CleanText(target.MonitorFriendlyDeviceName.TrimEnd('\0')) : null,
@@ -1196,7 +1204,8 @@ public sealed partial class WindowsInventorySource
                     targetAvailable ? DecodeEdidManufacturer(target.EdidManufactureId) : null,
                     targetAvailable && target.EdidProductCodeId != 0
                         ? target.EdidProductCodeId.ToString("X4", System.Globalization.CultureInfo.InvariantCulture)
-                        : null);
+                        : null,
+                    colorProfiles);
 
                 if (!advancedAvailable)
                 {
@@ -1204,6 +1213,16 @@ public sealed partial class WindowsInventorySource
                         "DisplayAdvancedColor",
                         CollectionState.Unavailable,
                         "WindowsApiUnavailable"));
+                }
+
+                if (colorProfiles.State is CollectionState.Partial or CollectionState.Unavailable)
+                {
+                    gaps.Add(new SupportCoverageGap(
+                        "DisplayColorProfiles",
+                        colorProfiles.State,
+                        colorProfiles.State == CollectionState.Partial
+                            ? "SomeProfileStateUnavailable"
+                            : "WindowsApiUnavailable"));
                 }
             }
 
@@ -1606,7 +1625,8 @@ public sealed partial class WindowsInventorySource
         bool DynamicRefreshRateActive,
         double? ActiveRefreshRateHertz,
         string? EdidManufacturerCode,
-        string? EdidProductCode);
+        string? EdidProductCode,
+        DisplayColorProfileInventoryEvidence ColorProfiles);
 
     private sealed record LampArrayReadResult(LampArrayEvidence Evidence, bool Truncated);
 

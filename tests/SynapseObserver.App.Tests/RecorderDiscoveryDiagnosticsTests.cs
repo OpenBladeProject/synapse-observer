@@ -26,6 +26,44 @@ public sealed class RecorderDiscoveryDiagnosticsTests
         Assert.Equal(1, details.Split("Same account required").Length - 1);
     }
 
+    [Theory]
+    [InlineData("Restart Synapse before another recording.")]
+    [InlineData("The laptop interfaces are ambiguous. Save device information.")]
+    public void UnavailableStatusKeepsTheActualRecoveryAndPreservation(string diagnostic)
+    {
+        var status = RecorderDiscoveryDiagnostics.AvailabilityStatus(false, false, diagnostic);
+        Assert.StartsWith(diagnostic, status);
+        Assert.Contains("evidence is preserved", status);
+        Assert.DoesNotContain("Recording is available", status);
+    }
+
+    [Fact]
+    public void AvailableStatusExplainsFreshConsentAfterRecovery()
+    {
+        var status = RecorderDiscoveryDiagnostics.AvailabilityStatus(true, false, "Ready");
+        Assert.Contains("Allow observation, then select Start recording", status);
+        Assert.DoesNotContain("Allow observation", RecorderDiscoveryDiagnostics.AvailabilityStatus(true, true, "Ready"));
+    }
+
+    [Fact]
+    public void BlockedVerifiedOwnerKeepsRestartGuidanceAheadOfHelperFailures()
+    {
+        const string restart = "The resident observer cannot be reused. Restart Synapse before another recording.";
+        BackendCandidate[] candidates = [new(1, "engine", false, restart, VerifiedTargetBlocked: true),
+            .. Enumerable.Range(2, 8).Select(id => new BackendCandidate(id, "helper", false, "Open laptop controls"))];
+        var summary = RecorderDiscoveryDiagnostics.UnavailableSummary(candidates);
+        Assert.Equal(restart, summary);
+        Assert.StartsWith(restart, RecorderDiscoveryDiagnostics.AvailabilityStatus(false, false, summary));
+    }
+
+    [Fact]
+    public void UnavailableSummaryRetainsOneReasonAndCombinesBlockedOwnersWithoutDuplication()
+    {
+        Assert.Equal("Open laptop controls", RecorderDiscoveryDiagnostics.UnavailableSummary([new(1, "engine", false, "Open laptop controls")]));
+        BackendCandidate[] candidates = [new(1, "engine", false, "Restart Synapse", true), new(2, "engine", false, "Stop active recording", true), new(3, "helper", false, "Restart Synapse", true)];
+        Assert.Equal("Restart Synapse\nStop active recording", RecorderDiscoveryDiagnostics.UnavailableSummary(candidates));
+    }
+
     [Fact]
     public void MissingEngineHasOneActionableMessage() =>
         Assert.Equal("No Synapse engine was found. Open Synapse normally, then refresh.", RecorderDiscoveryDiagnostics.Format([]));

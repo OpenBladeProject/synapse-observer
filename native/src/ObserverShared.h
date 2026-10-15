@@ -1,6 +1,7 @@
 #pragma once
 #include "ObserverEngine.h"
 namespace observer {
+constexpr DWORD MaximumRecordingDurationSeconds = 600;
 constexpr unsigned SharedSlots = 32;
 struct SharedState {
     volatile LONG ready;

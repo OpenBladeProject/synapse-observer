@@ -150,6 +150,7 @@ public static class ContributionDraftBuilder
         "lifecycle.serviceRestart",
         "lifecycle.sleepResume",
         "lifecycle.deviceReconnect",
+        "power.externalPower",
         "power.fullAc",
         "power.usbCPowerClasses",
         "power.battery",
@@ -314,7 +315,11 @@ public static class ContributionDraftBuilder
                 redacted,
                 snapshot.Observations.Select(ObservationReference).Count(reference => !associated.Contains(reference)),
                 snapshot.SpecialKeyObservations.Count,
-                snapshot.RejectedMarkerCount + snapshot.RejectedObservationCount + snapshot.RejectedCoverageCount),
+                snapshot.RejectedMarkerCount + snapshot.RejectedObservationCount + snapshot.RejectedCoverageCount)
+            {
+                ReviewedSemanticOnlyResponses = snapshot.Observations.Count(static item =>
+                    item.SemanticResponse is not null && !item.CompletePayloadRetained),
+            },
             gaps,
             MaintainerStages,
             false,
@@ -380,7 +385,8 @@ public static class ContributionDraftBuilder
     }
 
     private static ContributionMarkerDraft CreateMarkerDraft(EvidenceMarker marker) => new(
-        marker.RelativeMilliseconds, marker.Kind, marker.Provenance, marker.Label, marker.Value);
+        marker.RelativeMilliseconds, marker.Kind, marker.Provenance, marker.Label, marker.Value)
+    { PowerSourceAtMarker = marker.PowerSourceAtMarker };
 
     private static ContributionActionWindowDraft CreateActionWindow(
         EvidenceSessionSnapshot snapshot,
@@ -391,11 +397,16 @@ public static class ContributionDraftBuilder
         var markers = markerList.OrderBy(static marker => marker.RelativeMilliseconds).ToArray();
         var start = markers[0].RelativeMilliseconds;
         var end = markers[^1].RelativeMilliseconds;
-        var complete = HasOrderedUserSequence(markers);
-        var observations = snapshot.Observations
-            .Select((item, index) => (Item: item, Reference: ObservationReference(item, index)))
+        var ordered = HasOrderedUserSequence(markers);
+        var unchanged = ordered && HasUnchangedReportedValues(markers);
+        var complete = ordered && !unchanged;
+        var sourceObservations = snapshot.Observations
+            .Select((item, index) => (Item: item, Reference: ObservationReference(item, index), Index: index))
             .Where(item => item.Item.RelativeMilliseconds >= start && item.Item.RelativeMilliseconds <= end)
-            .Select(static item => new ContributionObservationDraft(
+            .ToArray();
+        var correlations = CorrelateReviewedSemanticResponses(sourceObservations);
+        var observations = sourceObservations
+            .Select(item => new ContributionObservationDraft(
                 ContributionObservationLayer.UserModeFeatureApi,
                 item.Reference,
                 item.Item.OperationId,
@@ -407,11 +418,17 @@ public static class ContributionDraftBuilder
                 item.Item.PayloadProjectionKind,
                 item.Item.PayloadDisposition,
                 item.Item.CompletePayloadRetained,
-                false))
+                false)
+            {
+                SemanticResponse = item.Item.SemanticResponse,
+                CorrelatedRequestReferenceId = correlations.GetValueOrDefault(item.Reference),
+            })
             .ToArray();
         var markerDrafts = markers.Select(CreateMarkerDraft).ToArray();
         labels.TryGetValue(activityId, out var label);
-        var gap = complete
+        var gap = unchanged
+            ? "The reported starting and target values are unchanged; this sequence does not establish a setting change."
+            : complete
             ? observations.Length == 0 ? "No user-mode feature observation fell inside this action window." : null
             : "An ordered starting, target, action, and restoration sequence is not present.";
         return new ContributionActionWindowDraft(
@@ -422,7 +439,21 @@ public static class ContributionDraftBuilder
             complete,
             markerDrafts,
             observations,
-            gap);
+            gap)
+        {
+            PowerSourceAtAction = GetActionPowerSource(markers),
+            UnchangedReportedValues = unchanged,
+        };
+    }
+
+    private static PowerSourceKind GetActionPowerSource(IReadOnlyList<EvidenceMarker> markers)
+    {
+        var samples = markers.Where(marker => marker.Kind is EvidenceMarkerKind.UserReportedStartingValue
+            or EvidenceMarkerKind.UserReportedTargetValue or EvidenceMarkerKind.UserActionConfirmed
+            or EvidenceMarkerKind.UserReportedRestoration)
+            .Select(marker => marker.PowerSourceAtMarker).ToArray();
+        return samples.Length > 0 && samples.All(source => source is PowerSourceKind.Ac or PowerSourceKind.Battery)
+            && samples.Distinct().Count() == 1 ? samples[0]!.Value : PowerSourceKind.Unknown;
     }
 
     private static bool HasOrderedUserSequence(IReadOnlyList<EvidenceMarker> markers)
@@ -437,13 +468,27 @@ public static class ContributionDraftBuilder
         var next = 0;
         foreach (var marker in markers)
         {
-            if (marker.Kind == expected[next] && ++next == expected.Length)
+            if (marker.Kind != expected[next])
+            {
+                continue;
+            }
+
+            if (++next == expected.Length)
             {
                 return true;
             }
         }
 
         return false;
+    }
+
+    private static bool HasUnchangedReportedValues(IReadOnlyList<EvidenceMarker> markers)
+    {
+        var startingValue = markers.FirstOrDefault(static marker =>
+            marker.Kind == EvidenceMarkerKind.UserReportedStartingValue)?.Value;
+        var targetValue = markers.FirstOrDefault(static marker =>
+            marker.Kind == EvidenceMarkerKind.UserReportedTargetValue)?.Value;
+        return SettingValueComparison.AreEquivalent(startingValue, targetValue);
     }
 
     private static bool IsActionMarker(EvidenceMarkerKind kind) => kind is
@@ -456,6 +501,18 @@ public static class ContributionDraftBuilder
         InventorySnapshot inventory,
         Dictionary<string, List<ContributionEvidenceReference>> evidence)
     {
+        if (IsUsable(inventory.PowerSource.State))
+        {
+            var path = inventory.PowerSource.Value?.Source switch
+            {
+                PowerSourceKind.Ac => "power.externalPower",
+                PowerSourceKind.Battery => "power.battery",
+                _ => null,
+            };
+            if (path is not null) Add(evidence, path, ContributionObservationLayer.WindowsInventory,
+                "inventory.powerSource", "Windows reported battery or external power at inventory time; adapter class is unknown.");
+        }
+
         if (IsUsable(inventory.MachineIdentity.State)
             && inventory.MachineIdentity.Value.Any(static item => !string.IsNullOrWhiteSpace(item.ProductName)))
         {
@@ -501,6 +558,23 @@ public static class ContributionDraftBuilder
         {
             Add(evidence, "display.hdr", ContributionObservationLayer.WindowsInventory,
                 "inventory.support.displays", "Windows returned HDR capability or active-state metadata.");
+        }
+
+        if (IsUsable(inventory.Support.Displays.State))
+        {
+            var profileDefaults = inventory.Support.Displays.Value
+                .Where(static display => display.ColorProfiles is { } profiles && IsUsable(profiles.State))
+                .SelectMany(static display => display.ColorProfiles!.Scopes)
+                .Where(static scope => IsUsable(scope.State))
+                .SelectMany(static scope => scope.Profiles)
+                .SelectMany(static profile => profile.DefaultSubtypes)
+                .ToHashSet();
+            if (profileDefaults.Contains(DisplayColorProfileSubtype.StandardSdr))
+                Add(evidence, "display.colorProfilesSdr", ContributionObservationLayer.WindowsInventory,
+                    "inventory.support.displays.colorProfiles", "Windows identified a standard SDR default profile.");
+            if (profileDefaults.Contains(DisplayColorProfileSubtype.ExtendedHdr))
+                Add(evidence, "display.colorProfilesHdr", ContributionObservationLayer.WindowsInventory,
+                    "inventory.support.displays.colorProfiles", "Windows identified an extended HDR default profile.");
         }
 
         if (IsUsable(inventory.Support.LampArrays.State) && inventory.Support.LampArrays.Value.Count > 0)
@@ -553,7 +627,6 @@ public static class ContributionDraftBuilder
         var sourceByReference = snapshot.Observations
             .Select((item, index) => (Item: item, Reference: ObservationReference(item, index)))
             .ToDictionary(static item => item.Reference, static item => item.Item, StringComparer.Ordinal);
-        var powerSource = snapshot.Inventory.PowerSource.Value?.Source ?? PowerSourceKind.Unknown;
         foreach (var window in windows.Where(static item => item.CompleteUserReportedSequence))
         {
             foreach (var observation in window.Observations.Where(static item =>
@@ -566,7 +639,7 @@ public static class ContributionDraftBuilder
                 }
 
                 var summary = $"Reviewed {observation.ProjectionKind} report inside action {window.ActivityId}.";
-                foreach (var path in MapFeatureCapability(source, powerSource))
+                foreach (var path in MapFeatureCapability(source, window.PowerSourceAtAction))
                 {
                     Add(evidence, path, ContributionObservationLayer.UserModeFeatureApi, observation.ReferenceId, summary);
                 }
@@ -873,12 +946,45 @@ public static class ContributionDraftBuilder
                 "Windows reported variable-refresh support but did not provide the panel's validated refresh range."));
         }
 
-        foreach (var window in windows.Where(static item => item.Gap is not null))
+        foreach (var view in new[] { "Registry64", "Registry32" })
         {
-            gaps.Add(new ContributionQualityGap(
-                $"action.{window.ActivityId}",
-                window.CompleteUserReportedSequence ? "NoMatchingObservation" : "IncompleteActionMarkers",
-                window.Gap!));
+            var rows = snapshot.Inventory.MachineIdentity.Value.Where(item => item.RegistryView == view
+                && item.Source is MachineIdentitySource.BiosRegistry or MachineIdentitySource.SystemInformationRegistry).ToArray();
+            if (rows.Select(item => item.Source).Distinct().Count() != 2
+                || rows.Any(item => string.IsNullOrWhiteSpace(item.Manufacturer) || string.IsNullOrWhiteSpace(item.ProductName)))
+                gaps.Add(new($"inventory.machineIdentity.{view}", "IdentitySourcesIncomplete", "Both independent Windows identity sources could not be compared completely in this registry view."));
+            else if (rows.Select(item => item.Manufacturer).Distinct(StringComparer.Ordinal).Count() != 1
+                || rows.Select(item => item.ProductName).Distinct(StringComparer.Ordinal).Count() != 1)
+                gaps.Add(new($"inventory.machineIdentity.{view}", "IdentitySourcesDisagree", "Windows identity sources disagree on manufacturer or product; all collected values are preserved."));
+        }
+
+        foreach (var window in windows.Where(item => item.CompleteUserReportedSequence && item.PowerSourceAtAction == PowerSourceKind.Unknown))
+            gaps.Add(new($"action.{window.ActivityId}", "ActionPowerContextUnknown", "Action power samples were missing, unknown, or changed; performance evidence is not assigned to a power context."));
+
+        foreach (var window in windows)
+        {
+            if (window.UnchangedReportedValues)
+            {
+                gaps.Add(new ContributionQualityGap(
+                    $"action.{window.ActivityId}",
+                    "UnchangedReportedValues",
+                    "The reported starting and target values are unchanged; this sequence does not establish a setting change."));
+            }
+            else if (!window.CompleteUserReportedSequence)
+            {
+                gaps.Add(new ContributionQualityGap(
+                    $"action.{window.ActivityId}",
+                    "IncompleteActionMarkers",
+                    "An ordered starting, target, action, and restoration sequence is not present."));
+            }
+
+            if (window.Observations.Count == 0)
+            {
+                gaps.Add(new ContributionQualityGap(
+                    $"action.{window.ActivityId}",
+                    "NoMatchingObservation",
+                    "No user-mode feature observation fell inside this action window."));
+            }
         }
 
         foreach (var item in snapshot.Coverage.Where(static item => item.State != CoverageState.Completed))
@@ -1003,6 +1109,12 @@ public static class ContributionDraftBuilder
 
     private static ContributionObservationRole GetObservationRole(SanitizedControlObservation observation)
     {
+        if (observation.SemanticResponse?.Kind
+            == ReviewedFeatureResponseKind.ThermalSetterAcknowledgement)
+        {
+            return ContributionObservationRole.FeatureSetResponse;
+        }
+
         // GET_FEATURE transports both setter ACKs and query responses.
         var query = observation.HeaderHints is { CommandId: var commandId } && (commandId & 0x80) != 0;
         if (observation.HeaderHints is null)
@@ -1018,6 +1130,71 @@ public static class ContributionDraftBuilder
         return observation.Source == ObservationSource.ReturnedBuffer
             ? query ? ContributionObservationRole.FeatureQueryResponse : ContributionObservationRole.FeatureSetResponse
             : ContributionObservationRole.UnclassifiedFeatureCall;
+    }
+
+    private static IReadOnlyDictionary<string, string> CorrelateReviewedSemanticResponses(
+        IReadOnlyList<(SanitizedControlObservation Item, string Reference, int Index)> observations)
+    {
+        var correlations = new Dictionary<string, string>(StringComparer.Ordinal);
+        var consumedRequests = new HashSet<string>(StringComparer.Ordinal);
+        var ordered = observations
+            .OrderBy(static item => item.Item.RelativeMilliseconds)
+            .ThenBy(static item => item.Index)
+            .ToArray();
+
+        foreach (var response in ordered.Where(static item => item.Item.SemanticResponse is not null))
+        {
+            var candidates = ordered.Where(request =>
+                    !consumedRequests.Contains(request.Reference)
+                    && IsMatchingReviewedThermalSetter(request, response))
+                .ToArray();
+            if (candidates.Length != 1)
+            {
+                continue;
+            }
+
+            correlations.Add(response.Reference, candidates[0].Reference);
+            consumedRequests.Add(candidates[0].Reference);
+        }
+
+        return correlations;
+    }
+
+    private static bool IsMatchingReviewedThermalSetter(
+        (SanitizedControlObservation Item, string Reference, int Index) request,
+        (SanitizedControlObservation Item, string Reference, int Index) response)
+    {
+        var semantic = response.Item.SemanticResponse;
+        if (semantic?.Kind != ReviewedFeatureResponseKind.ThermalSetterAcknowledgement
+            || request.Item.Source != ObservationSource.UserModeCall
+            || request.Item.Direction != ObservationDirection.Input
+            || request.Item.Status != ObservationStatus.Succeeded
+            || !request.Item.CompletePayloadRetained
+            || request.Item.PayloadProjectionKind != FeaturePayloadProjectionKind.ReviewedThermalMode
+            || request.Item.HeaderHints is not
+            {
+                Status: 0,
+                CommandClass: 0x0D,
+                CommandId: 0x02,
+            } header
+            || header.TransactionId != semantic.TransactionId
+            || request.Item.VendorId != response.Item.VendorId
+            || request.Item.ProductId != response.Item.ProductId
+            || !string.Equals(request.Item.InterfaceLabel, response.Item.InterfaceLabel, StringComparison.Ordinal)
+            || request.Item.UsagePage != response.Item.UsagePage
+            || request.Item.Usage != response.Item.Usage
+            || request.Item.RelativeMilliseconds > response.Item.RelativeMilliseconds
+            || (request.Item.CompletedRelativeMilliseconds ?? request.Item.RelativeMilliseconds)
+                > response.Item.RelativeMilliseconds)
+        {
+            return false;
+        }
+
+        var payload = TryGetPayload(request.Item);
+        return payload is { Length: 4 }
+            && ReviewedThermalEncoding.TryDecode(payload, out var channel, out var mode)
+            && channel == semantic.ThermalChannel
+            && mode == semantic.ThermalMode;
     }
 
     private static IReadOnlyList<string> DistinctValues(IEnumerable<string?> values) =>

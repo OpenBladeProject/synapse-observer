@@ -69,6 +69,8 @@ public sealed class EvidenceBundleWriterTests
             Assert.DoesNotContain("payloadHex\": \"", manifest, StringComparison.Ordinal);
 
             using var coverage = await ReadJsonAsync(archive, "coverage-draft.json");
+            Assert.Equal("synapse-observer.coverage-draft.v2",
+                coverage.RootElement.GetProperty("schemaVersion").GetString());
             var coverageItems = coverage.RootElement.GetProperty("coverage");
             Assert.Contains(coverageItems.EnumerateArray(), item =>
                 item.GetProperty("capability").GetString() == "performance.externalPower.presets");
@@ -81,11 +83,15 @@ public sealed class EvidenceBundleWriterTests
             Assert.DoesNotContain("productionAdmitted", coverage.RootElement.GetRawText(), StringComparison.OrdinalIgnoreCase);
 
             using var annotations = await ReadJsonAsync(archive, "annotation-draft.json");
+            Assert.Equal("synapse-observer.annotation-draft.v2",
+                annotations.RootElement.GetProperty("schemaVersion").GetString());
             Assert.Contains("UserModeFeatureApi", annotations.RootElement.GetRawText(), StringComparison.Ordinal);
             Assert.Contains("WindowsRawInput", annotations.RootElement.GetRawText(), StringComparison.Ordinal);
             Assert.Contains("WindowsInventory", annotations.RootElement.GetRawText(), StringComparison.Ordinal);
 
             using var receipt = await ReadJsonAsync(archive, "quality-receipt.json");
+            Assert.Equal("synapse-observer.quality-receipt.v2",
+                receipt.RootElement.GetProperty("schemaVersion").GetString());
             Assert.False(receipt.RootElement.GetProperty("claimsQueryValidation").GetBoolean());
             Assert.False(receipt.RootElement.GetProperty("claimsSetterValidation").GetBoolean());
             Assert.False(receipt.RootElement.GetProperty("claimsProductionAdmission").GetBoolean());
@@ -103,7 +109,7 @@ public sealed class EvidenceBundleWriterTests
     {
         using var session = new EvidenceSession(SyntheticPreview.CreateInventory(), DateTimeOffset.UnixEpoch);
         session.AddMarker(new EvidenceMarker(1, EvidenceMarkerKind.UserReportedStartingValue,
-            "performance", "Starting value", EvidenceProvenance.UserReported, "Balanced"));
+            "performance", "Starting value", EvidenceProvenance.UserReported, "Balanced") { PowerSourceAtMarker = PowerSourceKind.Ac });
         session.AddObservation(new ControlObservation(
             "op-thermal",
             2,
@@ -123,11 +129,11 @@ public sealed class EvidenceBundleWriterTests
             PayloadDisposition.ProvenFeatureControl,
             2.1));
         session.AddMarker(new EvidenceMarker(3, EvidenceMarkerKind.UserReportedTargetValue,
-            "performance", "Changed value", EvidenceProvenance.UserReported, "Silent"));
+            "performance", "Changed value", EvidenceProvenance.UserReported, "Silent") { PowerSourceAtMarker = PowerSourceKind.Ac });
         session.AddMarker(new EvidenceMarker(4, EvidenceMarkerKind.UserActionConfirmed,
-            "performance", "Change marked", EvidenceProvenance.UserReported));
+            "performance", "Change marked", EvidenceProvenance.UserReported) { PowerSourceAtMarker = PowerSourceKind.Ac });
         session.AddMarker(new EvidenceMarker(5, EvidenceMarkerKind.UserReportedRestoration,
-            "performance", "Restored", EvidenceProvenance.UserReported, "Balanced"));
+            "performance", "Restored", EvidenceProvenance.UserReported, "Balanced") { PowerSourceAtMarker = PowerSourceKind.Ac });
 
         var draft = ContributionDraftBuilder.CreateCoverageDraft(session.Snapshot());
 
@@ -308,6 +314,61 @@ public sealed class EvidenceBundleWriterTests
             Assert.Single(coverage.Coverage, item => item.Capability == "performance.externalPower.presets").Status);
     }
 
+    [Theory]
+    [InlineData("Balanced", false)]
+    [InlineData(" balanced ", false)]
+    [InlineData("BALANCED", false)]
+    [InlineData("Custom: CPU Boost, GPU Medium", true)]
+    public void CreateDrafts_RequiresDistinctStartingAndTargetValues(string target, bool expectedComplete)
+    {
+        using var session = new EvidenceSession(SyntheticPreview.CreateInventory(), DateTimeOffset.UnixEpoch);
+        session.AddMarker(new EvidenceMarker(1, EvidenceMarkerKind.UserReportedStartingValue,
+            "performance", "Starting value", EvidenceProvenance.UserReported, "Balanced"));
+        session.AddMarker(new EvidenceMarker(2, EvidenceMarkerKind.UserReportedTargetValue,
+            "performance", "Changed value", EvidenceProvenance.UserReported, target));
+        session.AddMarker(new EvidenceMarker(3, EvidenceMarkerKind.UserActionConfirmed,
+            "performance", "Change marked", EvidenceProvenance.UserReported));
+        session.AddMarker(new EvidenceMarker(4, EvidenceMarkerKind.UserReportedRestoration,
+            "performance", "Restored", EvidenceProvenance.UserReported, "Balanced"));
+
+        var drafts = ContributionDraftBuilder.CreateDrafts(session.Snapshot());
+
+        var window = Assert.Single(drafts.Annotation.ActionWindows);
+        Assert.Equal(expectedComplete, window.CompleteUserReportedSequence);
+        Assert.Equal(!expectedComplete, window.UnchangedReportedValues);
+        Assert.Equal(!expectedComplete, window.Gap?.Contains("unchanged", StringComparison.Ordinal));
+        Assert.Single(drafts.Quality.Gaps, gap => gap.Area == "action.performance"
+            && gap.Code == "NoMatchingObservation");
+        Assert.Equal(!expectedComplete, drafts.Quality.Gaps.Any(gap => gap.Area == "action.performance"
+            && gap.Code == "UnchangedReportedValues"));
+        if (!expectedComplete)
+            Assert.Single(drafts.Quality.Gaps, gap => gap.Area == "action.performance"
+                && gap.Code == "UnchangedReportedValues");
+        Assert.DoesNotContain(drafts.Quality.Gaps, gap => gap.Area == "action.performance"
+            && gap.Code == "IncompleteActionMarkers");
+    }
+
+    [Fact]
+    public void CreateDrafts_NullValuesRemainUnknownRatherThanUnchanged()
+    {
+        using var session = new EvidenceSession(SyntheticPreview.CreateInventory(), DateTimeOffset.UnixEpoch);
+        session.AddMarker(new EvidenceMarker(1, EvidenceMarkerKind.UserReportedStartingValue,
+            "performance", "Starting value", EvidenceProvenance.UserReported));
+        session.AddMarker(new EvidenceMarker(2, EvidenceMarkerKind.UserReportedTargetValue,
+            "performance", "Changed value", EvidenceProvenance.UserReported));
+        session.AddMarker(new EvidenceMarker(3, EvidenceMarkerKind.UserActionConfirmed,
+            "performance", "Change marked", EvidenceProvenance.UserReported));
+        session.AddMarker(new EvidenceMarker(4, EvidenceMarkerKind.UserReportedRestoration,
+            "performance", "Restored", EvidenceProvenance.UserReported));
+
+        var drafts = ContributionDraftBuilder.CreateDrafts(session.Snapshot());
+
+        var window = Assert.Single(drafts.Annotation.ActionWindows);
+        Assert.True(window.CompleteUserReportedSequence);
+        Assert.False(window.UnchangedReportedValues);
+        Assert.DoesNotContain(drafts.Quality.Gaps, gap => gap.Code == "UnchangedReportedValues");
+    }
+
     [Fact]
     public async Task WriteAsync_PreCancelledTokenLeavesExistingDestinationUntouched()
     {
@@ -439,6 +500,101 @@ public sealed class EvidenceBundleWriterTests
             Assert.Single(drafts.Coverage.Coverage, item => item.Capability == "performance.externalPower.readback").Status);
     }
 
+    [Fact]
+    public void IncompleteThermalAck_CorrelatesUniqueReviewedSetterWithoutClaimingReadback()
+    {
+        using var session = new EvidenceSession(SyntheticPreview.CreateInventory());
+        AddCompleteMarkers(session, "performance", 1, 10);
+        session.AddObservation(new ControlObservation(
+            "op-set", 2, ObservationSource.UserModeCall, "HidD_SetFeature",
+            ObservationDirection.Input, ObservationStatus.Succeeded, 0, null,
+            0x1532, 0xFFFF, "hid-preview-01", 1, 2, 0,
+            FeatureReportTestData.Create(0x0D, 0x02, [0x01, 0x01, 0x05, 0x00],
+                transactionId: 0x42),
+            PayloadDisposition.ProvenFeatureControl, 2.1));
+        session.AddObservation(new ControlObservation(
+            "op-interleaved", 2.2, ObservationSource.UserModeCall, "HidD_SetFeature",
+            ObservationDirection.Input, ObservationStatus.Succeeded, 0, null,
+            0x1532, 0xFFFF, "hid-preview-01", 1, 2, 0,
+            FeatureReportTestData.Create(0x07, 0x8C, [0x00, 0x00], transactionId: 0x43),
+            PayloadDisposition.ProvenFeatureControl, 2.3));
+        session.AddObservation(CreateIncompleteThermalAck("op-get", 3, 0x42));
+
+        var drafts = ContributionDraftBuilder.CreateDrafts(session.Snapshot());
+
+        var observations = Assert.Single(drafts.Annotation.ActionWindows).Observations;
+        var request = Assert.Single(observations, item => item.OperationId == "op-set");
+        var response = Assert.Single(observations, item => item.OperationId == "op-get");
+        Assert.Equal(ContributionObservationRole.FeatureSetResponse, response.Role);
+        Assert.Equal(request.ReferenceId, response.CorrelatedRequestReferenceId);
+        Assert.NotNull(response.SemanticResponse);
+        Assert.False(response.CompletePayloadRetained);
+        Assert.False(response.FirmwareReadback);
+        Assert.Equal(1, drafts.Quality.Counts.ReviewedSemanticOnlyResponses);
+        Assert.Contains(EvidenceCollectionReview.Create(session.Snapshot()).Notes,
+            note => note.StartsWith("1 returned response summary retained", StringComparison.Ordinal));
+        Assert.Equal(ContributionCoverageStatus.NotInvestigated,
+            Assert.Single(drafts.Coverage.Coverage,
+                item => item.Capability == "performance.externalPower.readback").Status);
+    }
+
+    [Fact]
+    public void IncompleteThermalAck_DoesNotInventCorrelationForDuplicateMatchingRequests()
+    {
+        using var session = new EvidenceSession(SyntheticPreview.CreateInventory());
+        AddCompleteMarkers(session, "performance", 1, 10);
+        foreach (var (operation, time) in new[] { ("op-set-1", 2.0), ("op-set-2", 2.2) })
+        {
+            session.AddObservation(new ControlObservation(
+                operation, time, ObservationSource.UserModeCall, "HidD_SetFeature",
+                ObservationDirection.Input, ObservationStatus.Succeeded, 0, null,
+                0x1532, 0xFFFF, "hid-preview-01", 1, 2, 0,
+                FeatureReportTestData.Create(0x0D, 0x02, [0x01, 0x01, 0x05, 0x00],
+                    transactionId: 0x42),
+                PayloadDisposition.ProvenFeatureControl, time + 0.1));
+        }
+        session.AddObservation(CreateIncompleteThermalAck("op-get", 3, 0x42));
+
+        var response = Assert.Single(Assert.Single(
+                ContributionDraftBuilder.CreateAnnotationDraft(session.Snapshot()).ActionWindows)
+            .Observations, item => item.OperationId == "op-get");
+
+        Assert.Equal(ContributionObservationRole.FeatureSetResponse, response.Role);
+        Assert.Null(response.CorrelatedRequestReferenceId);
+        Assert.False(response.FirmwareReadback);
+    }
+
+    [Theory]
+    [InlineData(0x00, 0x00, true)]
+    [InlineData(0x04, 0x04, true)]
+    [InlineData(0x00, 0x04, false)]
+    [InlineData(0x04, 0x00, false)]
+    public void IncompleteThermalAck_FixedMaximumCorrelationRequiresExactEncoding(
+        byte requestMode,
+        byte responseMode,
+        bool expectedCorrelation)
+    {
+        using var session = new EvidenceSession(SyntheticPreview.CreateInventory());
+        AddCompleteMarkers(session, "performance", 1, 10);
+        session.AddObservation(new ControlObservation(
+            "op-set", 2, ObservationSource.UserModeCall, "HidD_SetFeature",
+            ObservationDirection.Input, ObservationStatus.Succeeded, 0, null,
+            0x1532, 0xFFFF, "hid-preview-01", 1, 2, 0,
+            FeatureReportTestData.Create(0x0D, 0x02, [0x01, 0x01, requestMode, 0x01],
+                transactionId: 0x42),
+            PayloadDisposition.ProvenFeatureControl, 2.1));
+        session.AddObservation(CreateIncompleteThermalAck(
+            "op-get", 3, 0x42, responseMode, 0x01));
+
+        var response = Assert.Single(Assert.Single(
+                ContributionDraftBuilder.CreateAnnotationDraft(session.Snapshot()).ActionWindows)
+            .Observations, item => item.OperationId == "op-get");
+
+        Assert.Equal(ContributionObservationRole.FeatureSetResponse, response.Role);
+        Assert.Equal(expectedCorrelation, response.CorrelatedRequestReferenceId is not null);
+        Assert.False(response.FirmwareReadback);
+    }
+
     [Theory]
     [InlineData(7, 0x12, new byte[] { 80 }, "battery.limitQuery", FeaturePayloadProjectionKind.ReviewedBatterySetting)]
     [InlineData(3, 3, new byte[] { 1, 5, 197 }, "keyboardLighting.brightnessQuery", FeaturePayloadProjectionKind.ReviewedKeyboardBrightness)]
@@ -510,7 +666,8 @@ public sealed class EvidenceBundleWriterTests
         var drafts = ContributionDraftBuilder.CreateDrafts(session.Snapshot());
 
         Assert.False(Assert.Single(drafts.Annotation.ActionWindows).CompleteUserReportedSequence);
-        Assert.Contains(drafts.Quality.Gaps, item => item.Code == "IncompleteActionMarkers");
+        Assert.Single(drafts.Quality.Gaps, item => item.Code == "IncompleteActionMarkers");
+        Assert.Single(drafts.Quality.Gaps, item => item.Code == "NoMatchingObservation");
     }
 
     [Theory]
@@ -616,12 +773,33 @@ public sealed class EvidenceBundleWriterTests
     private static void AddCompleteMarkers(EvidenceSession session, string activity, double start, double end)
     {
         session.AddMarker(new EvidenceMarker(start, EvidenceMarkerKind.UserReportedStartingValue,
-            activity, "Start", EvidenceProvenance.UserReported, "Balanced"));
+            activity, "Start", EvidenceProvenance.UserReported, "Balanced") { PowerSourceAtMarker = PowerSourceKind.Ac });
         session.AddMarker(new EvidenceMarker(start + 1, EvidenceMarkerKind.UserReportedTargetValue,
-            activity, "Target", EvidenceProvenance.UserReported, "Silent"));
+            activity, "Target", EvidenceProvenance.UserReported, "Silent") { PowerSourceAtMarker = PowerSourceKind.Ac });
         session.AddMarker(new EvidenceMarker(end - 1, EvidenceMarkerKind.UserActionConfirmed,
-            activity, "Action", EvidenceProvenance.UserReported));
+            activity, "Action", EvidenceProvenance.UserReported) { PowerSourceAtMarker = PowerSourceKind.Ac });
         session.AddMarker(new EvidenceMarker(end, EvidenceMarkerKind.UserReportedRestoration,
-            activity, "Restore", EvidenceProvenance.UserReported, "Balanced"));
+            activity, "Restore", EvidenceProvenance.UserReported, "Balanced") { PowerSourceAtMarker = PowerSourceKind.Ac });
+    }
+
+    private static ControlObservation CreateIncompleteThermalAck(
+        string operationId,
+        double time,
+        byte transactionId,
+        byte mode = 0x05,
+        byte fanValue = 0x00)
+    {
+        var bytes = FeatureReportTestData.Create(
+            0x0D,
+            0x02,
+            [0x01, 0x01, mode, fanValue],
+            ObservationDirection.Output,
+            transactionId: transactionId)[..90];
+        bytes[0] = 0xA5;
+        return new ControlObservation(
+            operationId, time, ObservationSource.ReturnedBuffer, "DeviceIoControl.HID_GET_FEATURE",
+            ObservationDirection.Output, ObservationStatus.Succeeded, 0, null,
+            0x1532, 0xFFFF, "hid-preview-01", 1, 2, null, bytes,
+            PayloadDisposition.ProvenFeatureControl, time, 91, 91, 90);
     }
 }

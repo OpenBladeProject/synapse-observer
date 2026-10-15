@@ -27,11 +27,14 @@ struct Event {
     uint64_t completionTimestampTicks{};
 };
 struct Targets { void* setFeature; void* getFeature; void* deviceIoControl; };
+enum class LifecycleState : uint32_t { Idle, Recording, Faulted };
+enum class StartResult : uint32_t { Started, Invalid, Busy, Faulted };
 // Deliberately internal: production has no arbitrary handle or hook-target API.
 // The owned fixture is the only caller until exact-device provenance is reviewed.
-bool StartOwnedFixture(Targets targets, HANDLE ownedHandle, unsigned featureBytes = 12);
-bool StartLive(const wchar_t names[][512], const DWORD* featureBytes, unsigned interfaceCount);
+StartResult StartOwnedFixture(Targets targets, HANDLE ownedHandle, unsigned featureBytes = 12);
+StartResult StartLive(const wchar_t names[][512], const DWORD* featureBytes, unsigned interfaceCount);
 bool Stop();
 bool Poll(Event& result);
 uint64_t Dropped();
+LifecycleState State();
 }

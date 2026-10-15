@@ -8,6 +8,40 @@ public enum FileSignatureState
     Unavailable,
 }
 
+public enum HidReportDirection
+{
+    Input,
+    Output,
+    Feature,
+}
+
+public enum HidReportCapabilityKind
+{
+    Button,
+    Value,
+}
+
+public sealed record HidReportCapabilityEvidence(
+    HidReportDirection Direction,
+    HidReportCapabilityKind Kind,
+    byte ReportId,
+    ushort UsagePage,
+    bool IsRange,
+    ushort UsageMinimum,
+    ushort UsageMaximum,
+    ushort LinkCollection,
+    ushort LinkUsagePage,
+    ushort LinkUsage,
+    ushort? BitSize,
+    ushort? ReportCount,
+    int? LogicalMinimum,
+    int? LogicalMaximum)
+{
+    public bool IsAbsolute { get; init; }
+
+    public bool? HasNull { get; init; }
+}
+
 public sealed record HidDescriptorSupportEvidence(
     string InterfaceLabel,
     string PhysicalDeviceLabel,
@@ -23,7 +57,14 @@ public sealed record HidDescriptorSupportEvidence(
     ushort OutputButtonCaps,
     ushort OutputValueCaps,
     ushort FeatureButtonCaps,
-    ushort FeatureValueCaps);
+    ushort FeatureValueCaps)
+{
+    public IReadOnlyList<HidReportCapabilityEvidence> CapabilityShapes { get; init; } = [];
+
+    public CollectionState CapabilityShapeState { get; init; } = CollectionState.Unavailable;
+
+    public bool CapabilityShapesTruncated { get; init; }
+}
 
 public sealed record DriverFileEvidence(
     string ServiceName,
@@ -85,6 +126,38 @@ public sealed record DisplayModeEvidence(
     int BitsPerPixel,
     int RefreshRateHertz);
 
+public enum DisplayColorProfileScope
+{
+    SystemWide,
+    CurrentUser,
+}
+
+public enum DisplayColorProfileSubtype
+{
+    StandardSdr,
+    ExtendedHdr,
+}
+
+public sealed record DisplayColorProfileEvidence(
+    string ProfileLabel,
+    string? FileName,
+    string? Sha256,
+    bool IsAssociated,
+    IReadOnlyList<DisplayColorProfileSubtype> DefaultSubtypes);
+
+public sealed record DisplayColorProfileScopeEvidence(
+    DisplayColorProfileScope Scope,
+    CollectionState State,
+    IReadOnlyList<DisplayColorProfileEvidence> Profiles,
+    bool Truncated,
+    string? Issue);
+
+public sealed record DisplayColorProfileInventoryEvidence(
+    DisplayColorProfileScope? SelectedScope,
+    CollectionState State,
+    IReadOnlyList<DisplayColorProfileScopeEvidence> Scopes,
+    string? Issue);
+
 public sealed record DisplayEvidence(
     string DisplayLabel,
     string? DisplayName,
@@ -113,6 +186,8 @@ public sealed record DisplayEvidence(
     public string? EdidManufacturerCode { get; init; }
 
     public string? EdidProductCode { get; init; }
+
+    public DisplayColorProfileInventoryEvidence? ColorProfiles { get; init; }
 }
 
 public sealed record BrightnessEvidence(
@@ -255,7 +330,7 @@ internal static class SupportInventorySanitizer
     private const int MaxFilters = 16;
     private const int MaxGraphicsAdapters = 8;
     private const int MaxDisplays = 16;
-    private const int MaxDisplayModes = 128;
+    private const int MaxDisplayModes = EvidenceLimits.MaxDisplayModesPerDisplay;
     private const int MaxBrightnessEntries = 16;
     private const int MaxBrightnessLevels = 101;
     private const int MaxThermalZones = 16;
@@ -269,6 +344,7 @@ internal static class SupportInventorySanitizer
             SanitizeSection(snapshot.HidDescriptors, snapshot.HidDescriptors.Value
                 .Take(MaxHidDescriptors)
                 .Where(static item => IsToken(item.InterfaceLabel) && IsToken(item.PhysicalDeviceLabel))
+                .Select(SanitizeHidDescriptor)
                 .ToArray()),
             SanitizeSection(snapshot.DeviceDrivers, snapshot.DeviceDrivers.Value
                 .Take(MaxDeviceDrivers)
@@ -326,6 +402,7 @@ internal static class SupportInventorySanitizer
                     EdidProductCode = EdidProduct(item.EdidProductCode),
                     DisplayName = Text(item.DisplayName),
                     CurrentMode = ValidMode(item.CurrentMode),
+                    ColorProfiles = SanitizeColorProfiles(item.ColorProfiles),
                     AvailableModes = item.AvailableModes
                         .Where(static mode => ValidMode(mode) is not null)
                         .Take(MaxDisplayModes)
@@ -442,6 +519,143 @@ internal static class SupportInventorySanitizer
                     }
                     : null),
         };
+
+    private static HidDescriptorSupportEvidence SanitizeHidDescriptor(HidDescriptorSupportEvidence descriptor)
+    {
+        var sanitizedShapes = descriptor.CapabilityShapes
+            .Where(IsValidHidCapabilityShape)
+            .Take(EvidenceLimits.MaxHidCapabilityShapesPerInterface)
+            .Select(static shape => shape.Kind == HidReportCapabilityKind.Button
+                ? shape with
+                {
+                    BitSize = null,
+                    LogicalMinimum = null,
+                    LogicalMaximum = null,
+                    HasNull = null,
+                }
+                : shape)
+            .ToArray();
+        var invalidShapeRemoved = sanitizedShapes.Length != descriptor.CapabilityShapes.Count
+            && descriptor.CapabilityShapes.Count <= EvidenceLimits.MaxHidCapabilityShapesPerInterface;
+        var bounded = descriptor.CapabilityShapes.Count > EvidenceLimits.MaxHidCapabilityShapesPerInterface;
+        var totalDeclaredShapes = descriptor.InputButtonCaps
+            + descriptor.InputValueCaps
+            + descriptor.OutputButtonCaps
+            + descriptor.OutputValueCaps
+            + descriptor.FeatureButtonCaps
+            + descriptor.FeatureValueCaps;
+        var validState = descriptor.CapabilityShapeState is CollectionState.Collected
+            or CollectionState.Partial
+            or CollectionState.Absent
+            or CollectionState.Unavailable;
+        var inconsistentState = descriptor.CapabilityShapeState == CollectionState.Absent
+                && (totalDeclaredShapes > 0 || sanitizedShapes.Length > 0)
+            || descriptor.CapabilityShapeState == CollectionState.Unavailable && sanitizedShapes.Length > 0
+            || descriptor.CapabilityShapeState == CollectionState.Collected
+                && sanitizedShapes.Length != totalDeclaredShapes;
+        var state = !validState || invalidShapeRemoved || bounded || inconsistentState
+            ? CollectionState.Partial
+            : descriptor.CapabilityShapeState;
+
+        return descriptor with
+        {
+            CapabilityShapes = sanitizedShapes,
+            CapabilityShapeState = state,
+            CapabilityShapesTruncated = descriptor.CapabilityShapesTruncated
+                || bounded
+                || descriptor.CapabilityShapeState == CollectionState.Collected
+                    && totalDeclaredShapes > EvidenceLimits.MaxHidCapabilityShapesPerInterface,
+        };
+    }
+
+    private static DisplayColorProfileInventoryEvidence? SanitizeColorProfiles(
+        DisplayColorProfileInventoryEvidence? inventory)
+    {
+        if (inventory is null)
+        {
+            return null;
+        }
+
+        var partial = inventory.SelectedScope is not null && !Enum.IsDefined(inventory.SelectedScope.Value);
+        DisplayColorProfileScope? selectedScope = partial ? null : inventory.SelectedScope;
+        var scopes = new List<DisplayColorProfileScopeEvidence>(2);
+        var seenScopes = new HashSet<DisplayColorProfileScope>();
+        foreach (var scope in inventory.Scopes.Take(2))
+        {
+            if (!Enum.IsDefined(scope.Scope) || !seenScopes.Add(scope.Scope))
+            {
+                partial = true;
+                continue;
+            }
+
+            var profiles = scope.Profiles
+                .Take(WindowsInventorySource.MaxColorProfileRecordsPerScope)
+                .Where(static profile => IsToken(profile.ProfileLabel))
+                .Select(static profile => profile with
+                {
+                    FileName = WindowsInventorySource.GetSafeColorProfileFileName(profile.FileName),
+                    Sha256 = WindowsInventorySource.GetSafeColorProfileFileName(profile.FileName) is not null
+                        ? Sha256(profile.Sha256) : null,
+                    DefaultSubtypes = profile.DefaultSubtypes
+                        .Where(Enum.IsDefined)
+                        .Distinct()
+                        .Take(2)
+                        .ToArray(),
+                })
+                .ToArray();
+            bool scopePartial = scope.Profiles.Count > WindowsInventorySource.MaxColorProfileRecordsPerScope
+                || profiles.Length != Math.Min(scope.Profiles.Count, WindowsInventorySource.MaxColorProfileRecordsPerScope)
+                || scope.Profiles.Any(static profile => profile.FileName is not null
+                    && WindowsInventorySource.GetSafeColorProfileFileName(profile.FileName) is null
+                    || profile.Sha256 is not null
+                        && (Sha256(profile.Sha256) is null
+                            || WindowsInventorySource.GetSafeColorProfileFileName(profile.FileName) is null)
+                    || profile.DefaultSubtypes.Any(static subtype => !Enum.IsDefined(subtype)));
+            CollectionState state = !Enum.IsDefined(scope.State) || scopePartial
+                ? CollectionState.Partial
+                : scope.State;
+            partial |= scopePartial || state is CollectionState.Partial or CollectionState.Unavailable;
+            scopes.Add(scope with
+            {
+                State = state,
+                Profiles = profiles,
+                Truncated = scope.Truncated
+                    || scope.Profiles.Count > WindowsInventorySource.MaxColorProfileRecordsPerScope,
+                Issue = Issue(state, scope.Issue),
+            });
+        }
+
+        partial |= inventory.Scopes.Count > 2
+            || !scopes.Any(static scope => scope.Scope == DisplayColorProfileScope.CurrentUser)
+            || selectedScope == DisplayColorProfileScope.SystemWide
+                && !scopes.Any(static scope => scope.Scope == DisplayColorProfileScope.SystemWide);
+        var whollyUnavailable = inventory.State == CollectionState.Unavailable
+            && !scopes.Any(static scope => scope.Profiles.Count > 0
+                || scope.State is CollectionState.Collected or CollectionState.Absent);
+        CollectionState inventoryState = whollyUnavailable
+            ? CollectionState.Unavailable
+            : !Enum.IsDefined(inventory.State) || partial ? CollectionState.Partial : inventory.State;
+        return inventory with
+        {
+            SelectedScope = selectedScope,
+            State = inventoryState,
+            Scopes = scopes,
+            Issue = Issue(inventoryState, inventory.Issue),
+        };
+    }
+
+    private static bool IsValidHidCapabilityShape(HidReportCapabilityEvidence shape) =>
+        Enum.IsDefined(shape.Direction)
+        && Enum.IsDefined(shape.Kind)
+        && (shape.Kind == HidReportCapabilityKind.Button
+            ? shape.ReportCount is null or > 0
+            : shape.ReportCount is > 0)
+        && shape.UsageMinimum <= shape.UsageMaximum
+        && (shape.Kind != HidReportCapabilityKind.Value
+            || shape.BitSize is > 0
+                && shape.LogicalMinimum is int logicalMinimum
+                && shape.LogicalMaximum is int logicalMaximum
+                && logicalMinimum <= logicalMaximum);
 
     private static SectionResult<T> SanitizeSection<T>(SectionResult<T> source, T value) =>
         new(source.State, value, Issue(source.State, source.Issue));

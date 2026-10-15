@@ -12,12 +12,17 @@ namespace SynapseObserver.Core;
 public sealed partial class WindowsInventorySource : IInventorySource
 {
     private const ushort RazerVendorId = 0x1532;
+    private static readonly Lazy<bool> ButtonReportCountAvailable = new(HasButtonReportCount);
+    private const string BiosIdentityKey = @"HARDWARE\DESCRIPTION\System\BIOS";
+    private const string SystemInformationIdentityKey =
+        @"SYSTEM\CurrentControlSet\Control\SystemInformation";
     private const uint DigcfPresent = 0x00000002;
     private const uint DigcfDeviceInterface = 0x00000010;
     private const uint OpenExisting = 3;
     private const uint FileShareRead = 0x00000001;
     private const uint FileShareWrite = 0x00000002;
     private const int ErrorNoMoreItems = 259;
+    private const int HidpStatusBufferTooSmall = unchecked((int)0xC0110007);
     private const int CrSuccess = 0;
     private const uint CmDrpDeviceDescription = 0x00000001;
     private const uint CmDrpFriendlyName = 0x0000000D;
@@ -25,53 +30,98 @@ public sealed partial class WindowsInventorySource : IInventorySource
 
     public ValueTask<SectionResult<IReadOnlyList<MachineIdentity>>> CollectMachineIdentityAsync(
         CancellationToken cancellationToken)
+        => ValueTask.FromResult(CollectMachineIdentity(
+            ReadMachineIdentitySource,
+            cancellationToken));
+
+    internal static SectionResult<IReadOnlyList<MachineIdentity>> CollectMachineIdentity(
+        Func<RegistryView, MachineIdentitySource, (MachineIdentity? Identity, bool Complete)> readSource,
+        CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(readSource);
         cancellationToken.ThrowIfCancellationRequested();
-        var identities = new List<MachineIdentity>(2);
+        var identities = new List<MachineIdentity>(4);
         var failures = 0;
 
         foreach (var view in new[] { RegistryView.Registry64, RegistryView.Registry32 })
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            try
+            foreach (var source in new[]
+                     {
+                         MachineIdentitySource.BiosRegistry,
+                         MachineIdentitySource.SystemInformationRegistry,
+                     })
             {
-                using var baseKey = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, view);
-                using var bios = baseKey.OpenSubKey(@"HARDWARE\DESCRIPTION\System\BIOS", writable: false);
-                if (bios is null)
+                cancellationToken.ThrowIfCancellationRequested();
+                try
+                {
+                    var result = readSource(view, source);
+                    if (result.Identity is not null)
+                    {
+                        identities.Add(result.Identity);
+                    }
+
+                    if (!result.Complete)
+                    {
+                        failures++;
+                    }
+                }
+                catch (Exception ex) when (ex is
+                    UnauthorizedAccessException or
+                    System.Security.SecurityException or
+                    IOException)
                 {
                     failures++;
-                    continue;
                 }
-
-                identities.Add(new MachineIdentity(
-                    view == RegistryView.Registry64 ? "Registry64" : "Registry32",
-                    ReadRegistryText(bios, "SystemManufacturer"),
-                    ReadRegistryText(bios, "SystemProductName"),
-                    ReadRegistryText(bios, "SystemSKU"),
-                    ReadRegistryText(bios, "BIOSVersion"),
-                    ReadRegistryText(bios, "BIOSReleaseDate")));
-            }
-            catch (Exception ex) when (ex is UnauthorizedAccessException or System.Security.SecurityException or IOException)
-            {
-                failures++;
             }
         }
 
         if (identities.Count == 0)
         {
-            return ValueTask.FromResult(SectionResult<IReadOnlyList<MachineIdentity>>.Unavailable(
+            return SectionResult<IReadOnlyList<MachineIdentity>>.Unavailable(
                 identities,
-                "Windows BIOS identity registry values were unavailable."));
+                "Windows identity registry values were unavailable.");
         }
 
         if (failures > 0)
         {
-            return ValueTask.FromResult(SectionResult<IReadOnlyList<MachineIdentity>>.Partial(
+            return SectionResult<IReadOnlyList<MachineIdentity>>.Partial(
                 identities,
-                "One Windows registry view was unavailable."));
+                "One or more Windows identity registry sources were unavailable.");
         }
 
-        return ValueTask.FromResult(SectionResult<IReadOnlyList<MachineIdentity>>.Collected(identities));
+        return SectionResult<IReadOnlyList<MachineIdentity>>.Collected(identities);
+    }
+
+    private static (MachineIdentity? Identity, bool Complete) ReadMachineIdentitySource(
+        RegistryView view,
+        MachineIdentitySource source)
+    {
+        using var baseKey = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, view);
+        string keyPath = source switch
+        {
+            MachineIdentitySource.BiosRegistry => BiosIdentityKey,
+            MachineIdentitySource.SystemInformationRegistry => SystemInformationIdentityKey,
+            _ => throw new ArgumentOutOfRangeException(nameof(source)),
+        };
+        using var key = baseKey.OpenSubKey(keyPath, writable: false);
+        if (key is null)
+        {
+            return (null, false);
+        }
+
+        string? manufacturer = ReadRegistryText(key, "SystemManufacturer");
+        string? productName = ReadRegistryText(key, "SystemProductName");
+        var identity = new MachineIdentity(
+            view == RegistryView.Registry64 ? "Registry64" : "Registry32",
+            manufacturer,
+            productName,
+            source == MachineIdentitySource.BiosRegistry ? ReadRegistryText(key, "SystemSKU") : null,
+            source == MachineIdentitySource.BiosRegistry ? ReadRegistryText(key, "BIOSVersion") : null,
+            source == MachineIdentitySource.BiosRegistry ? ReadRegistryText(key, "BIOSReleaseDate") : null)
+        {
+            Source = source,
+        };
+        return (identity, !string.IsNullOrWhiteSpace(manufacturer) && !string.IsNullOrWhiteSpace(productName));
     }
 
     public ValueTask<SectionResult<PowerSourceEvidence?>> CollectPowerSourceAsync(
@@ -122,6 +172,8 @@ public sealed partial class WindowsInventorySource : IInventorySource
     public SectionResult<IReadOnlyList<LocalHidCandidate>> DiscoverLocalControlCandidates(
         CancellationToken cancellationToken = default)
     {
+        // Never expose descriptor rows from an earlier scan after cancellation or failure.
+        _lastHidDescriptorSupport = [];
         cancellationToken.ThrowIfCancellationRequested();
         var interfaces = new List<LocalHidCandidate>();
         var descriptorDetails = new List<HidDescriptorSupportEvidence>();
@@ -187,8 +239,12 @@ public sealed partial class WindowsInventorySource : IInventorySource
             ushort? usage = null;
             HidReportGeometry? geometry = null;
             HidpCaps? descriptorCaps = null;
+            var capabilityShapes = HidCapabilityCollectionResult.Unavailable;
             string? issue = null;
             var descriptorState = CollectionState.Collected;
+            var parent = GetParentIdentity(deviceInstance, attributes.VendorId, attributes.ProductId);
+            var productName = handle.IsInvalid ? null : GetHidProductName(handle);
+            var isPhysicalBladeHid = IsPhysicalBladeHid(parent, productName);
 
             if (handle.IsInvalid)
             {
@@ -196,7 +252,7 @@ public sealed partial class WindowsInventorySource : IInventorySource
                 issue = "The HID interface could not be opened for descriptor-only access.";
                 failures++;
             }
-            else if (!TryGetCaps(handle, out var caps))
+            else if (!TryGetDescriptorCaps(handle, isPhysicalBladeHid, out var caps, out capabilityShapes))
             {
                 descriptorState = CollectionState.Partial;
                 issue = "HID report capabilities were unavailable.";
@@ -211,12 +267,16 @@ public sealed partial class WindowsInventorySource : IInventorySource
                     caps.OutputReportByteLength,
                     caps.FeatureReportByteLength);
                 descriptorCaps = caps;
+                if (capabilityShapes.State == CollectionState.Partial)
+                {
+                    descriptorState = CollectionState.Partial;
+                    issue = "Some parsed HID capability shapes were unavailable or truncated.";
+                    failures++;
+                }
             }
 
-            var parent = GetParentIdentity(deviceInstance, attributes.VendorId, attributes.ProductId);
-            var productName = handle.IsInvalid ? null : GetHidProductName(handle);
             var interfaceLabel = MakeOpaqueLabel("hid", devicePath);
-            if (descriptorCaps is { } completeCaps && IsPhysicalBladeHid(parent, productName))
+            if (descriptorCaps is { } completeCaps && isPhysicalBladeHid)
             {
                 var physicalIdentity = parent.UsbInstanceId ?? parent.InstanceId ?? devicePath;
                 descriptorDetails.Add(new HidDescriptorSupportEvidence(
@@ -234,7 +294,12 @@ public sealed partial class WindowsInventorySource : IInventorySource
                     completeCaps.NumberOutputButtonCaps,
                     completeCaps.NumberOutputValueCaps,
                     completeCaps.NumberFeatureButtonCaps,
-                    completeCaps.NumberFeatureValueCaps));
+                    completeCaps.NumberFeatureValueCaps)
+                {
+                    CapabilityShapes = capabilityShapes.Shapes,
+                    CapabilityShapeState = capabilityShapes.State,
+                    CapabilityShapesTruncated = capabilityShapes.Truncated,
+                });
             }
 
             interfaces.Add(new LocalHidCandidate(
@@ -602,9 +667,14 @@ public sealed partial class WindowsInventorySource : IInventorySource
         return true;
     }
 
-    private static bool TryGetCaps(SafeFileHandle handle, out HidpCaps caps)
+    private static bool TryGetDescriptorCaps(
+        SafeFileHandle handle,
+        bool collectCapabilityShapes,
+        out HidpCaps caps,
+        out HidCapabilityCollectionResult capabilityShapes)
     {
         caps = default;
+        capabilityShapes = HidCapabilityCollectionResult.Unavailable;
         if (!HidD_GetPreparsedData(handle, out var preparsedData))
         {
             return false;
@@ -612,12 +682,249 @@ public sealed partial class WindowsInventorySource : IInventorySource
 
         try
         {
-            return HidP_GetCaps(preparsedData, out caps) >= 0;
+            if (HidP_GetCaps(preparsedData, out caps) < 0)
+            {
+                return false;
+            }
+
+            if (collectCapabilityShapes)
+            {
+                capabilityShapes = CollectHidCapabilityShapes(
+                    preparsedData,
+                    caps,
+                    HidP_GetButtonCaps,
+                    HidP_GetValueCaps,
+                    ButtonReportCountAvailable.Value);
+            }
+
+            return true;
         }
         finally
         {
             HidD_FreePreparsedData(preparsedData);
         }
+    }
+
+    internal static HidCapabilityCollectionResult CollectHidCapabilityShapes(
+        IntPtr preparsedData,
+        HidpCaps caps,
+        HidButtonCapsReader buttonCapsReader,
+        HidValueCapsReader valueCapsReader,
+        bool supportsButtonReportCount = true)
+    {
+        ArgumentNullException.ThrowIfNull(buttonCapsReader);
+        ArgumentNullException.ThrowIfNull(valueCapsReader);
+
+        var shapes = new List<HidReportCapabilityEvidence>();
+        var partial = false;
+        var truncated = false;
+
+        ReadButtonCaps(HidpReportType.Input, HidReportDirection.Input, caps.NumberInputButtonCaps);
+        ReadValueCaps(HidpReportType.Input, HidReportDirection.Input, caps.NumberInputValueCaps);
+        ReadButtonCaps(HidpReportType.Output, HidReportDirection.Output, caps.NumberOutputButtonCaps);
+        ReadValueCaps(HidpReportType.Output, HidReportDirection.Output, caps.NumberOutputValueCaps);
+        ReadButtonCaps(HidpReportType.Feature, HidReportDirection.Feature, caps.NumberFeatureButtonCaps);
+        ReadValueCaps(HidpReportType.Feature, HidReportDirection.Feature, caps.NumberFeatureValueCaps);
+
+        return new HidCapabilityCollectionResult(
+            shapes.ToArray(),
+            partial ? CollectionState.Partial : shapes.Count == 0 ? CollectionState.Absent : CollectionState.Collected,
+            truncated);
+
+        void ReadButtonCaps(HidpReportType reportType, HidReportDirection direction, ushort declaredCount)
+        {
+            if (declaredCount == 0)
+            {
+                return;
+            }
+
+            var remaining = EvidenceLimits.MaxHidCapabilityShapesPerInterface - shapes.Count;
+            if (remaining <= 0)
+            {
+                partial = true;
+                truncated = true;
+                return;
+            }
+
+            var capacity = Math.Min(declaredCount, (ushort)remaining);
+            var nativeCaps = new HidpButtonCaps[capacity];
+            var returnedCount = capacity;
+            var status = buttonCapsReader(reportType, nativeCaps, ref returnedCount, preparsedData);
+            var bufferTooSmall = status == HidpStatusBufferTooSmall;
+            if (status < 0)
+            {
+                partial = true;
+                truncated |= bufferTooSmall;
+                // Failed calls do not establish which array elements were written.
+                return;
+            }
+
+            if (bufferTooSmall || declaredCount > capacity || returnedCount > capacity)
+            {
+                partial = true;
+                truncated = true;
+            }
+            else if (returnedCount != declaredCount)
+            {
+                partial = true;
+            }
+
+            var countToRead = Math.Min(returnedCount, capacity);
+            for (var index = 0; index < countToRead; index++)
+            {
+                if (TryConvertButtonCapability(nativeCaps[index], direction, supportsButtonReportCount, out var shape))
+                {
+                    shapes.Add(shape);
+                }
+                else
+                {
+                    partial = true;
+                }
+            }
+        }
+
+        void ReadValueCaps(HidpReportType reportType, HidReportDirection direction, ushort declaredCount)
+        {
+            if (declaredCount == 0)
+            {
+                return;
+            }
+
+            var remaining = EvidenceLimits.MaxHidCapabilityShapesPerInterface - shapes.Count;
+            if (remaining <= 0)
+            {
+                partial = true;
+                truncated = true;
+                return;
+            }
+
+            var capacity = Math.Min(declaredCount, (ushort)remaining);
+            var nativeCaps = new HidpValueCaps[capacity];
+            var returnedCount = capacity;
+            var status = valueCapsReader(reportType, nativeCaps, ref returnedCount, preparsedData);
+            var bufferTooSmall = status == HidpStatusBufferTooSmall;
+            if (status < 0)
+            {
+                partial = true;
+                truncated |= bufferTooSmall;
+                // Failed calls do not establish which array elements were written.
+                return;
+            }
+
+            if (bufferTooSmall || declaredCount > capacity || returnedCount > capacity)
+            {
+                partial = true;
+                truncated = true;
+            }
+            else if (returnedCount != declaredCount)
+            {
+                partial = true;
+            }
+
+            var countToRead = Math.Min(returnedCount, capacity);
+            for (var index = 0; index < countToRead; index++)
+            {
+                if (TryConvertValueCapability(nativeCaps[index], direction, out var shape))
+                {
+                    shapes.Add(shape);
+                }
+                else
+                {
+                    partial = true;
+                }
+            }
+        }
+    }
+
+    private static bool HasButtonReportCount()
+    {
+        // Mirror the SDK's header-only HidP_GetVersion implementation. On API 1
+        // this field is reserved; preserve the button shape with an unknown count.
+        var module = NativeLibrary.Load("hid.dll", typeof(WindowsInventorySource).Assembly,
+            DllImportSearchPath.System32);
+        try
+        {
+            return NativeLibrary.TryGetExport(module, "HidP_GetVersionInternal", out var entry)
+                && Marshal.GetDelegateForFunctionPointer<HidParserVersionReader>(entry)(out var version) >= 0
+                && version >= 2;
+        }
+        finally { NativeLibrary.Free(module); }
+    }
+
+    [UnmanagedFunctionPointer(CallingConvention.Winapi)]
+    private delegate int HidParserVersionReader(out uint version);
+
+    private static bool TryConvertButtonCapability(
+        HidpButtonCaps native,
+        HidReportDirection direction,
+        bool supportsReportCount,
+        out HidReportCapabilityEvidence shape)
+    {
+        var usageMinimum = native.IsRange != 0 ? native.UsageData.Range.UsageMin : native.UsageData.NotRange.Usage;
+        var usageMaximum = native.IsRange != 0 ? native.UsageData.Range.UsageMax : native.UsageData.NotRange.Usage;
+        if ((supportsReportCount && native.ReportCount == 0) || usageMinimum > usageMaximum)
+        {
+            shape = null!;
+            return false;
+        }
+
+        shape = new HidReportCapabilityEvidence(
+            direction,
+            HidReportCapabilityKind.Button,
+            native.ReportId,
+            native.UsagePage,
+            native.IsRange != 0,
+            usageMinimum,
+            usageMaximum,
+            native.LinkCollection,
+            native.LinkUsagePage,
+            native.LinkUsage,
+            null,
+            supportsReportCount ? native.ReportCount : null,
+            null,
+            null)
+        {
+            IsAbsolute = native.IsAbsolute != 0,
+        };
+        return true;
+    }
+
+    private static bool TryConvertValueCapability(
+        HidpValueCaps native,
+        HidReportDirection direction,
+        out HidReportCapabilityEvidence shape)
+    {
+        var usageMinimum = native.IsRange != 0 ? native.UsageData.Range.UsageMin : native.UsageData.NotRange.Usage;
+        var usageMaximum = native.IsRange != 0 ? native.UsageData.Range.UsageMax : native.UsageData.NotRange.Usage;
+        if (native.ReportCount == 0
+            || native.BitSize == 0
+            || usageMinimum > usageMaximum
+            || native.LogicalMinimum > native.LogicalMaximum)
+        {
+            shape = null!;
+            return false;
+        }
+
+        shape = new HidReportCapabilityEvidence(
+            direction,
+            HidReportCapabilityKind.Value,
+            native.ReportId,
+            native.UsagePage,
+            native.IsRange != 0,
+            usageMinimum,
+            usageMaximum,
+            native.LinkCollection,
+            native.LinkUsagePage,
+            native.LinkUsage,
+            native.BitSize,
+            native.ReportCount,
+            native.LogicalMinimum,
+            native.LogicalMaximum)
+        {
+            IsAbsolute = native.IsAbsolute != 0,
+            HasNull = native.HasNull != 0,
+        };
+        return true;
     }
 
     private static bool TryGetDevicePath(
@@ -713,8 +1020,36 @@ public sealed partial class WindowsInventorySource : IInventorySource
         public ushort VersionNumber;
     }
 
+    internal enum HidpReportType
+    {
+        Input = 0,
+        Output = 1,
+        Feature = 2,
+    }
+
+    internal delegate int HidButtonCapsReader(
+        HidpReportType reportType,
+        HidpButtonCaps[] buttonCaps,
+        ref ushort buttonCapsLength,
+        IntPtr preparsedData);
+
+    internal delegate int HidValueCapsReader(
+        HidpReportType reportType,
+        HidpValueCaps[] valueCaps,
+        ref ushort valueCapsLength,
+        IntPtr preparsedData);
+
+    internal sealed record HidCapabilityCollectionResult(
+        IReadOnlyList<HidReportCapabilityEvidence> Shapes,
+        CollectionState State,
+        bool Truncated)
+    {
+        public static HidCapabilityCollectionResult Unavailable { get; } =
+            new([], CollectionState.Unavailable, false);
+    }
+
     [StructLayout(LayoutKind.Sequential)]
-    private struct HidpCaps
+    internal struct HidpCaps
     {
         public ushort Usage;
         public ushort UsagePage;
@@ -748,6 +1083,102 @@ public sealed partial class WindowsInventorySource : IInventorySource
         public ushort NumberFeatureButtonCaps;
         public ushort NumberFeatureValueCaps;
         public ushort NumberFeatureDataIndices;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct HidpButtonCaps
+    {
+        public ushort UsagePage;
+        public byte ReportId;
+        public byte IsAlias;
+        public ushort BitField;
+        public ushort LinkCollection;
+        public ushort LinkUsage;
+        public ushort LinkUsagePage;
+        public byte IsRange;
+        public byte IsStringRange;
+        public byte IsDesignatorRange;
+        public byte IsAbsolute;
+        public ushort ReportCount;
+        public ushort Reserved2;
+        public uint Reserved0;
+        public uint Reserved1;
+        public uint Reserved2Value;
+        public uint Reserved3;
+        public uint Reserved4;
+        public uint Reserved5;
+        public uint Reserved6;
+        public uint Reserved7;
+        public uint Reserved8;
+        public HidpCapsUsageData UsageData;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct HidpValueCaps
+    {
+        public ushort UsagePage;
+        public byte ReportId;
+        public byte IsAlias;
+        public ushort BitField;
+        public ushort LinkCollection;
+        public ushort LinkUsage;
+        public ushort LinkUsagePage;
+        public byte IsRange;
+        public byte IsStringRange;
+        public byte IsDesignatorRange;
+        public byte IsAbsolute;
+        public byte HasNull;
+        public byte Reserved;
+        public ushort BitSize;
+        public ushort ReportCount;
+        public ushort Reserved20;
+        public ushort Reserved21;
+        public ushort Reserved22;
+        public ushort Reserved23;
+        public ushort Reserved24;
+        public uint UnitsExponent;
+        public uint Units;
+        public int LogicalMinimum;
+        public int LogicalMaximum;
+        public int PhysicalMinimum;
+        public int PhysicalMaximum;
+        public HidpCapsUsageData UsageData;
+    }
+
+    [StructLayout(LayoutKind.Explicit, Size = 16)]
+    internal struct HidpCapsUsageData
+    {
+        [FieldOffset(0)]
+        public HidpCapsRange Range;
+
+        [FieldOffset(0)]
+        public HidpCapsNotRange NotRange;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct HidpCapsRange
+    {
+        public ushort UsageMin;
+        public ushort UsageMax;
+        public ushort StringMin;
+        public ushort StringMax;
+        public ushort DesignatorMin;
+        public ushort DesignatorMax;
+        public ushort DataIndexMin;
+        public ushort DataIndexMax;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct HidpCapsNotRange
+    {
+        public ushort Usage;
+        public ushort Reserved1;
+        public ushort StringIndex;
+        public ushort Reserved2;
+        public ushort DesignatorIndex;
+        public ushort Reserved3;
+        public ushort DataIndex;
+        public ushort Reserved4;
     }
 
     private sealed class SafeDeviceInfoSetHandle : SafeHandleZeroOrMinusOneIsInvalid
@@ -801,6 +1232,20 @@ public sealed partial class WindowsInventorySource : IInventorySource
 
     [DllImport("hid.dll")]
     private static extern int HidP_GetCaps(IntPtr preparsedData, out HidpCaps capabilities);
+
+    [DllImport("hid.dll")]
+    private static extern int HidP_GetButtonCaps(
+        HidpReportType reportType,
+        [Out] HidpButtonCaps[] buttonCaps,
+        ref ushort buttonCapsLength,
+        IntPtr preparsedData);
+
+    [DllImport("hid.dll")]
+    private static extern int HidP_GetValueCaps(
+        HidpReportType reportType,
+        [Out] HidpValueCaps[] valueCaps,
+        ref ushort valueCapsLength,
+        IntPtr preparsedData);
 
     [DllImport("setupapi.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern SafeDeviceInfoSetHandle SetupDiGetClassDevs(

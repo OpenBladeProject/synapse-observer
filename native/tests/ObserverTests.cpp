@@ -1,6 +1,7 @@
 #include "../src/ObserverShared.h"
 #include <thread>
 #include <memory>
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 using namespace observer;
@@ -9,11 +10,13 @@ constexpr DWORD SetCode = CTL_CODE(FILE_DEVICE_KEYBOARD, 100, METHOD_IN_DIRECT, 
 HANDLE owned = reinterpret_cast<HANDLE>(static_cast<uintptr_t>(0x1234));
 int mode{};
 DWORD seenIncoming{};
-DWORD delayMilliseconds{};
+std::atomic<DWORD> delayMilliseconds{};
+std::atomic<bool> fakeCallEntered{};
 DWORD returnedOverride{};
 __declspec(noinline) BOOL WINAPI FakeIoctl(HANDLE, DWORD, LPVOID, DWORD, LPVOID output, DWORD size, LPDWORD bytes, LPOVERLAPPED) {
     seenIncoming = GetLastError();
-    if (delayMilliseconds) Sleep(delayMilliseconds);
+    fakeCallEntered.store(true, std::memory_order_release);
+    if (const DWORD delay = delayMilliseconds.load(std::memory_order_acquire)) Sleep(delay);
     if (mode == 2) { SetLastError(ERROR_IO_PENDING); return FALSE; }
     if (mode == 1) { SetLastError(ERROR_ACCESS_DENIED); return FALSE; }
     if (output && size) static_cast<unsigned char*>(output)[0] = 0xA5;
@@ -28,7 +31,9 @@ __declspec(noinline) BOOLEAN __stdcall FakeGet(HANDLE h, PVOID buffer, ULONG n) 
 }
 void Check(bool value, const char* message) { if (!value) { std::fprintf(stderr, "FAIL: %s\n", message); std::exit(1); } }
 int main() {
-    Check(StartOwnedFixture({reinterpret_cast<void*>(FakeSet), reinterpret_cast<void*>(FakeGet), reinterpret_cast<void*>(FakeIoctl)}, owned, 91), "install owned hooks");
+    const Targets targets{reinterpret_cast<void*>(FakeSet), reinterpret_cast<void*>(FakeGet), reinterpret_cast<void*>(FakeIoctl)};
+    Check(StartOwnedFixture(targets, owned, 91) == StartResult::Started, "install owned hooks");
+    Check(StartOwnedFixture(targets, owned, 91) == StartResult::Busy, "competing start cannot disturb active recording");
     unsigned char buffer[12]{1,2,3}; Event e{};
     SetLastError(77);
     Check(FakeGet(owned, buffer, sizeof(buffer)) == TRUE, "original status");
@@ -61,8 +66,10 @@ int main() {
     returnedOverride = 90;
     FakeIoctl(owned, GetCode, capacityBuffer, 1, capacityBuffer, 90, &bytes, nullptr);
     Check(Poll(e) && e.outputLength == 90 && e.returnedBytes == 90 && e.outputBufferCapacity == 90 && e.gap == Gap::None, "exact IOCTL output capacity retained");
+    capacityBuffer[89] = 0x5A;
+    capacityBuffer[90] = 0xC7;
     FakeIoctl(owned, GetCode, capacityBuffer, 1, capacityBuffer, 91, &bytes, nullptr);
-    Check(Poll(e) && e.outputLength == 90 && e.returnedBytes == 90 && e.outputBufferCapacity == 91 && e.gap == Gap::None, "IOCTL output capacity independent from returned bytes and input size");
+    Check(Poll(e) && e.outputLength == 90 && e.returnedBytes == 90 && e.outputBufferCapacity == 91 && e.output[89] == 0x5A && e.output[90] == 0 && e.gap == Gap::None, "IOCTL copies exactly returned bytes while retaining larger capacity");
     returnedOverride = 91;
     FakeIoctl(owned, GetCode, capacityBuffer, 1, capacityBuffer, 90, &bytes, nullptr);
     Check(Poll(e) && !e.outputLength && e.returnedBytes == 0 && e.outputBufferCapacity == 90 && e.gap == Gap::BufferTooLarge, "IOCTL return cannot exceed output capacity");
@@ -104,6 +111,22 @@ int main() {
     writer.join();
     Check(retained == burst && shared->dropped == 0 && shared->failure == 0, "burst larger than shared ring drains losslessly during stop");
     FakeGet(owned, buffer, sizeof(buffer)); Check(!Poll(e), "no collection after stop");
+    Check(State() == LifecycleState::Idle, "clean stop returns the resident observer to idle");
+    Check(StartOwnedFixture(targets, owned, 91) == StartResult::Started, "reenable the same resident hooks");
+    Check(Dropped() == 0, "new recording resets dropped count");
+    buffer[0] = 9;
+    FakeGet(owned, buffer, sizeof(buffer));
+    Check(Poll(e) && e.sequence == 1 && e.input[0] == 9, "new recording resets queue and sequence");
+    Check(Stop() && State() == LifecycleState::Idle, "second clean stop returns to idle");
+    Check(StartOwnedFixture(targets, owned, 91) == StartResult::Started, "start fault-injection recording");
+    fakeCallEntered.store(false, std::memory_order_release);
+    delayMilliseconds = 250;
+    std::thread delayed([&] { FakeGet(owned, buffer, sizeof(buffer)); });
+    while (!fakeCallEntered.load(std::memory_order_acquire)) Sleep(1);
+    Check(!Stop() && State() == LifecycleState::Faulted, "uncertain callback cleanup faults resident observer");
+    delayed.join();
+    delayMilliseconds = 0;
+    Check(StartOwnedFixture(targets, owned, 91) == StartResult::Faulted, "faulted resident observer permanently refuses reuse");
     std::puts("PASS: real MinHook owned-process fixture; bounded safety assertions; no device handles or hardware calls");
     return 0;
 }

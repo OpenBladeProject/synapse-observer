@@ -12,34 +12,124 @@ public interface INativeObservationSession : IAsyncDisposable
     NativeSessionStatus GetStatus();
     Task<IReadOnlyList<NativeObservationEvent>> PollAsync(CancellationToken cancellationToken = default);
     Task<NativeSessionStatus> StopAsync(CancellationToken cancellationToken = default);
+    // Owned test fixtures without a resident registration need no invalidation state.
+    void InvalidateReuse() { }
 }
 
 public sealed class NativeObservationSession : INativeObservationSession
 {
     internal const int HeaderSize = 32;
     internal const int Slots = 32;
+    internal const uint DefaultRecordingDurationSeconds = 600;
+    internal const uint MaximumRecordingDurationSeconds = 600;
     private readonly MemoryMappedFile mapping;
     private readonly MemoryMappedViewAccessor view;
     private readonly SafeProcessHandle process;
     private readonly SafeFileHandle worker;
     private readonly long origin;
+    private readonly ResidentObserverRegistration? resident;
+    private readonly Func<SafeFileHandle, (bool Success, uint ExitCode)> workerExitCodeReader;
+    private readonly SemaphoreSlim stopGate = new(1, 1);
     public long OriginTimestampTicks => origin;
     private bool disposed;
     private bool stopRequested;
-    private NativeObservationSession(MemoryMappedFile mapping, MemoryMappedViewAccessor view, SafeProcessHandle process, SafeFileHandle worker, long origin)
-    { this.mapping = mapping; this.view = view; this.process = process; this.worker = worker; this.origin = origin; }
+    private int cleanupResolution;
+    private NativeObservationSession(
+        MemoryMappedFile mapping,
+        MemoryMappedViewAccessor view,
+        SafeProcessHandle process,
+        SafeFileHandle worker,
+        long origin,
+        ResidentObserverRegistration? resident,
+        Func<SafeFileHandle, (bool Success, uint ExitCode)>? workerExitCodeReader = null)
+    {
+        this.mapping = mapping;
+        this.view = view;
+        this.process = process;
+        this.worker = worker;
+        this.origin = origin;
+        this.resident = resident;
+        this.workerExitCodeReader = workerExitCodeReader ?? ReadWorkerExitCode;
+    }
     internal NativeObservationSession(MemoryMappedFile mapping, long origin)
-        : this(mapping, mapping.CreateViewAccessor(), new SafeProcessHandle(IntPtr.Zero, false), new SafeFileHandle(IntPtr.Zero, false), origin) { }
+        : this(mapping, mapping.CreateViewAccessor(), new SafeProcessHandle(IntPtr.Zero, false), new SafeFileHandle(IntPtr.Zero, false), origin, null, _ => (true, 0)) { }
+    internal NativeObservationSession(
+        MemoryMappedFile mapping,
+        long origin,
+        ResidentObserverRegistration resident,
+        SafeFileHandle worker,
+        uint workerExitCode = 0)
+        : this(mapping, mapping.CreateViewAccessor(), new SafeProcessHandle(IntPtr.Zero, false), worker, origin, resident, _ => (true, workerExitCode)) { }
     private static readonly SemaphoreSlim StartGate = new(1, 1);
+    private static readonly Dictionary<int, ResidentObserverRegistration> Residents = [];
+    internal static ResidentObserverAvailability ProbeResidentAvailability(Process target)
+    {
+        if (!StartGate.Wait(0))
+            return new(false, "Recording availability is changing. Wait for the current start or stop to finish, then refresh.");
+
+        try
+        {
+            // TargetPolicy may have cached Modules before this gate was acquired.
+            target.Refresh();
+            long processStartTime = target.StartTime.ToUniversalTime().Ticks;
+            int observerModuleCount = ObserverModules(target).Length;
+            Residents.TryGetValue(target.Id, out ResidentObserverRegistration? registration);
+            return EvaluateResidentAvailability(
+                registration,
+                target.Id,
+                processStartTime,
+                observerModuleCount);
+        }
+        finally
+        {
+            StartGate.Release();
+        }
+    }
+
+    internal static ResidentObserverAvailability EvaluateResidentAvailability(
+        ResidentObserverRegistration? registration,
+        int processId,
+        long processStartTimeUtcTicks,
+        int observerModuleCount)
+    {
+        if (registration is null)
+            return observerModuleCount == 0
+                ? new(true, string.Empty)
+                : new(false, "This Synapse process hosts an observer that this collector did not verify. Restart Synapse before another recording.");
+
+        if (registration.Identity.ProcessId != processId)
+            return new(false, "The resident observer identity is unavailable. Restart Synapse before another recording.");
+
+        if (registration.Identity.ProcessStartTimeUtcTicks != processStartTimeUtcTicks)
+            return observerModuleCount == 0
+                ? new(true, string.Empty)
+                : new(false, "This new Synapse process already hosts an observer that this collector did not verify. Restart Synapse before another recording.");
+
+        return registration.State switch
+        {
+            ResidentObserverState.Recording => new(false, "A recording is already active or its observer worker is still completing. Stop it before starting another recording."),
+            ResidentObserverState.Faulted => new(false, "The resident observer cannot be reused after a recording or cleanup error. Restart Synapse before another recording."),
+            _ when observerModuleCount == 1 => new(true, string.Empty),
+            _ => new(false, "The exact resident observer module is unavailable. Restart Synapse before another recording."),
+        };
+    }
+
     public static Task<NativeObservationSession> StartAsync(BackendCandidate candidate, string selectedInterfacePath, CancellationToken cancellationToken = default) => StartAsync(candidate, new[] { selectedInterfacePath }, cancellationToken);
-    public static Task<NativeObservationSession> StartAsync(BackendCandidate candidate, IReadOnlyList<string> selectedInterfacePaths, CancellationToken cancellationToken = default) => StartAsync(candidate, selectedInterfacePaths, 300, cancellationToken);
+    public static Task<NativeObservationSession> StartAsync(BackendCandidate candidate, IReadOnlyList<string> selectedInterfacePaths, CancellationToken cancellationToken = default) => StartAsync(candidate, selectedInterfacePaths, DefaultRecordingDurationSeconds, cancellationToken);
     public static Task<NativeObservationSession> StartAsync(BackendCandidate candidate, IReadOnlyList<string> selectedInterfacePaths, uint durationSeconds, CancellationToken cancellationToken = default) => Task.Run(() =>
     {
-        if (durationSeconds is < 1 or > 300) throw new ArgumentOutOfRangeException(nameof(durationSeconds));
+        ValidateRecordingDuration(durationSeconds);
         StartGate.Wait(cancellationToken);
         try { return Start(candidate, selectedInterfacePaths, durationSeconds, cancellationToken); }
         finally { StartGate.Release(); }
     }, cancellationToken);
+
+    internal static void ValidateRecordingDuration(uint durationSeconds)
+    {
+        if (durationSeconds is < 1 or > MaximumRecordingDurationSeconds)
+            throw new ArgumentOutOfRangeException(nameof(durationSeconds));
+    }
+
     private static NativeObservationSession Start(BackendCandidate candidate, IReadOnlyList<string> interfacePaths, uint durationSeconds, CancellationToken token)
     {
         long origin = Stopwatch.GetTimestamp();
@@ -53,25 +143,68 @@ public sealed class NativeObservationSession : INativeObservationSession
         if (!BackendDiscovery.IsSamePhysicalLaptop(selected.Select(c => c!).ToArray())) throw new InvalidOperationException("All observed feature collections must belong to one verified physical laptop device.");
         var selectedNames = interfacePaths.Select(ResolveSelectedObject).ToArray();
         if (selectedNames.Distinct(StringComparer.OrdinalIgnoreCase).Count() != selectedNames.Length) throw new InvalidOperationException("Windows mapped multiple selected interfaces to one object. Collection identity is ambiguous; inventory remains available.");
-        string dll = Path.Combine(AppContext.BaseDirectory, "SynapseObserver.Native.dll");
+        string dll = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "SynapseObserver.Native.dll"));
         using var lockedDll = File.Open(dll, FileMode.Open, FileAccess.Read, FileShare.Read);
-        if (!Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(lockedDll)).Equals(NativePayload.Sha256, StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("The observer DLL does not match this build. Reinstall the matching package.");
-        if (target.Modules.Cast<ProcessModule>().Any(m => m.ModuleName.Equals("SynapseObserver.Native.dll", StringComparison.OrdinalIgnoreCase))) throw new InvalidOperationException("This Synapse process already hosted an observer. Restart Synapse manually before another session.");
+        string lockedDllPath = FinalFilePath(lockedDll.SafeFileHandle);
+        string payloadHash = Convert.ToHexString(SHA256.HashData(lockedDll));
+        if (!payloadHash.Equals(NativePayload.Sha256, StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("The observer DLL does not match this build. Reinstall the matching package.");
         string mapName = "Local\\SynapseObserver-" + Guid.NewGuid().ToString("N");
         var mapping = MemoryMappedFile.CreateNew(mapName, HeaderSize + Slots * NativeEventParser.RecordSize, MemoryMappedFileAccess.ReadWrite);
         var view = mapping.CreateViewAccessor();
         var process = Native.OpenProcess(0x043A, false, candidate.ProcessId);
         if (process.IsInvalid) { view.Dispose(); mapping.Dispose(); process.Dispose(); throw new Win32Exception(); }
         SafeFileHandle? worker = null;
+        ResidentObserverRegistration? resident = null;
+        bool recordingClaimed = false;
         try
         {
             // Pin identity again after opening the actual operation handle. A PID
             // cannot be reused while target's Process handle remains open.
             TargetPolicy.Validate(target);
             token.ThrowIfCancellationRequested();
-            LoadFixedDll(target, process, dll);
-            target.Refresh();
-            var remoteModule = target.Modules.Cast<ProcessModule>().Single(m => string.Equals(m.FileName, dll, StringComparison.OrdinalIgnoreCase));
+            long processStartTime = target.StartTime.ToUniversalTime().Ticks;
+            ProcessModule[] existingModules = ObserverModules(target);
+            bool knownResident = Residents.TryGetValue(candidate.ProcessId, out resident);
+            if (knownResident && ShouldDiscardStaleResident(resident!, processStartTime, existingModules.Length))
+            {
+                Residents.Remove(candidate.ProcessId);
+                resident = null;
+                knownResident = false;
+            }
+            if (!knownResident)
+            {
+                if (existingModules.Length != 0)
+                    throw new InvalidOperationException("This Synapse process hosts an observer that this collector did not verify. Restart Synapse before another recording.");
+                LoadFixedDll(target, process, dll);
+                target.Refresh();
+                existingModules = ObserverModules(target);
+            }
+
+            ProcessModule remoteModule;
+            try { remoteModule = RequireExactResidentModule(existingModules, lockedDllPath); }
+            catch { if (knownResident) resident!.Fault(); throw; }
+            var currentIdentity = new ResidentObserverIdentity(
+                candidate.ProcessId,
+                processStartTime,
+                lockedDllPath,
+                payloadHash,
+                remoteModule.BaseAddress);
+            if (!knownResident)
+            {
+                resident = new ResidentObserverRegistration(currentIdentity);
+                Residents.Add(candidate.ProcessId, resident);
+            }
+
+            ResidentStartDecision decision = resident!.TryBegin(currentIdentity);
+            if (decision != ResidentStartDecision.Started)
+                throw new InvalidOperationException(decision switch
+                {
+                    ResidentStartDecision.Busy => "The resident observer is still recording or its previous worker has not completed.",
+                    ResidentStartDecision.IdentityMismatch => "The resident observer identity changed. Restart Synapse before another recording.",
+                    _ => "The resident observer had an uncertain cleanup and cannot be reused. Restart Synapse before another recording.",
+                });
+            recordingClaimed = true;
+
             IntPtr local = Native.LoadLibraryExW(dll, IntPtr.Zero, 1); // map only; do not execute DllMain locally
             if (local == IntPtr.Zero) throw new Win32Exception();
             IntPtr start;
@@ -86,25 +219,37 @@ public sealed class NativeObservationSession : INativeObservationSession
             IntPtr remoteConfig = WriteRemote(process, config);
             worker = Native.CreateRemoteThread(process, IntPtr.Zero, 0, start, remoteConfig, 0, out _);
             if (worker.IsInvalid) { Native.VirtualFreeEx(process, remoteConfig, 0, 0x8000); throw new Win32Exception(); }
-            var session = new NativeObservationSession(mapping, view, process, worker, origin);
+            var session = new NativeObservationSession(mapping, view, process, worker, origin, resident);
             for (int i = 0; i < 500; ++i)
             {
                 if (view.ReadInt32(0) != 0) { Native.VirtualFreeEx(process, remoteConfig, 0, 0x8000); return session; }
-                if (view.ReadInt32(4) != 0 || Native.WaitForSingleObject(worker, 0) == 0) { Native.VirtualFreeEx(process, remoteConfig, 0, 0x8000); throw new InvalidOperationException("The native observer could not install all hooks. Partial evidence remains available; restart Synapse before retrying."); }
+                if (view.ReadInt32(4) != 0 || Native.WaitForSingleObject(worker, 0) == 0) { Native.VirtualFreeEx(process, remoteConfig, 0, 0x8000); throw new InvalidOperationException("The native observer could not enable all hooks. Partial evidence remains available; restart Synapse before retrying."); }
                 if (token.IsCancellationRequested) break;
                 Thread.Sleep(10);
             }
             view.Write(12, 1); // bounded native session also expires automatically
             throw new InvalidOperationException("Observer startup was not confirmed. A stop was requested; the DLL remains resident until Synapse exits. Restart Synapse manually before retrying.");
         }
-        catch { worker?.Dispose(); process.Dispose(); view.Dispose(); mapping.Dispose(); throw; }
+        catch
+        {
+            if (recordingClaimed) resident?.Fault();
+            worker?.Dispose(); process.Dispose(); view.Dispose(); mapping.Dispose(); throw;
+        }
     }
     public NativeSessionStatus GetStatus()
     {
         ObjectDisposedException.ThrowIf(disposed, this);
         bool started = view.ReadInt32(0) != 0, finished = view.ReadInt32(4) != 0;
         int failure = view.ReadInt32(8), dropped = view.ReadInt32(24);
-        return new(started, finished, failure, dropped, failure != 0 ? "Observation failed or detachment was not confirmed. Restart Synapse manually before another session." : finished ? "Hooks stopped. The inert observer DLL remains resident until Synapse exits; pending asynchronous completions were not captured." : "Observing completed feature API calls. Pending asynchronous completions are reported as gaps.");
+        bool reuseAllowed = IsReuseAllowed(failure);
+        string diagnostic = failure != 0
+            ? "Observation failed or detachment was not confirmed. Restart Synapse manually before another session."
+            : !reuseAllowed
+                ? "Observation evidence remains available, but the resident observer cannot be reused. Restart Synapse before another recording."
+                : finished
+                    ? "Hooks stopped. The inert observer DLL remains resident until Synapse exits; pending asynchronous completions were not captured."
+                    : "Observing completed feature API calls. Pending asynchronous completions are reported as gaps.";
+        return new(started, finished, failure, dropped, diagnostic, reuseAllowed);
     }
     public Task<IReadOnlyList<NativeObservationEvent>> PollAsync(CancellationToken cancellationToken = default)
     {
@@ -112,7 +257,11 @@ public sealed class NativeObservationSession : INativeObservationSession
         var events = new List<NativeObservationEvent>();
         int read = view.ReadInt32(20), write = view.ReadInt32(16);
         Thread.MemoryBarrier();
-        if (read < 0 || write < read || write - read > Slots) throw new InvalidDataException("Observer ring counters are invalid.");
+        if (read < 0 || write < read || write - read > Slots)
+        {
+            InvalidateReuse();
+            throw new InvalidDataException("Observer ring counters are invalid.");
+        }
         int rejected = 0;
         try
         {
@@ -139,9 +288,14 @@ public sealed class NativeObservationSession : INativeObservationSession
         catch
         {
             ClearEvents(events);
+            InvalidateReuse();
             throw;
         }
-        if (rejected != 0) throw new NativeObservationPollException(events, rejected);
+        if (rejected != 0)
+        {
+            InvalidateReuse();
+            throw new NativeObservationPollException(events, rejected);
+        }
         return Task.FromResult<IReadOnlyList<NativeObservationEvent>>(events);
     }
 
@@ -155,18 +309,113 @@ public sealed class NativeObservationSession : INativeObservationSession
     }
     public async Task<NativeSessionStatus> StopAsync(CancellationToken cancellationToken = default)
     {
-        ObjectDisposedException.ThrowIf(disposed, this); view.Write(12, 1); stopRequested = true;
-        for (int i = 0; i < 100 && view.ReadInt32(4) == 0; ++i) await Task.Delay(20, cancellationToken).ConfigureAwait(false);
-        var status = GetStatus();
-        return status.Finished ? status : status with { Failure = 170, Diagnostic = "Stop was requested but detachment was not confirmed. The module stays resident. Restart Synapse manually before another recording." };
+        ObjectDisposedException.ThrowIf(disposed, this);
+        await stopGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            view.Write(12, 1); stopRequested = true;
+            for (int i = 0; i < 100 && view.ReadInt32(4) == 0; ++i)
+                await Task.Delay(20, cancellationToken).ConfigureAwait(false);
+            var status = GetStatus();
+            if (!status.Finished)
+            {
+                ResolveCleanup(false);
+                return status with { Failure = 170, ReuseAllowed = false, Diagnostic = "Stop was requested but hook cleanup was not confirmed. The resident observer is blocked until Synapse restarts." };
+            }
+
+            bool workerFinished = worker.IsInvalid;
+            for (int i = 0; !workerFinished && i < 100; ++i)
+            {
+                workerFinished = Native.WaitForSingleObject(worker, 0) == 0;
+                if (!workerFinished) await Task.Delay(10, cancellationToken).ConfigureAwait(false);
+            }
+            if (!workerFinished)
+            {
+                ResolveCleanup(false);
+                return status with { Failure = 170, ReuseAllowed = false, Diagnostic = "Hooks stopped, but the observer worker did not complete. The resident observer is blocked until Synapse restarts." };
+            }
+
+            (bool exitCodeRead, uint workerExitCode) = workerExitCodeReader(worker);
+            if (!exitCodeRead || workerExitCode != 0)
+            {
+                ResolveCleanup(false);
+                int failure = status.Failure != 0
+                    ? status.Failure
+                    : exitCodeRead && workerExitCode <= int.MaxValue
+                        ? (int)workerExitCode
+                        : 170;
+                return status with
+                {
+                    Failure = failure,
+                    ReuseAllowed = false,
+                    Diagnostic = "The observer worker reported an unsuccessful exit. Restart Synapse before another recording.",
+                };
+            }
+
+            ResolveCleanup(status.Failure == 0);
+            bool reuseAllowed = IsReuseAllowed(status.Failure);
+            if (!reuseAllowed)
+                return status with
+                {
+                    ReuseAllowed = false,
+                    Diagnostic = status.Failure == 0
+                        ? "Observation evidence remains available, but the resident observer cannot be reused. Restart Synapse before another recording."
+                        : "Observation failed or hook cleanup was uncertain. Restart Synapse before another recording.",
+                };
+            return status with
+            {
+                ReuseAllowed = true,
+                Diagnostic = "Hooks stopped and the observer worker completed. The verified resident observer can serve another recording.",
+            };
+        }
+        catch
+        {
+            ResolveCleanup(false);
+            throw;
+        }
+        finally { stopGate.Release(); }
     }
     public async ValueTask DisposeAsync()
     {
         if (disposed) return;
-        // Explicit callers own bounded waits and final evidence collection.
-        // Do not hide another wait after their last status/record read.
-        try { if (!stopRequested) await StopAsync().ConfigureAwait(false); }
-        finally { disposed = true; worker.Dispose(); process.Dispose(); view.Dispose(); mapping.Dispose(); }
+        try
+        {
+            try
+            {
+                // Explicit callers own bounded waits and final evidence collection.
+                // Do not hide another wait after their last status/record read.
+                if (!stopRequested) await StopAsync().ConfigureAwait(false);
+                else if (Volatile.Read(ref cleanupResolution) == 0) ResolveCleanup(false);
+            }
+            finally
+            {
+                disposed = true;
+                worker.Dispose(); process.Dispose(); view.Dispose(); mapping.Dispose(); stopGate.Dispose();
+            }
+        }
+        catch
+        {
+            InvalidateReuse();
+            throw;
+        }
+    }
+    public void InvalidateReuse() => ResolveCleanup(false);
+    private bool IsReuseAllowed(int failure) =>
+        failure == 0
+        && Volatile.Read(ref cleanupResolution) != 2
+        && resident?.State != ResidentObserverState.Faulted;
+    private static (bool Success, uint ExitCode) ReadWorkerExitCode(SafeFileHandle worker) =>
+        Native.GetExitCodeThread(worker, out uint exitCode) ? (true, exitCode) : (false, 0);
+    private void ResolveCleanup(bool confirmed)
+    {
+        int resolution = confirmed ? 1 : 2;
+        int prior = Interlocked.CompareExchange(ref cleanupResolution, resolution, 0);
+        if (prior == 0) resident?.Complete(confirmed);
+        else if (!confirmed && prior == 1)
+        {
+            Interlocked.Exchange(ref cleanupResolution, 2);
+            resident?.Fault();
+        }
     }
     private static IntPtr WriteRemote(SafeProcessHandle process, byte[] bytes)
     {
@@ -174,6 +423,45 @@ public sealed class NativeObservationSession : INativeObservationSession
         if (address == IntPtr.Zero) throw new Win32Exception();
         if (!Native.WriteProcessMemory(process, address, bytes, (nuint)bytes.Length, out var written) || written != (nuint)bytes.Length) { Native.VirtualFreeEx(process, address, 0, 0x8000); throw new Win32Exception(); }
         return address;
+    }
+    private static ProcessModule[] ObserverModules(Process target) => target.Modules
+        .Cast<ProcessModule>()
+        .Where(static module => string.Equals(
+            module.ModuleName,
+            "SynapseObserver.Native.dll",
+            StringComparison.OrdinalIgnoreCase))
+        .ToArray();
+    internal static bool ShouldDiscardStaleResident(
+        ResidentObserverRegistration registration,
+        long currentProcessStartTimeUtcTicks,
+        int observerModuleCount) =>
+        registration.Identity.ProcessStartTimeUtcTicks != currentProcessStartTimeUtcTicks
+        && observerModuleCount == 0;
+    private static ProcessModule RequireExactResidentModule(
+        IReadOnlyList<ProcessModule> modules,
+        string expectedPath)
+    {
+        if (modules.Count != 1)
+            throw new InvalidOperationException("The exact resident observer module is unavailable. Restart Synapse before another recording.");
+        string actualPath = FinalFilePath(modules[0].FileName);
+        if (!string.Equals(actualPath, expectedPath, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("The resident observer path does not match this build. Restart Synapse before another recording.");
+        return modules[0];
+    }
+    private static string FinalFilePath(SafeFileHandle file)
+    {
+        var buffer = new StringBuilder(4096);
+        uint count = Native.GetFinalPathNameByHandleW(file, buffer, (uint)buffer.Capacity, 0);
+        if (count == 0 || count >= buffer.Capacity)
+            throw new InvalidOperationException("The observer DLL's final identity is unavailable.");
+        string resolved = buffer.ToString();
+        if (resolved.StartsWith("\\\\?\\UNC\\", StringComparison.OrdinalIgnoreCase)) return "\\\\" + resolved[8..];
+        return resolved.StartsWith("\\\\?\\", StringComparison.Ordinal) ? resolved[4..] : resolved;
+    }
+    private static string FinalFilePath(string path)
+    {
+        using var file = File.OpenHandle(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        return FinalFilePath(file);
     }
     private static void LoadFixedDll(Process target, SafeProcessHandle process, string dll)
     {
@@ -187,8 +475,11 @@ public sealed class NativeObservationSession : INativeObservationSession
         IntPtr path = WriteRemote(process, Encoding.Unicode.GetBytes(dll + '\0'));
         using var thread = Native.CreateRemoteThread(process, IntPtr.Zero, 0, remoteLoader, path, 0, out _);
         if (thread.IsInvalid) { Native.VirtualFreeEx(process, path, 0, 0x8000); throw new Win32Exception(); }
-        if (Native.WaitForSingleObject(thread, 5000) != 0) throw new InvalidOperationException("Observer loading was not confirmed. Restart Synapse manually before retrying.");
+        if (Native.WaitForSingleObject(thread, 5000) != 0)
+            throw new InvalidOperationException("Observer loading was not confirmed. Restart Synapse manually before retrying.");
         Native.VirtualFreeEx(process, path, 0, 0x8000);
+        if (!Native.GetExitCodeThread(thread, out uint loadedModule) || loadedModule == 0)
+            throw new InvalidOperationException("The matching observer DLL was not loaded. Restart Synapse manually before retrying.");
     }
     private static string ResolveSelectedObject(string interfacePath)
     {

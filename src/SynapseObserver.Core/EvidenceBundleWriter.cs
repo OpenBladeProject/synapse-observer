@@ -130,7 +130,7 @@ public static class EvidenceBundleWriter
 
         return [("manifest.json", json), ("coverage-draft.json", coverageJson),
             ("annotation-draft.json", annotationJson), ("quality-receipt.json", qualityJson),
-            ("README.txt", Encoding.UTF8.GetBytes(CreateReadme(snapshot)))];
+            ("README.txt", Encoding.UTF8.GetBytes(CreateReadme(snapshot, drafts.Quality)))];
     }
 
     private static async Task WriteEntryAsync(
@@ -144,13 +144,18 @@ public static class EvidenceBundleWriter
         await entryStream.WriteAsync(content, cancellationToken).ConfigureAwait(false);
     }
 
-    private static string CreateReadme(EvidenceSessionSnapshot snapshot)
+    private static string CreateReadme(EvidenceSessionSnapshot snapshot, ContributionQualityReceipt quality)
     {
         var builder = new StringBuilder();
         builder.AppendLine("Synapse Observer evidence bundle");
         builder.AppendLine("================================");
         builder.AppendLine();
         builder.AppendLine("This bundle was saved locally. The collector did not upload it.");
+        var review = EvidenceCollectionReview.Create(snapshot, quality);
+        builder.AppendLine();
+        builder.AppendLine(review.Summary);
+        foreach (var note in review.Notes) builder.AppendLine("- " + note);
+        builder.AppendLine();
         builder.AppendLine("It contains Windows identity fields, Razer HID descriptor metadata, bounded Synapse module metadata, user action markers, prompted special-key observations, coverage status, and privacy-reviewed control observations.");
         builder.AppendLine("It does not contain HID interface paths, PnP instance paths, process IDs, command lines, account data, or module paths.");
         builder.AppendLine("Payload hex is included only for a matching selected Razer HID feature call whose complete envelope, checksum, padding, command, and typed values match a reviewed numeric control or lighting grammar. Unknown, sensitive, malformed, failed, and over-limit payloads keep bounded header and shape metadata while their bytes are omitted.");

@@ -22,15 +22,116 @@ public sealed class CollectorWorkflowTests
         Assert.True(model.MarkCommand.CanExecute(null));
     }
 
+    [Theory]
+    [InlineData("Balanced")]
+    [InlineData(" balanced ")]
+    [InlineData("BALANCED")]
+    [InlineData("  Balanced   ")]
+    public async Task ChangedValueMustDifferFromStartingValue(string changed)
+    {
+        var model = await RecordingAsync();
+        model.StartingSetting = "Balanced";
+        await Run(model.MarkCommand);
+
+        model.ChangedSetting = changed;
+
+        Assert.False(model.MarkCommand.CanExecute(null));
+        Assert.Contains("different", model.StepStatus);
+        Assert.DoesNotContain(model.Evidence!.Markers, marker => marker.Kind == EvidenceMarkerKind.UserReportedTargetValue);
+    }
+
     [Fact]
-    public async Task InvalidPersonalPathCannotAdvanceStartingMarker()
+    public async Task CustomDetailChangeRemainsAValidTransition()
+    {
+        var model = await RecordingAsync();
+        model.StartingEntry.SelectedChoice = model.StartingEntry.Choices.Single(choice => choice.Label == "Custom");
+        model.StartingEntry.Details = "CPU Boost, GPU High";
+        await Run(model.MarkCommand);
+        model.ChangedEntry.SelectedChoice = model.ChangedEntry.Choices.Single(choice => choice.Label == "Custom");
+        model.ChangedEntry.Details = "CPU Boost, GPU Medium";
+
+        Assert.True(model.MarkCommand.CanExecute(null));
+        await Run(model.MarkCommand);
+        Assert.Contains(model.Evidence!.Markers, marker => marker.Kind == EvidenceMarkerKind.UserReportedTargetValue
+            && marker.Value == "Custom: CPU Boost, GPU Medium");
+    }
+
+    [Fact]
+    public async Task InvalidPersonalPathCannotEnableStartingMarker()
     {
         var model = await RecordingAsync();
         model.StartingSetting = @"C:\Users\person";
-        await Run(model.MarkCommand);
+        Assert.False(model.MarkCommand.CanExecute(null));
         Assert.True(model.ShowStartingValue);
-        Assert.Equal(1, model.Evidence!.RejectedMarkerCount);
+        Assert.Equal(0, model.Evidence!.RejectedMarkerCount);
         Assert.DoesNotContain(model.Evidence.Markers, marker => marker.Kind == EvidenceMarkerKind.UserReportedStartingValue);
+    }
+
+    [Fact]
+    public async Task StartingMarkerUsesValidatedValueCapturedBeforePowerQuery()
+    {
+        var model = await RecordingAsync();
+        model.StartingSetting = "Balanced";
+        var (powerRead, releasePower) = DelayActionPowerRead(model);
+
+        model.MarkCommand.Execute(null);
+        await powerRead;
+        model.StartingSetting = @"C:\private";
+        releasePower.SetResult(PowerSourceKind.Battery);
+        await model.MarkCommand.CurrentExecution;
+
+        var marker = Assert.Single(model.Evidence!.Markers, item => item.Kind == EvidenceMarkerKind.UserReportedStartingValue);
+        Assert.Equal("Balanced", marker.Value);
+        Assert.Equal(PowerSourceKind.Battery, marker.PowerSourceAtMarker);
+        Assert.Equal(marker.Value, typeof(CollectorViewModel).GetField("startingSetting",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(model));
+        Assert.Equal(0, model.Evidence.RejectedMarkerCount);
+        Assert.DoesNotContain(model.Evidence.Markers, item => item.Kind == EvidenceMarkerKind.Failure);
+    }
+
+    [Fact]
+    public async Task ReadOnlyMarkerUsesValidatedValueCapturedBeforePowerQuery()
+    {
+        var model = await RecordingAsync();
+        var powerSource = model.Activities.ToList().FindIndex(activity => activity.Id == "power-source");
+        model.SelectedActivityIndex = powerSource;
+        model.StartingSetting = "Battery";
+        var (powerRead, releasePower) = DelayActionPowerRead(model);
+
+        model.MarkCommand.Execute(null);
+        await powerRead;
+        model.StartingSetting = @"C:\private";
+        releasePower.SetResult(PowerSourceKind.Ac);
+        await model.MarkCommand.CurrentExecution;
+
+        var marker = Assert.Single(model.Evidence!.Markers, item => item.ActivityId == "power-source");
+        Assert.Equal(EvidenceMarkerKind.UserReportedCurrentState, marker.Kind);
+        Assert.Equal("Battery", marker.Value);
+        Assert.Equal(PowerSourceKind.Ac, marker.PowerSourceAtMarker);
+        Assert.Equal(CoverageState.Completed, model.Activities[powerSource].State);
+        Assert.Equal(0, model.Evidence.RejectedMarkerCount);
+    }
+
+    [Fact]
+    public async Task ChangedMarkerUsesDistinctValueCapturedBeforePowerQuery()
+    {
+        var model = await RecordingAsync();
+        model.StartingSetting = "Balanced";
+        await Run(model.MarkCommand);
+        model.ChangedSetting = "Silent";
+        var (powerRead, releasePower) = DelayActionPowerRead(model);
+
+        model.MarkCommand.Execute(null);
+        await powerRead;
+        model.ChangedSetting = "Balanced";
+        releasePower.SetResult(PowerSourceKind.Battery);
+        await model.MarkCommand.CurrentExecution;
+
+        var marker = Assert.Single(model.Evidence!.Markers, item => item.Kind == EvidenceMarkerKind.UserReportedTargetValue);
+        Assert.Equal("Silent", marker.Value);
+        Assert.Equal(PowerSourceKind.Battery, marker.PowerSourceAtMarker);
+        Assert.Contains("Balanced", model.StepInstructions);
+        Assert.Equal(0, model.Evidence.RejectedMarkerCount);
     }
 
     [Fact]
@@ -124,6 +225,10 @@ public sealed class CollectorWorkflowTests
     public async Task PresetsNeedNoTypingAndRestoreFrozenStartingChoice()
     {
         var model = await RecordingAsync();
+        model.StartingEntry.SelectedChoice = model.StartingEntry.Choices.Single(c => c.Label == "Battery Saver");
+        Assert.False(model.StartingEntry.ShowDetails);
+        Assert.True(model.StartingEntry.HasValue);
+        Assert.Equal("Battery Saver", model.StartingEntry.Value);
         model.StartingEntry.SelectedChoice = model.StartingEntry.Choices.Single(c => c.Label == "Balanced");
         Assert.True(model.MarkCommand.CanExecute(null));
         await Run(model.MarkCommand);
@@ -449,6 +554,18 @@ public sealed class CollectorWorkflowTests
         await Run(model.StartCommand);
         Assert.True(model.IsRecording);
         return model;
+    }
+
+    private static (Task PowerRead, TaskCompletionSource<PowerSourceKind> ReleasePower) DelayActionPowerRead(CollectorViewModel model)
+    {
+        var powerRead = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releasePower = new TaskCompletionSource<PowerSourceKind>(TaskCreationOptions.RunContinuationsAsynchronously);
+        model.ActionPowerSourceForTest = async () =>
+        {
+            powerRead.SetResult();
+            return await releasePower.Task;
+        };
+        return (powerRead.Task, releasePower);
     }
 
     private static async Task Run(AsyncCommand command)

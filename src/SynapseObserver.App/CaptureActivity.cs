@@ -41,7 +41,7 @@ internal static class CaptureActivityCatalog
     public static CaptureActivity[] Create() =>
     [
         Setting("performance", "Performance mode", "Use the performance modes available for this laptop in Synapse.",
-            new("Balanced"), new("Silent"), new("Performance"), new("Gaming"), new("Creator"), new("HyperBoost"), Value("Custom", "For example: CPU Boost, GPU High")),
+            new("Balanced"), new("Battery Saver"), new("Silent"), new("Performance"), new("Gaming"), new("Creator"), new("HyperBoost"), Value("Custom", "For example: CPU Boost, GPU High")),
         Setting("fans", "Fan setting", "Save all fan values needed to restore the starting setting.",
             new("Automatic"), Value("Fixed", "For example: CPU 4200 RPM, GPU 4000 RPM"), Value("Manual curve", "Record the temperatures and speeds needed to restore your curve.")),
         Setting("charge-limit", "Battery charge limit", "Use the charge-limit control if Synapse offers it.",

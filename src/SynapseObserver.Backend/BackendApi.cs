@@ -1,9 +1,9 @@
 using System.Buffers.Binary;
 using System.Diagnostics;
 namespace SynapseObserver.Backend;
-public sealed record BackendCandidate(int ProcessId, string Name, bool Eligible, string Diagnostic);
+public sealed record BackendCandidate(int ProcessId, string Name, bool Eligible, string Diagnostic, bool VerifiedTargetBlocked = false);
 public sealed record NativeObservationEvent(ulong Sequence, double RelativeMilliseconds, string Api, string Operation, bool Result, uint NativeError, byte[] RequestBytes, byte[] ResponseBytes, string? CompletionGap, uint RequestedBytes, uint ReturnedBytes, uint InterfaceIndex, double CompletionRelativeMilliseconds, uint OutputBufferCapacity = 0);
-public sealed record NativeSessionStatus(bool Started, bool Finished, int Failure, int DroppedEvents, string Diagnostic);
+public sealed record NativeSessionStatus(bool Started, bool Finished, int Failure, int DroppedEvents, string Diagnostic, bool ReuseAllowed = true);
 /// <summary>
 /// Reports rejected observer records while transferring ownership of valid events from the same poll.
 /// The caller must clear each event's request and response byte arrays after processing them.
@@ -40,7 +40,19 @@ public static class BackendDiscovery
             using (process)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                try { TargetPolicy.Validate(process); result.Add(new(process.Id, "Razer Synapse engine", true, "Razer engine and HID module signatures and roles verified. Feature-call coverage may be partial.")); }
+                try
+                {
+                    TargetPolicy.Validate(process);
+                    ResidentObserverAvailability availability = NativeObservationSession.ProbeResidentAvailability(process);
+                    result.Add(new(
+                        process.Id,
+                        "Razer Synapse engine",
+                        availability.Eligible,
+                        availability.Eligible
+                            ? "Razer engine and HID module signatures and roles verified. Feature-call coverage may be partial."
+                            : availability.Diagnostic,
+                        VerifiedTargetBlocked: !availability.Eligible));
+                }
                 catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or UnauthorizedAccessException or IOException or System.Security.Cryptography.CryptographicException)
                 { result.Add(new(process.Id, "Razer Synapse engine", false, TargetPolicy.SafeDiagnostic(ex))); }
             }

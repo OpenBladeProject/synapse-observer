@@ -44,7 +44,8 @@ public sealed class EvidenceSession : IDisposable
                 || marker.RelativeMilliseconds < 0
                 || !EvidenceText.IsToken(marker.ActivityId)
                 || !EvidenceText.IsDisplayText(marker.Label)
-                || (marker.Value is not null && !EvidenceText.IsDisplayText(marker.Value)))
+                || (marker.Value is not null && !EvidenceText.IsDisplayText(marker.Value))
+                || marker.PowerSourceAtMarker is { } powerSource && !Enum.IsDefined(powerSource))
             {
                 _rejectedMarkers++;
                 return EvidenceAddResult.RejectedInvalid;
@@ -142,6 +143,8 @@ public sealed class EvidenceSession : IDisposable
                 NumericMeaningUninterpreted = projection.NumericMeaningUninterpreted,
                 ReturnedLengthUnknown = observation.ReturnedLengthUnknown,
                 HeaderHints = projection.HeaderHints,
+                ResponseStructureDiagnostics = projection.ResponseStructureDiagnostics,
+                SemanticResponse = projection.SemanticResponse,
                 PayloadComparison = scoped && observation.Buffer.Length <= EvidenceLimits.MaxPayloadBytesPerObservation
                     ? ComparePayload(observation) : null,
             });
@@ -364,7 +367,7 @@ public sealed class EvidenceSession : IDisposable
     }
 }
 
-internal static class EvidenceText
+public static class EvidenceText
 {
     public static bool IsToken(string? value)
     {

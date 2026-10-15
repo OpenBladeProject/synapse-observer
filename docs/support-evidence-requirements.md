@@ -58,7 +58,11 @@ interface, report shape, or command from another model.
 means the ZIP contains a real, bounded observation for that leaf. Windows
 inventory may support identity, descriptor, display, driver, or LampArray
 leaves. A feature leaf needs a privacy-reviewed report inside a complete action
-window with starting, changed, action, and restoration markers. A special-key
+window with ordered starting, changed, action, and restoration markers. Known
+unchanged starting/changed values are excluded. Missing values are not treated
+as equal, so marker order can still qualify without proving the actual change;
+see the [draft validity rules](evidence-format.md#derived-draft-schemas-in-028).
+A special-key
 leaf needs prompted input and a matching key, mode, and probe summary. A prompt
 alone advances only a generic input-evidence leaf. An exact role needs an
 independently observed Windows key or reviewed signal that establishes it.
