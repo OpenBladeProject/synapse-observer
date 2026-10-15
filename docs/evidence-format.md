@@ -177,12 +177,19 @@ file's `schemaVersion`. The outer `synapse-observer.bundle.v2` manifest and raw
 session/native protocol versions are unchanged; their versions do not select
 the semantics of a nested draft.
 
+Development builds before `7c0c8d7` used v1 draft schemas while also reporting
+collector version 0.2.8. Inspect each file's schema rather than inferring it
+from the collector version.
+
 An annotation window's `completeUserReportedSequence` requires the ordered
 starting, target, action, and restoration markers and excludes known unchanged
 starting/target values. `unchangedReportedValues` identifies that exclusion.
-Comparison ignores case and repeated whitespace; it preserves punctuation and
-substantive details. Missing values remain unknown. These are reported values,
-not an independent test that a device changed state.
+Comparison trims leading and trailing whitespace, collapses whitespace separators,
+and uses ordinal case-insensitive comparison. It preserves punctuation and
+substantive details. Null or blank values are not classified as unchanged: an
+otherwise ordered sequence can still count as complete and contribute capability
+evidence. Its actual values and whether the device changed remain unproven.
+The GUI requires nonblank values, but the underlying marker format permits them.
 
 Quality `completeActionWindows` counts and derived capability promotion use the
 same validity rule. Raw guided coverage and markers remain unchanged as

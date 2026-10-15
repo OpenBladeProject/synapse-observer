@@ -37,6 +37,9 @@ or firmware-readback coverage.
 ## `annotation-draft.json`
 
 This file groups action markers and observations into bounded action windows.
+Its v2 draft includes `unchangedReportedValues`; known unchanged selections do
+not form a complete setting-change sequence. Check each draft's `schemaVersion`
+using the [format rules](evidence-format.md#derived-draft-schemas-in-028).
 Current-state reports, skips, definitions, and probe intent remain separate
 `contextMarkers`; they do not create setting-change or restoration windows.
 It also keeps special-key probe summaries and observations. Its layer labels are
@@ -60,6 +63,10 @@ skipped, unavailable, failed, cancelled,
 redacted, and incomplete results. It also records the maintainer stages still
 required and sets query-validation, setter-validation, and production-admission
 claims to false.
+
+In v2, `UnchangedReportedValues` and `IncompleteActionMarkers` diagnose the
+reported sequence. `NoMatchingObservation` independently identifies a window
+without feature calls, so an unchanged empty sequence retains both facts.
 
 ## `README.txt`
 
