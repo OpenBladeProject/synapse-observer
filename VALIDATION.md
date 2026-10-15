@@ -536,8 +536,45 @@ SHA-256 is
 `98F95D2E47D87777D4F66007D236B21348545C2744093B11835D206E29433323`;
 the portable ZIP SHA-256 is
 `F175401371F3A686821D6B4A2C29ABDEDC690E5498506B78262BDACD5B6A0A36`.
-Live validation of the ten-minute build awaits a normal Synapse restart to
-unload the old observer. Claude review of this distinct ten-file change was
-rejected before it started by automatic approval review pending explicit
-source-payload authorization. Independent source review found matching bounds;
-no completed Claude review is claimed for this slice yet.
+After the user restarted Synapse normally, this exact package completed a fresh
+Windows dynamic-refresh recording. Windows confirmed Off -> On (60 Hz or
+240 Hz desktop mode, 240 Hz selected) -> Off. All four action markers were
+recorded before stopping, with 48 associated observations and no DRR gap.
+The recording stopped cleanly after 352.945 seconds, 52.945 seconds beyond
+the former limit. This tests continued recording beyond five minutes; it does
+not exercise expiry at the full ten-minute deadline.
+
+After recording stopped, the original 60 Hz selection was restored through
+Synapse. Both Synapse and Windows showed 60 Hz selected; Windows reported
+60 Hz desktop mode, 240 Hz active signal, and dynamic refresh Off and disabled
+at the selected rate. These are separate UI observations; the ZIP's restored
+marker records DRR Off. HDR Off and the Native color profile were retained.
+
+The new private archive has SHA-256
+`675A2AF313EABC1B1D856E13D44490FFF75C551AE89BECDB353E562008B053DD`
+and is 26,642 bytes. Its five expected entries identify source `d58333f` and
+v2 bundle, session, and derived schemas. It contains 95 successful observations
+(87 input, eight output), 79 complete reviewed input bodies, sixteen redacted
+bodies, one paired recording start/stop, and one complete action window.
+There are no failed calls, rejected records, dropped-event markers, cleanup
+failures, or session gaps. The 47 observations outside the action window retain
+their diagnostic. A bounded scan found no excluded paths, account fields,
+serials, instance identifiers, email addresses, or Windows SIDs.
+
+This is a new session, separate from the older retry archive. Earlier partial
+attempts remain intact there. HDR and DRR now each have a successful complete
+retry; their historical incomplete windows have not been rewritten. The new
+archive still reports pending work and maintainer validation requirements;
+concurrent HID observations do not establish a Windows display command or
+firmware readback. The portable package's five entries match the local payload
+byte for byte, including its source manifest. .NET remains unbundled.
+
+With explicit authorization for the ten-file source payload, Claude Opus high
+completed its read-only review of `15633fc...d58333f`. Review run
+`ad25009a214948dd9b4c231d00ae1f70` completed successfully with the approved
+read-only tools and isolated settings. Independent triage found no additional
+introduced defect: unchanged evidence limits remain intentional bounded
+retention with explicit gaps; duration constants agree; exact DLL path/hash
+checks preserve pairing with the unchanged protocol layout. Countdown UX and
+future constant generation are possible follow-ups, not verified regressions.
+Historical five-minute validation above refers to the earlier runtime.
