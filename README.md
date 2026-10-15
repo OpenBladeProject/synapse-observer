@@ -33,8 +33,9 @@ See [model coverage](docs/model-coverage.md).
    that value, then select **I restored it**.
 5. Use **Other state…** for an unfamiliar value. Select **Skip** or **Setting
    unavailable** for items you cannot test.
-6. Select **Stop recording**, then **Save evidence ZIP…**. A ZIP containing only
-   device information is still useful when recording is unavailable or skipped.
+6. If you recorded settings, select **Stop recording**. Select **Save evidence
+   ZIP…**. A ZIP containing only device information is still useful when
+   recording is unavailable or skipped.
 
 The guide covers performance, fans, keyboard lighting and layout, the illuminated
 logo, special keys, battery settings, and display controls. For optional M-key/Fn
@@ -54,8 +55,12 @@ See [what the ZIP contains](docs/capture-contents.md).
 3. Include the laptop name and RZ09 model number, BIOS and Synapse versions,
    OpenBlade version if installed, the settings you tested, and anything you
    skipped or could not record.
-4. Attach the Synapse Observer evidence ZIP. If OpenBlade's **Help add support**
-   button also saved `OpenBlade-identity-report.zip`, attach that file too.
+4. On the new support form, add the Synapse Observer ZIP under **Evidence ZIP**.
+   For an existing request, add a comment and attach the ZIP there. If
+   OpenBlade's **Help add support** button also saved
+   `OpenBlade-identity-report.zip`, attach that file too.
+5. Wait for each ZIP to finish uploading, then submit the form or post your
+   comment.
 
 ## Recording notes
 
