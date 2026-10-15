@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/SynapseObserver.App/SynapseObserver.App.csproj" />
+    <Project Path="src/SynapseObserver.Backend/SynapseObserver.Backend.csproj" />
+    <Project Path="src/SynapseObserver.Core/SynapseObserver.Core.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/SynapseObserver.App.Tests/SynapseObserver.App.Tests.csproj" />
+    <Project Path="tests/SynapseObserver.Core.Tests/SynapseObserver.Core.Tests.csproj" />
+    <Project Path="tests/SynapseObserver.Backend.Tests/SynapseObserver.Backend.Tests.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,831 @@
+using System.ComponentModel;
+using System.Diagnostics;
+using System.IO;
+using System.Runtime.CompilerServices;
+using System.Reflection;
+using System.Security.Cryptography;
+using Microsoft.Win32;
+using SynapseObserver.Core;
+using SynapseObserver.Backend;
+
+namespace SynapseObserver.App;
+
+internal sealed partial class CollectorViewModel : INotifyPropertyChanged
+{
+    public IReadOnlyList<CaptureActivity> Activities { get; } = CaptureActivityCatalog.Create();
+    private readonly bool preview;
+    private long sessionOriginTicks = Stopwatch.GetTimestamp();
+    private double RelativeMilliseconds => (Stopwatch.GetTimestamp() - sessionOriginTicks) * 1000.0 / Stopwatch.Frequency;
+    private readonly WindowsInventorySource inventorySource = new();
+    private IReadOnlyList<LocalHidCandidate> controlCandidates = [];
+    private IReadOnlyList<LocalHidCandidate> inputCandidates = [];
+    private BackendCandidate? backendCandidate;
+    private INativeObservationSession? observer;
+    private CancellationTokenSource? pumpCancellation;
+    private Task? pump;
+    private Task? stopTask;
+    private bool closing;
+    private double observerOrigin;
+    private int stepStartCount;
+    private int observedCalls;
+    private int failedCalls;
+    private bool stopping;
+    private bool nativeFailureGapCounted;
+    private bool malformedLossMarkerEmitted;
+    private bool cleanupRequested;
+    private int gaps;
+    private int droppedEvents;
+    private int stepStartGaps;
+    private string retentionGapDetails = string.Empty;
+    private bool observerEnded;
+    private int recordingStartGaps;
+    private int recordingNumber;
+    private bool busy;
+    private EvidenceSession? session;
+    private bool collecting;
+    private bool recording;
+    private bool consent;
+    private int step;
+    private int stepPhase;
+    private string startingSetting = string.Empty;
+    public SettingEntry StartingEntry { get; } = new();
+    public SettingEntry ChangedEntry { get; } = new();
+    private string deviceSummary = "Ready to identify your laptop. Device information stays on this computer until you save a ZIP.";
+    private string recorderStatus = "Device information is available even if recording cannot start.";
+    private string collectionDetails = "The observer collects selected laptop feature calls. An observed response is labeled as a user-mode returned buffer, not firmware confirmation.";
+    private string status = "Start with your laptop's device information.";
+
+    public CollectorViewModel(bool preview)
+    {
+        this.preview = preview;
+        StartingEntry.Reset(0);
+        ChangedEntry.Reset(0);
+        StartingEntry.PropertyChanged += (_, _) => RefreshCommands();
+        ChangedEntry.PropertyChanged += (_, _) => RefreshCommands();
+        CollectCommand = new AsyncCommand(() => GuardAsync(CollectAsync), () => !closing && !busy && !collecting && !recording && !IsProbingSpecialKey);
+        StartCommand = new AsyncCommand(() => GuardAsync(StartAsync), () => !closing && !busy && !IsProbingSpecialKey && HasInventory && consent && !recording && (preview || backendCandidate is not null));
+        StopCommand = new AsyncCommand(() => GuardAsync(StopAsync), () => recording && !busy && !closing);
+        MarkCommand = new AsyncCommand(() => GuardAsync(MarkAsync), () => !closing && !busy && !IsProbingSpecialKey && HasInventory && HasCurrentStep
+            && (CurrentActivity.IsReadOnly || (recording && !observerEnded))
+            && (stepPhase == 2 || (stepPhase == 0 ? StartingEntry.HasValue : ChangedEntry.HasValue)));
+        SkipCommand = new AsyncCommand(() => GuardAsync(() => SkipAsync(false)), () => CanSelectActivity && HasCurrentStep);
+        UnavailableCommand = new AsyncCommand(() => GuardAsync(() => SkipAsync(true)), () => CanSelectActivity && HasCurrentStep);
+        SaveCommand = new AsyncCommand(() => GuardAsync(SaveAsync), () => !preview && !busy && !IsProbingSpecialKey && HasInventory && !recording);
+    }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    public AsyncCommand CollectCommand { get; }
+    public AsyncCommand StartCommand { get; }
+    public AsyncCommand StopCommand { get; }
+    public AsyncCommand MarkCommand { get; }
+    public AsyncCommand SkipCommand { get; }
+    public AsyncCommand UnavailableCommand { get; }
+    public AsyncCommand SaveCommand { get; }
+    public bool IsCollecting => collecting;
+    public bool IsBusy => busy;
+    internal EvidenceSessionSnapshot? Evidence => session?.Snapshot();
+    internal void SetOwnedTestObserver(INativeObservationSession syntheticObserver, IReadOnlyList<LocalHidCandidate>? syntheticCandidates = null, bool startPump = false)
+    {
+        observer = syntheticObserver;
+        if (syntheticCandidates is not null) controlCandidates = syntheticCandidates;
+        if (startPump)
+        {
+            pumpCancellation = new CancellationTokenSource();
+            StartPump();
+        }
+    }
+    public bool HasInventory => session is not null;
+    public bool ShowInventoryScreen => !HasInventory;
+    public bool ShowExport => HasInventory && !recording;
+    public bool IsRecording => recording;
+    public bool HasCurrentStep => step >= 0 && step < Activities.Count;
+    public bool CanSelectActivity => !closing && HasInventory && !busy && !IsProbingSpecialKey && (!recording || !observerEnded) && stepPhase == 0;
+    public int SelectedActivityIndex
+    {
+        get => HasCurrentStep ? step : -1;
+        set
+        {
+            if (!CanSelectActivity || value < 0 || value >= Activities.Count || value == step) return;
+            step = value;
+            ResetEntries();
+            Refresh();
+        }
+    }
+    private CaptureActivity CurrentActivity => Activities[step];
+    public string CoverageSummary => $"{Activities.Count(activity => activity.State != CoverageState.Pending)} of {Activities.Count} items handled. Choose any item; stop and save whenever you are ready.";
+    public string StartingValueLabel => HasCurrentStep && CurrentActivity.IsReadOnly ? "Current state or known behavior" : "Starting setting";
+    public string ActivityGuidance => HasCurrentStep ? CurrentActivity.Guidance : string.Empty;
+    public bool ShowStartingValue => HasCurrentStep && stepPhase == 0;
+    public bool ShowChangedValue => HasCurrentStep && stepPhase == 1;
+    public bool ShowAttach => !recording;
+    public string CollectButtonText => HasInventory ? "Refresh device information" : "Collect device information";
+    public string VersionLabel => "v" + BuildVersion.Split('+')[0];
+    public string BuildVersion => typeof(CollectorViewModel).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "Unknown";
+    public string DeviceSummary => deviceSummary;
+    public string RecorderStatus => recorderStatus;
+    public string CollectionDetails => string.IsNullOrEmpty(retentionGapDetails) ? collectionDetails : $"{collectionDetails}\n{retentionGapDetails}";
+    public string Status => status;
+    public string StepTitle => HasCurrentStep ? $"{step + 1} of {Activities.Count} · {CurrentActivity.Title}" : "Checklist finished";
+    public string StepInstructions => HasCurrentStep
+        ? CurrentActivity.IsReadOnly ? "Report the current state or behavior you have already observed. Save the report without changing a setting."
+        : !recording ? "Start recording before changing this setting, or choose a current-state report to continue without recording."
+        : observerEnded ? EndedRecordingInstructions
+        : stepPhase == 0 ? "Select the setting currently shown. Then begin this step."
+        : stepPhase == 1 ? "Change one available setting in its usual controls. Select its new value below, then mark the change."
+        : $"Restore the starting setting: {startingSetting}. Mark restoration after the controls show that value."
+        : "Stop recording and save the evidence ZIP.";
+    private string EndedRecordingInstructions => (stepPhase > 0
+        ? $"Restore the starting setting: {startingSetting}. " : "Recording is unavailable. ")
+        + (stopping || cleanupRequested ? "Wait for recording cleanup, then save the partial evidence."
+            : "Stop recording and save the partial evidence.");
+    public string StepStatus => !HasCurrentStep ? "Your setting changes and restoration markers are recorded." : CurrentActivity.IsReadOnly ? "This is your report, not a hardware measurement or firmware confirmation."
+        : !recording ? "Current-state reports are available without observing Synapse. Setting changes need a recording."
+        : observerEnded ? "Recording is unavailable. Restore any unfinished setting and save the evidence after cleanup."
+        : stepPhase == 0 ? "Examples are suggestions, not confirmed support. Skip or mark unavailable if needed."
+        : stepPhase == 1 ? "The collector observes Synapse. It does not change a setting for you."
+        : "Restoration will be recorded as your observation of the displayed setting.";
+    public string MarkButtonText => HasCurrentStep && CurrentActivity.IsReadOnly ? "Save current state" : stepPhase == 0 ? "Begin this step" : stepPhase == 1 ? "I changed it" : "I restored it";
+    public string ObservationSummary => $"{observedCalls} observed calls · {failedCalls} failed calls · {gaps} recording gaps";
+    public string ExportSummary => $"The ZIP contains device information, {observedCalls} observed calls, recording coverage, and your action markers. Unproven or sensitive payloads are omitted. Review it before sharing.";
+
+    public bool AttachConsent
+    {
+        get => consent;
+        set { consent = value; Changed(); RefreshCommands(); }
+    }
+
+    public string StartingSetting
+    {
+        get => StartingEntry.Value;
+        set => StartingEntry.SetReportedText(value);
+    }
+
+    public string ChangedSetting
+    {
+        get => ChangedEntry.Value;
+        set => ChangedEntry.SetReportedText(value);
+    }
+
+    private async Task CollectAsync()
+    {
+        collecting = true;
+        busy = true;
+        Refresh();
+        try
+        {
+            if (session is not null)
+            {
+                await DiscoverRecorderAsync();
+                status = "Recording availability checked. Your collected evidence was preserved.";
+                return;
+            }
+
+            var inventory = preview ? PreviewInventory() : await Task.Run(() => new InventoryCollector(inventorySource).CollectAsync());
+            session = new EvidenceSession(inventory);
+            sessionOriginTicks = Stopwatch.GetTimestamp();
+            var identities = inventory.MachineIdentity.Value;
+            var identity = identities.FirstOrDefault();
+            deviceSummary = $"{identity?.ProductName ?? "Laptop identity unavailable"} · BIOS {identity?.BiosVersion ?? "unavailable"}\n{inventory.RazerHidInterfaces.Value.Count} Razer HID interfaces · {inventory.SynapseProcesses.Value.Count} related software processes";
+            Marker(EvidenceMarkerKind.SessionStarted, "session", "Device information collected", EvidenceProvenance.Collector);
+            foreach (var activity in Activities)
+            {
+                session.SetCoverage(new CoverageItem(activity.Id, activity.Title, CoverageState.Pending, CoverageReason.None));
+            }
+
+            await DiscoverRecorderAsync();
+            status = "Device information collected. You can save it now or add a recording.";
+        }
+        finally
+        {
+            collecting = false;
+            busy = false;
+            Refresh();
+        }
+    }
+
+    private async Task DiscoverRecorderAsync()
+    {
+        backendCandidate = null;
+        inputCandidates = [];
+        if (preview)
+        {
+            recorderStatus = "Synapse is ready. Start a short recording when you are ready to change settings.";
+            return;
+        }
+
+        recorderStatus = "Checking the native observer's availability.";
+        var candidates = await Task.Run(() => inventorySource.DiscoverLocalControlCandidates());
+        var eligibleInputs = candidates.Value.Where(candidate => SpecialKeyProbeParser.IsInputCandidate(candidate)
+            && candidate.UsbParentProductName?.Contains("Blade", StringComparison.OrdinalIgnoreCase) == true).ToArray();
+        if (SpecialKeyProbeParser.IsSingleBladeRoot(eligibleInputs)) inputCandidates = eligibleInputs;
+        controlCandidates = candidates.Value.Where(BackendDiscovery.IsEligibleControlCandidate).ToArray();
+        if (controlCandidates.Count is < 1 or > 8
+            || controlCandidates.Select(c => c.UsbParentDeviceInstanceId).Distinct(StringComparer.OrdinalIgnoreCase).Count() != 1)
+        {
+            recorderStatus = "The laptop's feature-report interfaces could not be identified unambiguously. Save device information so the maintainer can investigate.";
+            return;
+        }
+
+        var processes = await BackendDiscovery.DiscoverAsync();
+        var eligible = processes.Where(candidate => candidate.Eligible).ToArray();
+        if (eligible.Length == 1)
+        {
+            backendCandidate = eligible[0];
+            recorderStatus = $"Ready to observe {controlCandidates.Count} feature-report interfaces on your laptop. Razer publisher and process identity verified.";
+        }
+        else
+        {
+            recorderStatus = processes.Count == 0 ? "Start Synapse normally and open your laptop's controls. Then check recording availability. You can save device information now."
+                : eligible.Length > 1 ? "More than one verified Synapse engine is running. Close duplicate Synapse instances, then check recording availability."
+                : processes.Select(candidate => candidate.Diagnostic).Distinct(StringComparer.Ordinal).ToArray() is [var onlyReason] ? onlyReason
+                : "No recording target was verified. Open your laptop's controls in Synapse, start both apps normally, then refresh. See collection details.";
+        }
+
+        collectionDetails = RecorderDiscoveryDiagnostics.Format(processes);
+        if (backendCandidate is null)
+        {
+            Marker(EvidenceMarkerKind.Failure, "observer", "Native observer unavailable", EvidenceProvenance.Collector);
+        }
+    }
+
+    private async Task StartAsync()
+    {
+        if (!consent || session is null)
+        {
+            return;
+        }
+
+        busy = true;
+        Refresh();
+        try
+        {
+            if (!preview)
+            {
+                if (backendCandidate is null)
+                {
+                    return;
+                }
+
+                observer = await NativeObservationSession.StartAsync(backendCandidate, controlCandidates.Select(candidate => candidate.InterfacePath).ToArray());
+                // Use the observer's actual QPC origin, not the time at which its
+                // Task.Run was queued. User markers and events share this clock.
+                observerOrigin = (observer.OriginTimestampTicks - sessionOriginTicks) * 1000.0 / Stopwatch.Frequency;
+            }
+
+            stopTask = null;
+            // Native counters belong to each observer instance; session evidence
+            // and accumulated loss remain intact across successive recordings.
+            droppedEvents = 0;
+            nativeFailureGapCounted = false;
+            malformedLossMarkerEmitted = false;
+            cleanupRequested = false;
+            recordingStartGaps = gaps;
+            recordingNumber++;
+            recording = true;
+            observerEnded = false;
+        }
+        finally
+        {
+            busy = false;
+            Refresh();
+        }
+
+        if (!HasCurrentStep || CurrentActivity.State != CoverageState.Pending)
+        {
+            NextStep();
+        }
+        Marker(EvidenceMarkerKind.RecordingStarted, "session", "Recording started", EvidenceProvenance.Observer);
+        recorderStatus = preview ? "Recording selected laptop feature calls. Preview data only." : "Recording feature calls for this laptop. Change one setting at a time in Synapse.";
+        if (observer is not null)
+        {
+            pumpCancellation = new CancellationTokenSource();
+            StartPump();
+        }
+
+        Refresh();
+    }
+
+    private Task MarkAsync()
+    {
+        if (CurrentActivity.IsReadOnly)
+        {
+            if (!Marker(EvidenceMarkerKind.UserReportedCurrentState, CurrentActivity.Id, "User reported current state or known behavior", EvidenceProvenance.UserReported, StartingEntry.Value)) return Task.CompletedTask;
+            SetCurrentCoverage(CoverageState.Completed, CoverageReason.None);
+            NextStep();
+            Refresh();
+            return Task.CompletedTask;
+        }
+
+        if (stepPhase == 0)
+        {
+            startingSetting = StartingEntry.Value;
+            if (!Marker(EvidenceMarkerKind.UserReportedStartingValue, CurrentActivity.Id, "Starting setting reported", EvidenceProvenance.UserReported, startingSetting)) return Task.CompletedTask;
+            stepStartCount = observedCalls;
+            stepStartGaps = gaps;
+            stepPhase = 1;
+        }
+        else if (stepPhase == 1)
+        {
+            if (!Marker(EvidenceMarkerKind.UserReportedTargetValue, CurrentActivity.Id, "Changed setting reported", EvidenceProvenance.UserReported, ChangedEntry.Value)) return Task.CompletedTask;
+            if (!Marker(EvidenceMarkerKind.UserActionConfirmed, CurrentActivity.Id, "User marked the setting change", EvidenceProvenance.UserReported)) return Task.CompletedTask;
+            stepPhase = 2;
+        }
+        else
+        {
+            if (!Marker(EvidenceMarkerKind.UserReportedRestoration, CurrentActivity.Id, "User reported restoration of starting setting", EvidenceProvenance.UserReported, startingSetting)) return Task.CompletedTask;
+            SetCurrentCoverage(observedCalls > stepStartCount && gaps == stepStartGaps ? CoverageState.Completed : CoverageState.CompletedWithGaps,
+                gaps > stepStartGaps ? CoverageReason.CaptureFailed : observedCalls <= stepStartCount ? CoverageReason.NoMatchingEvents : CoverageReason.None);
+            NextStep();
+        }
+
+        Refresh();
+        return Task.CompletedTask;
+    }
+
+    private Task SkipAsync(bool unavailable)
+    {
+        if (!Marker(EvidenceMarkerKind.ItemSkipped, CurrentActivity.Id, unavailable ? "User reported this item unavailable" : "User skipped this item", EvidenceProvenance.UserReported)) return Task.CompletedTask;
+        SetCurrentCoverage(unavailable ? CoverageState.Unavailable : CoverageState.Skipped, CoverageReason.UserSkipped);
+        NextStep();
+        Refresh();
+        return Task.CompletedTask;
+    }
+
+    private void NextStep()
+    {
+        var next = Enumerable.Range(1, Activities.Count).Select(offset => (step + offset) % Activities.Count)
+            .FirstOrDefault(index => Activities[index].State == CoverageState.Pending, -1);
+        step = next;
+        ResetEntries();
+    }
+
+    private void SetCurrentCoverage(CoverageState state, CoverageReason reason)
+    {
+        session!.SetCoverage(new CoverageItem(CurrentActivity.Id, CurrentActivity.Title, state, reason));
+        CurrentActivity.SetState(state);
+    }
+
+    private void ResetEntries()
+    {
+        stepPhase = 0;
+        startingSetting = string.Empty;
+        StartingEntry.Reset(step);
+        ChangedEntry.Reset(step);
+    }
+
+    private Task StopAsync() => stopTask ??= StopCoreAsync();
+
+    private async Task StopCoreAsync()
+    {
+        stopping = true;
+        busy = true;
+        status = WithRestorationReminder("Stopping recording and retaining completed observations.");
+        recorderStatus = "Stopping recording.";
+        Refresh();
+        NativeSessionStatus? nativeStatus = null;
+        Exception? stopFailure = null;
+        try
+        {
+            if (observer is not null)
+            {
+                // Keep the one reader running while native hooks stop and the
+                // engine queue drains into the smaller shared ring.
+                nativeStatus = await observer.StopAsync();
+                if (UpdateDroppedEvents(nativeStatus)) NotifyObservationSummaries();
+                if (!nativeStatus.Finished)
+                {
+                    // Dispose previously paid a second wait without retaining its
+                    // result. Keep the sole reader alive for that bounded wait so
+                    // a late finish publishes its final events and queue totals.
+                    nativeStatus = await observer.StopAsync();
+                    if (UpdateDroppedEvents(nativeStatus)) NotifyObservationSummaries();
+                }
+                pumpCancellation?.Cancel();
+                if (pump is not null) await pump;
+                await PollOnceAsync();
+            }
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException and not StackOverflowException)
+        {
+            stopFailure = ex;
+            if (ex is not NativeObservationPollException) gaps++;
+            session?.AddMarker(new EvidenceMarker(RelativeMilliseconds, EvidenceMarkerKind.Failure, "observer", "Final observer drain failed", EvidenceProvenance.Observer, ex.GetType().Name));
+        }
+        finally
+        {
+            pumpCancellation?.Cancel();
+            if (pump is not null)
+            {
+                try { await pump; }
+                catch (Exception ex) when (ex is not OutOfMemoryException and not StackOverflowException) { stopFailure ??= ex; }
+            }
+            if (observer is not null)
+            {
+                try
+                {
+                    await observer.DisposeAsync();
+                }
+                catch (Exception ex) when (ex is not OutOfMemoryException and not StackOverflowException)
+                {
+                    if (stopFailure is null) gaps++;
+                    stopFailure ??= ex;
+                }
+
+                observer = null;
+            }
+
+            pumpCancellation?.Dispose();
+            pumpCancellation = null;
+            pump = null;
+            recording = false;
+            stopping = false;
+            busy = false;
+            consent = false;
+            backendCandidate = null;
+
+            var unfinished = HasCurrentStep && stepPhase > 0;
+            if (unfinished)
+            {
+                SetCurrentCoverage(CoverageState.CompletedWithGaps, CoverageReason.IncompleteRestoration);
+            }
+
+            session?.AddMarker(new EvidenceMarker(RelativeMilliseconds, EvidenceMarkerKind.RecordingStopped, "session", "Recording stopped", EvidenceProvenance.Observer));
+            recorderStatus = nativeStatus?.Diagnostic ?? "Recording stopped. Gaps and user-reported restoration remain labeled in the evidence.";
+            if (nativeStatus is { Failure: not 0 }) CountNativeFailureGap();
+            if (nativeStatus is { Failure: not 0 } || stopFailure is not null)
+            {
+                session?.AddMarker(new EvidenceMarker(RelativeMilliseconds, EvidenceMarkerKind.Failure, "observer", "Recording cleanup has a gap", EvidenceProvenance.Observer));
+                status = "Recording ended with a gap. Save the partial evidence; restart Synapse manually before another session.";
+            }
+            else if (gaps > recordingStartGaps)
+            {
+                status = "Recording stopped with gaps. Save the partial evidence ZIP when ready.";
+            }
+            else
+            {
+                status = "Recording stopped. Save the evidence ZIP when ready.";
+            }
+
+            status = WithRestorationReminder(status);
+
+            // Preserve the incomplete-restoration evidence and reminder, but
+            // permit subsequent inventory-only reports after recording ends.
+            ResetEntries();
+
+            Refresh();
+        }
+    }
+
+    private void StartPump()
+    {
+        var stopRequested = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reader = PumpAsync(pumpCancellation!.Token, () => stopRequested.TrySetResult());
+        pump = reader;
+        // A recoverable rejection requests cleanup while this sole reader keeps
+        // draining. A fatal fault requests cleanup after the reader completes.
+        _ = StopAfterReaderFailureAsync(reader, stopRequested.Task);
+    }
+
+    private async Task StopAfterReaderFailureAsync(Task<bool> reader, Task stopRequested)
+    {
+        await Task.WhenAny(reader, stopRequested);
+        var failed = stopRequested.IsCompleted || await reader;
+        if (failed && ReferenceEquals(pump, reader) && recording && !stopping) await GuardAsync(StopAsync);
+    }
+
+    private async Task<bool> PumpAsync(CancellationToken cancellationToken, Action requestStop)
+    {
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                NativeSessionStatus? nativeStatus;
+                try { nativeStatus = await PollOnceAsync(); }
+                catch (NativeObservationPollException)
+                {
+                    // Rejected slots have been released and valid events retained.
+                    // The ring remains readable; keep one reader through stop so
+                    // buffered events do not overflow its smaller shared ring.
+                    observerEnded = true;
+                    cleanupRequested = true;
+                    if (!malformedLossMarkerEmitted)
+                    {
+                        malformedLossMarkerEmitted = true;
+                        Marker(EvidenceMarkerKind.Failure, "observer", "Malformed observer records rejected", EvidenceProvenance.Observer);
+                    }
+                    if (!stopping)
+                    {
+                        recorderStatus = "Recording had malformed records. Requesting observer cleanup.";
+                        status = WithRestorationReminder("Recording encountered a gap. The observer is stopping; save the partial evidence after cleanup.");
+                        Refresh();
+                    }
+                    requestStop();
+                    nativeStatus = observer!.GetStatus();
+                }
+                if (nativeStatus is { Finished: true })
+                {
+                    observerEnded = true;
+                    // A requested stop owns its status until cleanup completes.
+                    // Native failure and normal expiry have different evidence.
+                    if (!stopping && !cleanupRequested)
+                    {
+                        if (nativeStatus.Failure != 0)
+                        {
+                            CountNativeFailureGap();
+                            Marker(EvidenceMarkerKind.Failure, "observer", "Native observer failed", EvidenceProvenance.Observer);
+                            recorderStatus = nativeStatus.Diagnostic;
+                            status = "The observer encountered an error. Stop and save the partial evidence; restart Synapse manually before another recording.";
+                        }
+                        else
+                        {
+                            recorderStatus = "The native observer reached the recording time limit.";
+                            status = "The recording time limit was reached. Stop and save the evidence.";
+                        }
+                        status = WithRestorationReminder(status);
+                        // StopCoreAsync owns the single RecordingStopped marker.
+                        Refresh();
+                    }
+                    return false;
+                }
+
+                // The shared ring has 32 slots. Multi-row lighting frames can
+                // exhaust it within 100 ms; drain at 20 ms while keeping the
+                // native five-minute bound and explicit dropped-event accounting.
+                await Task.Delay(20, cancellationToken);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
+        catch (Exception ex) when (ex is not OutOfMemoryException and not StackOverflowException)
+        {
+            observerEnded = true;
+            cleanupRequested = true;
+            gaps++;
+            Marker(EvidenceMarkerKind.Failure, "observer", "Observer polling failed", EvidenceProvenance.Observer, ex.GetType().Name);
+            recorderStatus = "The recording reader failed. Requesting observer cleanup.";
+            status = WithRestorationReminder("Recording encountered a gap. The observer is stopping; save the partial evidence after cleanup.");
+            Refresh();
+            return true;
+        }
+        return false;
+    }
+
+    private string WithRestorationReminder(string message) => HasCurrentStep && stepPhase > 0
+        ? $"Restore {startingSetting} in Synapse before leaving this setting. " + message
+        : message;
+
+    private void CountNativeFailureGap()
+    {
+        if (nativeFailureGapCounted) return;
+        nativeFailureGapCounted = true;
+        gaps++;
+    }
+
+    private async Task<NativeSessionStatus?> PollOnceAsync()
+    {
+        if (observer is null)
+        {
+            return null;
+        }
+
+        var nativeStatus = observer.GetStatus();
+        var visibleStateChanged = UpdateDroppedEvents(nativeStatus);
+        IReadOnlyList<NativeObservationEvent> batch = [];
+        NativeObservationPollException? parseLoss = null;
+        var scopeRejections = 0;
+        try
+        {
+            try { batch = await observer.PollAsync(); }
+            catch (NativeObservationPollException ex)
+            {
+                // The ring reader has already released rejected slots. Retain every
+                // valid event in its batch before stopping this partial recording.
+                batch = ex.Events;
+                parseLoss = ex;
+                gaps += ex.RejectedRecords;
+            }
+            visibleStateChanged |= batch.Count > 0 || parseLoss is not null;
+            foreach (var observed in batch)
+            {
+                if (observed.InterfaceIndex >= controlCandidates.Count)
+                {
+                    // Reject only this out-of-scope record; preserve valid events
+                    // elsewhere in the already-consumed batch.
+                    gaps++;
+                    scopeRejections++;
+                    continue;
+                }
+
+                var device = controlCandidates[(int)observed.InterfaceIndex];
+                var callStatus = observed.CompletionGap == "pending-completion-not-observed" ? ObservationStatus.Pending
+                    : observed.Result ? ObservationStatus.Succeeded : ObservationStatus.Failed;
+                var operationId = $"recording-{recordingNumber}-op-{observed.Sequence}";
+                var at = observerOrigin + observed.RelativeMilliseconds;
+                var completedAt = observerOrigin + observed.CompletionRelativeMilliseconds;
+                var returnedLengthUnknown = observed.Result && observed.Api == "HidD_GetFeature"
+                    && observed.CompletionGap == "return-length-unknown";
+                // HidD exposes no actual byte count. This is an API caveat,
+                // independent of operation failure or lost capture data.
+                var error = returnedLengthUnknown ? null : observed.CompletionGap;
+                // HidD_GetFeature returns BOOL, not an output byte count. Only
+                // DeviceIoControl supplies an actual returned-length value.
+                uint? actualReturnedBytes = observed.Api.StartsWith("DeviceIoControl.", StringComparison.Ordinal)
+                    ? observed.ReturnedBytes : null;
+                AddControlObservation(new ControlObservation(operationId, at, ObservationSource.UserModeCall, observed.Api, ObservationDirection.Input,
+                    callStatus, unchecked((int)observed.NativeError), error, device.VendorId, device.ProductId, device.InterfaceLabel,
+                    device.UsagePage, device.Usage, observed.RequestBytes.Length > 0 ? observed.RequestBytes[0] : null,
+                    observed.RequestBytes, PayloadDisposition.ProvenFeatureControl, completedAt, observed.OutputBufferCapacity,
+                    observed.RequestedBytes, actualReturnedBytes));
+                if (observed.ResponseBytes.Length > 0)
+                {
+                    AddControlObservation(new ControlObservation(operationId, completedAt, ObservationSource.ReturnedBuffer, observed.Api, ObservationDirection.Output,
+                        callStatus, unchecked((int)observed.NativeError), error, device.VendorId, device.ProductId, device.InterfaceLabel,
+                        device.UsagePage, device.Usage,
+                        observed.Api == "DeviceIoControl.HID_GET_FEATURE" && observed.ReturnedBytes == 90
+                            && observed.ResponseBytes.Length == 90 && observed.OutputBufferCapacity >= 91
+                            && device.ReportGeometry?.FeatureBytes == 91 ? null : observed.ResponseBytes[0], observed.ResponseBytes, PayloadDisposition.ProvenFeatureControl, completedAt, observed.OutputBufferCapacity,
+                        observed.RequestedBytes, actualReturnedBytes)
+                    { ReturnedLengthUnknown = returnedLengthUnknown });
+                }
+
+                observedCalls++;
+                if (callStatus == ObservationStatus.Failed) failedCalls++;
+                if (error is not null)
+                {
+                    gaps++;
+                }
+            }
+        }
+        finally
+        {
+            // Include unprocessed records when scope or projection fails.
+            foreach (var observed in batch)
+            {
+                CryptographicOperations.ZeroMemory(observed.RequestBytes);
+                CryptographicOperations.ZeroMemory(observed.ResponseBytes);
+            }
+            if (visibleStateChanged) NotifyObservationSummaries();
+        }
+
+        if (parseLoss is not null) throw parseLoss;
+        if (scopeRejections > 0) throw new NativeObservationPollException([], scopeRejections);
+        return nativeStatus;
+    }
+
+    private bool UpdateDroppedEvents(NativeSessionStatus nativeStatus)
+    {
+        var dropped = nativeStatus.DroppedEvents;
+        if (dropped <= droppedEvents) return false;
+        collectionDetails = $"{dropped} events were dropped by the bounded observer queue during this recording. Completed-call observations cannot establish firmware application. Pending asynchronous completions were not observed.";
+        gaps += dropped - droppedEvents;
+        droppedEvents = dropped;
+        Marker(EvidenceMarkerKind.Failure, "observer", "Observer queue dropped events", EvidenceProvenance.Observer, $"count-{dropped}");
+        return true;
+    }
+
+    private void NotifyObservationSummaries()
+    {
+        // Empty unchanged polls need no binding or command notifications.
+        Changed(nameof(ObservationSummary));
+        Changed(nameof(CollectionDetails));
+        Changed(nameof(ExportSummary));
+    }
+
+    private void AddControlObservation(ControlObservation observation)
+    {
+        var result = session!.AddObservation(observation);
+        if (result is not (EvidenceAddResult.RejectedInvalid or EvidenceAddResult.RejectedLimit)) return;
+        gaps++;
+        retentionGapDetails = result == EvidenceAddResult.RejectedLimit
+            ? $"The session reached its {EvidenceLimits.MaxObservations} observation limit. Further observations are counted as gaps. Save this evidence, then reopen the collector to record more settings."
+            : "An invalid observation could not be retained. Its rejection is counted as a recording gap in the evidence.";
+    }
+
+    private async Task SaveAsync()
+    {
+        var dialog = new SaveFileDialog
+        {
+            Title = "Save device evidence",
+            Filter = "Evidence ZIP (*.zip)|*.zip",
+            FileName = $"blade-evidence-{DateTime.UtcNow:yyyyMMdd-HHmm}.zip",
+            DefaultExt = ".zip",
+            AddExtension = true,
+            OverwritePrompt = true,
+        };
+        if (dialog.ShowDialog() != true)
+        {
+            return;
+        }
+
+        busy = true;
+        Refresh();
+        try
+        {
+            await EvidenceBundleWriter.WriteAsync(session!, dialog.FileName, CancellationToken.None);
+            status = "Evidence ZIP saved. Attach it to your support request.";
+        }
+        finally
+        {
+            busy = false;
+            Refresh();
+        }
+    }
+
+    public async Task CloseAsync()
+    {
+        closing = true;
+        RefreshCommands();
+        await CollectCommand.CurrentExecution;
+        await StartCommand.CurrentExecution;
+        await SaveCommand.CurrentExecution;
+        if (recording || observer is not null)
+        {
+            await GuardAsync(StopAsync);
+        }
+        session?.Dispose();
+    }
+
+    private bool Marker(EvidenceMarkerKind kind, string activity, string label, EvidenceProvenance provenance, string? value = null)
+    {
+        var result = session?.AddMarker(new EvidenceMarker(RelativeMilliseconds, kind, activity, label, provenance, value));
+        if (result == EvidenceAddResult.RejectedInvalid)
+        {
+            throw new InvalidDataException("The marker was rejected. Use a short setting value without personal details or paths.");
+        }
+        if (result == EvidenceAddResult.RejectedLimit)
+        {
+            retentionGapDetails = $"The session reached its {EvidenceLimits.MaxMarkers} action-marker limit. Further markers are counted as rejected in the ZIP. Stop and save this evidence, then reopen the collector to report more items.";
+            status = "This action could not be recorded because the session is full. Stop and save the evidence.";
+            Refresh();
+            return false;
+        }
+        return result == EvidenceAddResult.Added;
+    }
+
+    private async Task GuardAsync(Func<Task> operation)
+    {
+        try
+        {
+            await operation();
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException and not StackOverflowException)
+        {
+            status = $"This step could not finish ({ex.GetType().Name}). Collected information is still available.";
+            session?.AddMarker(new EvidenceMarker(RelativeMilliseconds, EvidenceMarkerKind.Failure, "session", "Collector step failed", EvidenceProvenance.Collector, ex.GetType().Name));
+            Refresh();
+        }
+    }
+
+    internal void SetPreviewStage(int stage)
+    {
+        if (stage == 0)
+        {
+            return;
+        }
+
+        session = new EvidenceSession(PreviewInventory());
+        deviceSummary = "Razer Blade · example device\nBIOS 1.00 · 3 Razer HID interfaces · Synapse detected";
+        recorderStatus = "Synapse is ready. Start a short recording when you are ready to change settings.";
+        status = "Device information collected. You can save it now or add a recording.";
+        if (stage >= 2)
+        {
+            recording = true;
+            startingSetting = "Balanced";
+            StartingEntry.SetReportedText("Balanced");
+            ChangedEntry.SetReportedText("Silent");
+            stepPhase = 1;
+            recorderStatus = "Recording selected laptop feature calls. Example data only.";
+            if (stage == 3)
+            {
+                StartingEntry.SelectedChoice = StartingEntry.Choices.Single(choice => choice.Label == "Custom");
+                StartingEntry.Details = "CPU Boost, GPU High";
+                stepPhase = 0;
+            }
+        }
+
+        Refresh();
+    }
+
+    private static InventorySnapshot PreviewInventory() => new(
+        InventorySnapshot.CurrentSchemaVersion,
+        DateTimeOffset.UtcNow,
+        SectionResult<IReadOnlyList<MachineIdentity>>.Collected([new("64-bit", "Razer", "Razer Blade · example device", null, "1.00", null)]),
+        SectionResult<PowerSourceEvidence?>.Collected(new(PowerSourceKind.Ac, 80, true)),
+        SectionResult<IReadOnlyList<HidInterfaceEvidence>>.Collected([]),
+        SectionResult<IReadOnlyList<SynapseProcessEvidence>>.Collected([]));
+
+    private void Refresh()
+    {
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(string.Empty));
+        RefreshCommands();
+    }
+
+    private void RefreshCommands()
+    {
+        ProbeSpecialKeyCommand?.Refresh(); CancelSpecialKeyProbeCommand?.Refresh();
+        CollectCommand.Refresh(); StartCommand.Refresh(); StopCommand.Refresh(); MarkCommand.Refresh();
+        SkipCommand.Refresh(); UnavailableCommand.Refresh(); SaveCommand.Refresh();
+    }
+
+    private void Changed([CallerMemberName] string? property = null) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(property));
+}
