@@ -30,7 +30,6 @@
   from firmware readback
   ([#7](https://github.com/OpenBladeProject/synapse-observer/pull/7)).
 
-
 ### Fixed
 
 - Keep all suggested and custom values reachable when switching evidence items

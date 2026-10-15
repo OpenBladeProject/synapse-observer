@@ -37,7 +37,8 @@ or device access. Preview exports are disabled.
 SynapseObserver.exe --render-preview C:\tmp\observer-preview
 ```
 
-This writes three PNGs using the same WPF controls. Inspect them for clipping,
+This writes PNGs of the guide stages, compact layout, and maximized window.
+Inspect them for clipping,
 readability, and visible controls. These renders do not validate live capture.
 
 `--export-inventory <zip-path>` is a developer check of the read-only inventory

@@ -1,9 +1,10 @@
-# Prototype validation
+# Validation record
 
 English | [简体中文](docs/zh-CN/VALIDATION.md) | [Русский](docs/ru-RU/VALIDATION.md)
 
-The implementation is a development prototype. Synthetic checks and the live
-trials below do not establish complete Synapse coverage or all-model compatibility.
+Each check below applies to its recorded source and conditions. Synthetic checks
+and individual live trials do not establish complete Synapse coverage or
+all-model compatibility.
 
 ## Completed locally
 
@@ -230,7 +231,7 @@ runs both unchanged native owned-process fixtures. No new live attachment,
 setting change, input recording, or physical-model validation occurred. Package
 revision and hashes remain in build-manifest.json.
 
-## Pending before public release
+## Remaining coverage limits
 
 - Typed setting-change response payloads: the observed returned bodies remain
   metadata-only under the reviewed privacy grammar.
