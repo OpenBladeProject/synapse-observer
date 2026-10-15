@@ -491,3 +491,53 @@ the compact window. This is UI validation, not new live protocol evidence.
 Claude's narrow wording and picker reviews completed. Independent triage found
 no additional introduced defect requiring a change. The collector's native
 observer, backend, and decoder are unchanged by these two UI corrections.
+
+## Recording-length follow-up, 2026-10-15
+
+The unchanged `7c0c8d7` live collector retried HDR and dynamic refresh in separate
+recordings. HDR completed Off -> On -> Off with all four markers and 58
+associated observations. Its recording lasted 251.88 seconds and stopped
+cleanly. The dynamic-refresh retry retained Off -> Dynamic (60 Hz or 240 Hz,
+selected 240 Hz) and the action marker, but reached the native five-minute
+bound before its restoration marker. That recording's start/stop interval
+was 344.82 seconds; the interval includes time before the collector was stopped
+after the native observer ended. The ZIP does not encode the timeout cause.
+
+Dynamic refresh was restored Off. The original 60 Hz selection was restored
+through Synapse after Windows reverted its confirmation dialog twice. Synapse
+and Windows then showed 60 Hz selected; Windows desktop mode showed 60 Hz while
+active signal mode still showed 240 Hz. This records the observed distinction
+without claiming that the active signal had returned to 60 Hz. Native color
+profile and HDR Off were retained. The missing restoration marker was not
+backfilled.
+
+The retry ZIP SHA-256 is
+`B0A44FD7AAB600C9DE65EE4E79EEBB8A8617D1543D3D1EDC8012532C999BD13A`.
+It exactly preserves the preceding brightness ZIP and appends the two retries:
+3,563 successful observations, 1,555 complete reviewed input bodies, ten
+semantic-only responses, 1,002 excluded output bodies, eleven paired recording
+starts/stops, and eleven windows (seven complete). All earlier incomplete
+windows remain. No failed calls, rejected records, dropped-event markers,
+cleanup failures, session gaps, or excluded identifiers were found in the
+bounded audit. A full-charge report observed during HDR remains a temporal
+observation, not proof of an HDR command or a fresh battery-control test.
+
+The repeated DRR timeout established the need for a longer user workflow.
+Source `d58333f57050c90378fa490f29d462b2e1d223ea` raises both the default and
+maximum recording length from 300 to 600 seconds, with matching native input
+validation. The duration field and protocol layout are unchanged. Session,
+buffer, queue, retained-payload, and privacy limits remain unchanged. Managed
+boundaries cover 0, 1, 600, and 601 seconds; the owned DLL fixture rejects zero
+and 601 with otherwise valid configuration, accepts 600, and stops immediately.
+
+The exact-source package passed 520 managed tests (312 Core, 119 App, 89 Backend)
+and both native owned-process fixtures. Its framework-dependent executable
+SHA-256 is
+`98F95D2E47D87777D4F66007D236B21348545C2744093B11835D206E29433323`;
+the portable ZIP SHA-256 is
+`F175401371F3A686821D6B4A2C29ABDEDC690E5498506B78262BDACD5B6A0A36`.
+Live validation of the ten-minute build awaits a normal Synapse restart to
+unload the old observer. Claude review of this distinct ten-file change was
+rejected before it started by automatic approval review pending explicit
+source-payload authorization. Independent source review found matching bounds;
+no completed Claude review is claimed for this slice yet.
