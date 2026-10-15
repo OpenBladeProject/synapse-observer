@@ -504,6 +504,37 @@ public sealed class EvidenceBundleWriterTests
     }
 
     [Theory]
+    [InlineData(0x00, 0x00, true)]
+    [InlineData(0x04, 0x04, true)]
+    [InlineData(0x00, 0x04, false)]
+    [InlineData(0x04, 0x00, false)]
+    public void IncompleteThermalAck_FixedMaximumCorrelationRequiresExactEncoding(
+        byte requestMode,
+        byte responseMode,
+        bool expectedCorrelation)
+    {
+        using var session = new EvidenceSession(SyntheticPreview.CreateInventory());
+        AddCompleteMarkers(session, "performance", 1, 10);
+        session.AddObservation(new ControlObservation(
+            "op-set", 2, ObservationSource.UserModeCall, "HidD_SetFeature",
+            ObservationDirection.Input, ObservationStatus.Succeeded, 0, null,
+            0x1532, 0xFFFF, "hid-preview-01", 1, 2, 0,
+            FeatureReportTestData.Create(0x0D, 0x02, [0x01, 0x01, requestMode, 0x01],
+                transactionId: 0x42),
+            PayloadDisposition.ProvenFeatureControl, 2.1));
+        session.AddObservation(CreateIncompleteThermalAck(
+            "op-get", 3, 0x42, responseMode, 0x01));
+
+        var response = Assert.Single(Assert.Single(
+                ContributionDraftBuilder.CreateAnnotationDraft(session.Snapshot()).ActionWindows)
+            .Observations, item => item.OperationId == "op-get");
+
+        Assert.Equal(ContributionObservationRole.FeatureSetResponse, response.Role);
+        Assert.Equal(expectedCorrelation, response.CorrelatedRequestReferenceId is not null);
+        Assert.False(response.FirmwareReadback);
+    }
+
+    [Theory]
     [InlineData(7, 0x12, new byte[] { 80 }, "battery.limitQuery", FeaturePayloadProjectionKind.ReviewedBatterySetting)]
     [InlineData(3, 3, new byte[] { 1, 5, 197 }, "keyboardLighting.brightnessQuery", FeaturePayloadProjectionKind.ReviewedKeyboardBrightness)]
     public void BatteryAndBrightnessSetterAcksDoNotClaimGetterCoverage(byte commandClass, byte commandId,
@@ -692,12 +723,14 @@ public sealed class EvidenceBundleWriterTests
     private static ControlObservation CreateIncompleteThermalAck(
         string operationId,
         double time,
-        byte transactionId)
+        byte transactionId,
+        byte mode = 0x05,
+        byte fanValue = 0x00)
     {
         var bytes = FeatureReportTestData.Create(
             0x0D,
             0x02,
-            [0x01, 0x01, 0x05, 0x00],
+            [0x01, 0x01, mode, fanValue],
             ObservationDirection.Output,
             transactionId: transactionId)[..90];
         bytes[0] = 0xA5;

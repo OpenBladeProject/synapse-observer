@@ -247,9 +247,7 @@ public static class FeaturePayloadPrivacy
             || report[2] != 0 || report[3] != 0 || report[4] != 0
             || report[5] != 4
             || report[6] != 0x0D || report[7] != 0x02
-            || report[8] != 0x01
-            || !TryDecodeReviewedThermalChannel(report[9], out var channel)
-            || !TryDecodeReviewedThermalMode(report[10], report[11], out var mode)
+            || !ReviewedThermalEncoding.TryDecode(report.Slice(8, 4), out var channel, out var mode)
             || report[12..88].IndexOfAnyExcept((byte)0) >= 0
             || report[88] != CalculateChecksum(report))
         {
@@ -265,39 +263,6 @@ public static class FeaturePayloadPrivacy
             FeatureResponseCompleteness.MissingFinalPadding,
             OpaquePrefixDisposition.Excluded);
         return true;
-    }
-
-    private static bool TryDecodeReviewedThermalChannel(
-        byte value,
-        out ReviewedThermalChannel channel)
-    {
-        channel = value switch
-        {
-            0x01 => ReviewedThermalChannel.First,
-            0x02 => ReviewedThermalChannel.Second,
-            _ => default,
-        };
-        return value is 0x01 or 0x02;
-    }
-
-    private static bool TryDecodeReviewedThermalMode(
-        byte mode,
-        byte fanValue,
-        out ReviewedThermalMode thermalMode)
-    {
-        thermalMode = (mode, fanValue) switch
-        {
-            (0x00, 0x00) => ReviewedThermalMode.BalancedAutomatic,
-            (0x05, 0x00) => ReviewedThermalMode.SilentAutomatic,
-            (0x02, 0x00) => ReviewedThermalMode.PerformanceAutomatic,
-            (0x00, 0x01) or (0x04, 0x01) => ReviewedThermalMode.FixedMaximum,
-            (0x03, 0x00) => ReviewedThermalMode.BatterySaverAutomatic,
-            (0x06, 0x00) => ReviewedThermalMode.BatteryBalancedAutomatic,
-            (0x04, 0x00) => ReviewedThermalMode.CustomAutomatic,
-            (0x07, 0x00) => ReviewedThermalMode.HyperBoostObserved,
-            _ => default,
-        };
-        return IsKnownThermalValue([0x01, 0x01, mode, fanValue]);
     }
 
     private static FeaturePayloadProjectionKind ClassifyReviewedPayload(
@@ -429,19 +394,7 @@ public static class FeaturePayloadPrivacy
         payload.Length == 4 && payload[0] == 0x01 && payload[1] is 0x01 or 0x02;
 
     private static bool IsKnownThermalValue(ReadOnlySpan<byte> payload) =>
-        payload.Length == 4
-        && payload[0] == 0x01
-        && payload[1] is 0x01 or 0x02
-        && (payload[2], payload[3]) is
-            (0x00, 0x00) or
-            (0x05, 0x00) or
-            (0x02, 0x00) or
-            (0x04, 0x00) or
-            (0x03, 0x00) or
-            (0x06, 0x00) or
-            (0x07, 0x00) or
-            (0x00, 0x01) or
-            (0x04, 0x01);
+        ReviewedThermalEncoding.TryDecode(payload, out _, out _);
 
     private static bool IsFanSpeed(ReadOnlySpan<byte> payload) =>
         payload.Length == 3

@@ -224,7 +224,8 @@ public sealed class BareFeatureResponseTests
     [Theory]
     [InlineData(0x01, 0x00, 0x00, ReviewedThermalChannel.First, ReviewedThermalMode.BalancedAutomatic)]
     [InlineData(0x02, 0x05, 0x00, ReviewedThermalChannel.Second, ReviewedThermalMode.SilentAutomatic)]
-    [InlineData(0x01, 0x04, 0x01, ReviewedThermalChannel.First, ReviewedThermalMode.FixedMaximum)]
+    [InlineData(0x01, 0x00, 0x01, ReviewedThermalChannel.First, ReviewedThermalMode.FixedMaximumModeZero)]
+    [InlineData(0x01, 0x04, 0x01, ReviewedThermalChannel.First, ReviewedThermalMode.FixedMaximumModeFour)]
     [InlineData(0x02, 0x07, 0x00, ReviewedThermalChannel.Second, ReviewedThermalMode.HyperBoostObserved)]
     public void AddObservation_OpaquePrefixThermalAck_ExportsClosedSemanticsOnly(
         byte channel,

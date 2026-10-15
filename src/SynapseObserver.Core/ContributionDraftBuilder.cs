@@ -1155,31 +1155,10 @@ public static class ContributionDraftBuilder
 
         var payload = TryGetPayload(request.Item);
         return payload is { Length: 4 }
-            && payload[0] == 0x01
-            && MatchesThermalChannel(payload[1], semantic.ThermalChannel)
-            && MatchesThermalMode(payload[2], payload[3], semantic.ThermalMode);
+            && ReviewedThermalEncoding.TryDecode(payload, out var channel, out var mode)
+            && channel == semantic.ThermalChannel
+            && mode == semantic.ThermalMode;
     }
-
-    private static bool MatchesThermalChannel(byte value, ReviewedThermalChannel channel) => channel switch
-    {
-        ReviewedThermalChannel.First => value == 0x01,
-        ReviewedThermalChannel.Second => value == 0x02,
-        _ => false,
-    };
-
-    private static bool MatchesThermalMode(byte mode, byte fanValue, ReviewedThermalMode thermalMode) =>
-        thermalMode switch
-        {
-            ReviewedThermalMode.BalancedAutomatic => (mode, fanValue) == (0x00, 0x00),
-            ReviewedThermalMode.SilentAutomatic => (mode, fanValue) == (0x05, 0x00),
-            ReviewedThermalMode.PerformanceAutomatic => (mode, fanValue) == (0x02, 0x00),
-            ReviewedThermalMode.FixedMaximum => (mode, fanValue) is (0x00, 0x01) or (0x04, 0x01),
-            ReviewedThermalMode.BatterySaverAutomatic => (mode, fanValue) == (0x03, 0x00),
-            ReviewedThermalMode.BatteryBalancedAutomatic => (mode, fanValue) == (0x06, 0x00),
-            ReviewedThermalMode.CustomAutomatic => (mode, fanValue) == (0x04, 0x00),
-            ReviewedThermalMode.HyperBoostObserved => (mode, fanValue) == (0x07, 0x00),
-            _ => false,
-        };
 
     private static IReadOnlyList<string> DistinctValues(IEnumerable<string?> values) =>
         values.OfType<string>()
