@@ -8,6 +8,40 @@ public enum FileSignatureState
     Unavailable,
 }
 
+public enum HidReportDirection
+{
+    Input,
+    Output,
+    Feature,
+}
+
+public enum HidReportCapabilityKind
+{
+    Button,
+    Value,
+}
+
+public sealed record HidReportCapabilityEvidence(
+    HidReportDirection Direction,
+    HidReportCapabilityKind Kind,
+    byte ReportId,
+    ushort UsagePage,
+    bool IsRange,
+    ushort UsageMinimum,
+    ushort UsageMaximum,
+    ushort LinkCollection,
+    ushort LinkUsagePage,
+    ushort LinkUsage,
+    ushort? BitSize,
+    ushort? ReportCount,
+    int? LogicalMinimum,
+    int? LogicalMaximum)
+{
+    public bool IsAbsolute { get; init; }
+
+    public bool? HasNull { get; init; }
+}
+
 public sealed record HidDescriptorSupportEvidence(
     string InterfaceLabel,
     string PhysicalDeviceLabel,
@@ -23,7 +57,14 @@ public sealed record HidDescriptorSupportEvidence(
     ushort OutputButtonCaps,
     ushort OutputValueCaps,
     ushort FeatureButtonCaps,
-    ushort FeatureValueCaps);
+    ushort FeatureValueCaps)
+{
+    public IReadOnlyList<HidReportCapabilityEvidence> CapabilityShapes { get; init; } = [];
+
+    public CollectionState CapabilityShapeState { get; init; } = CollectionState.Unavailable;
+
+    public bool CapabilityShapesTruncated { get; init; }
+}
 
 public sealed record DriverFileEvidence(
     string ServiceName,
@@ -269,6 +310,7 @@ internal static class SupportInventorySanitizer
             SanitizeSection(snapshot.HidDescriptors, snapshot.HidDescriptors.Value
                 .Take(MaxHidDescriptors)
                 .Where(static item => IsToken(item.InterfaceLabel) && IsToken(item.PhysicalDeviceLabel))
+                .Select(SanitizeHidDescriptor)
                 .ToArray()),
             SanitizeSection(snapshot.DeviceDrivers, snapshot.DeviceDrivers.Value
                 .Take(MaxDeviceDrivers)
@@ -442,6 +484,67 @@ internal static class SupportInventorySanitizer
                     }
                     : null),
         };
+
+    private static HidDescriptorSupportEvidence SanitizeHidDescriptor(HidDescriptorSupportEvidence descriptor)
+    {
+        var sanitizedShapes = descriptor.CapabilityShapes
+            .Where(IsValidHidCapabilityShape)
+            .Take(EvidenceLimits.MaxHidCapabilityShapesPerInterface)
+            .Select(static shape => shape.Kind == HidReportCapabilityKind.Button
+                ? shape with
+                {
+                    BitSize = null,
+                    LogicalMinimum = null,
+                    LogicalMaximum = null,
+                    HasNull = null,
+                }
+                : shape)
+            .ToArray();
+        var invalidShapeRemoved = sanitizedShapes.Length != descriptor.CapabilityShapes.Count
+            && descriptor.CapabilityShapes.Count <= EvidenceLimits.MaxHidCapabilityShapesPerInterface;
+        var bounded = descriptor.CapabilityShapes.Count > EvidenceLimits.MaxHidCapabilityShapesPerInterface;
+        var totalDeclaredShapes = descriptor.InputButtonCaps
+            + descriptor.InputValueCaps
+            + descriptor.OutputButtonCaps
+            + descriptor.OutputValueCaps
+            + descriptor.FeatureButtonCaps
+            + descriptor.FeatureValueCaps;
+        var validState = descriptor.CapabilityShapeState is CollectionState.Collected
+            or CollectionState.Partial
+            or CollectionState.Absent
+            or CollectionState.Unavailable;
+        var inconsistentState = descriptor.CapabilityShapeState == CollectionState.Absent
+                && (totalDeclaredShapes > 0 || sanitizedShapes.Length > 0)
+            || descriptor.CapabilityShapeState == CollectionState.Unavailable && sanitizedShapes.Length > 0
+            || descriptor.CapabilityShapeState == CollectionState.Collected
+                && sanitizedShapes.Length != totalDeclaredShapes;
+        var state = !validState || invalidShapeRemoved || bounded || inconsistentState
+            ? CollectionState.Partial
+            : descriptor.CapabilityShapeState;
+
+        return descriptor with
+        {
+            CapabilityShapes = sanitizedShapes,
+            CapabilityShapeState = state,
+            CapabilityShapesTruncated = descriptor.CapabilityShapesTruncated
+                || bounded
+                || descriptor.CapabilityShapeState == CollectionState.Collected
+                    && totalDeclaredShapes > EvidenceLimits.MaxHidCapabilityShapesPerInterface,
+        };
+    }
+
+    private static bool IsValidHidCapabilityShape(HidReportCapabilityEvidence shape) =>
+        Enum.IsDefined(shape.Direction)
+        && Enum.IsDefined(shape.Kind)
+        && (shape.Kind == HidReportCapabilityKind.Button
+            ? shape.ReportCount is null or > 0
+            : shape.ReportCount is > 0)
+        && shape.UsageMinimum <= shape.UsageMaximum
+        && (shape.Kind != HidReportCapabilityKind.Value
+            || shape.BitSize is > 0
+                && shape.LogicalMinimum is int logicalMinimum
+                && shape.LogicalMaximum is int logicalMaximum
+                && logicalMinimum <= logicalMaximum);
 
     private static SectionResult<T> SanitizeSection<T>(SectionResult<T> source, T value) =>
         new(source.State, value, Issue(source.State, source.Issue));

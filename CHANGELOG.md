@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Improved
+
+- Include independent Windows identity sources, per-action power context, parsed
+  HID capabilities, and a collection review in the GUI and exported ZIP
+  ([#7](https://github.com/OpenBladeProject/synapse-observer/pull/7)).
+- Diagnose incomplete response layouts without exporting opaque response bodies
+  ([#7](https://github.com/OpenBladeProject/synapse-observer/pull/7)).
+
 ### Added
 
 - Retain unfamiliar numeric settings in reviewed control families, label their meaning as uninterpreted, and capture zero-valued charge-limit queries. ([#2](https://github.com/OpenBladeProject/synapse-observer/pull/2))

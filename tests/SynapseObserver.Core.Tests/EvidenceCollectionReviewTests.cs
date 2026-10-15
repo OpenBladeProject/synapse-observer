@@ -12,7 +12,7 @@ public sealed class EvidenceCollectionReviewTests
         session.SetCoverage(new("performance", "Performance mode", CoverageState.Pending, CoverageReason.None));
         var review = EvidenceCollectionReview.Create(session.Snapshot());
         Assert.Contains("No Synapse recording", review.Summary);
-        Assert.Contains(review.Notes, note => note.Contains("1 evidence items have not been recorded", StringComparison.Ordinal));
+        Assert.Contains(review.Notes, note => note.Contains("1 evidence item has not been recorded", StringComparison.Ordinal));
         Assert.Contains(review.Notes, note => note.StartsWith("No complete setting-change sequence", StringComparison.Ordinal));
         Assert.DoesNotContain(review.Notes, note => note.Contains("recording data could not", StringComparison.Ordinal));
     }
@@ -32,9 +32,9 @@ public sealed class EvidenceCollectionReviewTests
         session.AddMarker(new(6, EvidenceMarkerKind.UserReportedRestoration, "performance", "Restored", EvidenceProvenance.UserReported, "Balanced"));
         var snapshot = session.Snapshot();
         var review = EvidenceCollectionReview.Create(snapshot);
-        Assert.Contains("1 documented setting changes", review.Summary);
-        Assert.Contains("1 complete report bodies retained", review.Summary);
-        Assert.Contains(review.Notes, note => note.StartsWith("1 of 1 returned report bodies were omitted", StringComparison.Ordinal));
+        Assert.Contains("1 documented setting change", review.Summary);
+        Assert.Contains("1 complete report body retained", review.Summary);
+        Assert.Contains(review.Notes, note => note.StartsWith("1 of 1 returned report body was omitted", StringComparison.Ordinal));
         Assert.DoesNotContain(review.Notes, note => note.Contains("recording data could not", StringComparison.Ordinal));
         var directory = Path.Combine(Path.GetTempPath(), "observer-review-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);

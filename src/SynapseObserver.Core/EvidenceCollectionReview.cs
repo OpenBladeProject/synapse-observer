@@ -3,6 +3,9 @@ namespace SynapseObserver.Core;
 /// <summary>Contributor-facing facts about the evidence actually retained.</summary>
 public sealed record EvidenceCollectionReview(string Summary, IReadOnlyList<string> Notes)
 {
+    private static string Count(int count, string singular, string? plural = null) =>
+        $"{count} {(count == 1 ? singular : plural ?? singular + "s")}";
+
     public static EvidenceCollectionReview Create(EvidenceSessionSnapshot snapshot)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
@@ -14,9 +17,9 @@ public sealed record EvidenceCollectionReview(string Summary, IReadOnlyList<stri
     {
         var counts = quality.Counts;
         var retained = snapshot.Observations.Count(item => item.CompletePayloadRetained);
-        var summary = $"{counts.CompleteActionWindows} documented setting changes · "
-            + $"{snapshot.SpecialKeyProbes.Count} key checks · "
-            + $"{retained} complete report bodies retained.";
+        var summary = $"{Count(counts.CompleteActionWindows, "documented setting change")} · "
+            + $"{Count(snapshot.SpecialKeyProbes.Count, "key check")} · "
+            + $"{Count(retained, "complete report body", "complete report bodies")} retained.";
         if (snapshot.Observations.Count == 0 && counts.ActionWindows == 0 && snapshot.SpecialKeyProbes.Count == 0)
             summary = "Device information collected. No Synapse recording or key check yet.";
         var notes = new List<string>();
@@ -24,14 +27,14 @@ public sealed record EvidenceCollectionReview(string Summary, IReadOnlyList<stri
             notes.Add("No complete setting-change sequence was recorded. Device information is still useful; add a Synapse recording if it is available.");
         var pending = snapshot.Coverage.Count(item => item.State == CoverageState.Pending);
         if (pending > 0)
-            notes.Add($"{pending} evidence items have not been recorded. You can save this partial collection.");
+            notes.Add($"{Count(pending, "evidence item")} {(pending == 1 ? "has" : "have")} not been recorded. You can save this partial collection.");
         var incomplete = counts.ActionWindows - counts.CompleteActionWindows;
         if (incomplete > 0)
-            notes.Add($"{incomplete} setting-change sequences are unfinished. Restore any changed setting to its exact starting value before leaving Synapse.");
+            notes.Add($"{Count(incomplete, "setting-change sequence")} {(incomplete == 1 ? "is" : "are")} unfinished. Restore any changed setting to its exact starting value before leaving Synapse.");
         var responses = snapshot.Observations.Where(item => item.Source == ObservationSource.ReturnedBuffer).ToArray();
         var omitted = responses.Count(item => !item.CompletePayloadRetained);
         if (omitted > 0)
-            notes.Add($"{omitted} of {responses.Length} returned report bodies were omitted. Save this ZIP; the maintainer may need a focused follow-up to understand the responses.");
+            notes.Add($"{omitted} of {Count(responses.Length, "returned report body", "returned report bodies")} {(omitted == 1 ? "was" : "were")} omitted. Save this ZIP; the maintainer may need a focused follow-up to understand the responses.");
         if (quality.Gaps.Any(item => item.Code is "RecordingObservationLoss" or "CapturePayloadLoss") || counts.RejectedRecords > 0)
             notes.Add("Some recording data could not be retained. Save the partial evidence so the maintainer can see the gap.");
         if (quality.Gaps.Any(item => item.Code == "ObservedApiFailure"))

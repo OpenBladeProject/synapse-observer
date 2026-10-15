@@ -41,7 +41,7 @@ public sealed class CollectionReviewWorkflowTests
         Assert.Equal(PowerSourceKind.Unknown, window.PowerSourceAtAction);
         Assert.Equal(new[] { PowerSourceKind.Battery, PowerSourceKind.Ac, PowerSourceKind.Ac, PowerSourceKind.Ac },
             window.Markers.Select(marker => marker.PowerSourceAtMarker!.Value));
-        Assert.Contains("1 documented setting changes", model.ReviewSummary);
+        Assert.Contains("1 documented setting change", model.ReviewSummary);
         Assert.Contains("40 evidence items", model.ReviewNotes);
         Assert.False(model.IsBusy);
         await model.CloseAsync();

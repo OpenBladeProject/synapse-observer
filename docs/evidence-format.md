@@ -132,3 +132,10 @@ response. Consumers may ignore these optional fields.
 The app and README.txt share a collection review showing retained bodies,
 unfinished actions, omitted response contents, and remaining evidence items.
 A documented sequence describes user markers, not successful firmware readback.
+
+HID descriptors also include bounded parsed button and value capabilities for
+input, output, and feature reports: report IDs, usage ranges, link collections,
+bit sizes, report counts, logical ranges, and flags. At most 128 shapes are kept
+per interface, with an explicit partial or truncated state. Button report counts
+are null on HID parser API 1, where that field is reserved. These are descriptor
+metadata; no input report bodies or ordinary key presses are collected.
