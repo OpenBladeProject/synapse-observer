@@ -1,5 +1,7 @@
 # Blade model coverage
 
+English | [简体中文](zh-CN/model-coverage.md) | [Русский](ru-RU/model-coverage.md)
+
 The collector is for the whole Razer Blade family. Device information collection
 has no model, generation, SKU, BIOS, or PID allowlist. It keeps the actual Windows
 identity and every discovered Razer HID interface, including unfamiliar IDs,

@@ -1,5 +1,7 @@
 # Validation record
 
+English | [简体中文](docs/zh-CN/VALIDATION.md) | [Русский](docs/ru-RU/VALIDATION.md)
+
 Each check below applies to its recorded source and conditions. Synthetic checks
 and individual live trials do not establish complete Synapse coverage or
 all-model compatibility.

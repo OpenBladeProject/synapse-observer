@@ -4,11 +4,18 @@
 
 ### Changed
 
+- Rewrite Chinese and Russian guides with clearer instructions and more natural wording. ([#9](https://github.com/OpenBladeProject/synapse-observer/pull/9))
 - Clarify how to download Synapse Observer and record evidence
   ([#2](https://github.com/OpenBladeProject/synapse-observer/pull/2)).
 - Explain how to review and submit evidence for an existing or new OpenBlade
   device support request
   ([#3](https://github.com/OpenBladeProject/synapse-observer/pull/3)).
+
+### Added
+
+- Add complete Simplified Chinese and Russian README, evidence guides, and
+  validation history with matching language navigation and parity checks
+  ([#8](https://github.com/OpenBladeProject/synapse-observer/pull/8)).
 
 ## [0.2.7] - 2026-10-15
 
