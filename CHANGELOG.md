@@ -39,6 +39,10 @@
 
 ### Fixed
 
+- Keep all suggested and custom values reachable when switching evidence items
+  with different numbers of choices
+  ([#7](https://github.com/OpenBladeProject/synapse-observer/pull/7)).
+
 - Keep timeout restoration guidance accurate for Windows display settings as well
   as Synapse controls
   ([#7](https://github.com/OpenBladeProject/synapse-observer/pull/7)).

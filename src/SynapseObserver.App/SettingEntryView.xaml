@@ -1,7 +1,11 @@
 <UserControl x:Class="SynapseObserver.App.SettingEntryView" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
   <UserControl.Resources><BooleanToVisibilityConverter x:Key="VisibleWhenTrue" /></UserControl.Resources>
   <StackPanel>
-    <ComboBox ItemsSource="{Binding Choices}" SelectedItem="{Binding SelectedChoice}" DisplayMemberPath="Label" MinHeight="32" Padding="8,5" FontSize="13" AutomationProperties.Name="{Binding Tag, RelativeSource={RelativeSource AncestorType=UserControl}}" AutomationProperties.HelpText="Choose the state shown in Synapse. Other state lets you enter an unfamiliar value." />
+    <ComboBox ItemsSource="{Binding Choices}" SelectedItem="{Binding SelectedChoice}" DisplayMemberPath="Label" MinHeight="32" Padding="8,5" FontSize="13" MaxDropDownHeight="280" ScrollViewer.CanContentScroll="False" ScrollViewer.VerticalScrollBarVisibility="Auto" AutomationProperties.Name="{Binding Tag, RelativeSource={RelativeSource AncestorType=UserControl}}" AutomationProperties.HelpText="Choose the state shown in Synapse. Other state lets you enter an unfamiliar value.">
+      <ComboBox.ItemsPanel>
+        <ItemsPanelTemplate><StackPanel /></ItemsPanelTemplate>
+      </ComboBox.ItemsPanel>
+    </ComboBox>
     <StackPanel Visibility="{Binding ShowDetails, Converter={StaticResource VisibleWhenTrue}}" Margin="0,10,0,0">
       <Label Content="{Binding DetailsLabel}" Target="{Binding ElementName=DetailsBox}" Padding="0,0,0,6" />
       <TextBox x:Name="DetailsBox" Text="{Binding Details, UpdateSourceTrigger=PropertyChanged}" MaxLength="80" MinHeight="32" Padding="8,5" AutomationProperties.Name="{Binding DetailsLabel}" />
