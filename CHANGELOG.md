@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## [0.2.8] - 2026-10-15
+
 ### Improved
 
 - Allow a recording to run for up to ten minutes so longer guided sequences can
@@ -28,26 +30,6 @@
   from firmware readback
   ([#7](https://github.com/OpenBladeProject/synapse-observer/pull/7)).
 
-### Changed
-
-- Rewrite Chinese and Russian guides with clearer instructions and more natural wording. ([#9](https://github.com/OpenBladeProject/synapse-observer/pull/9))
-
-### Added
-
-- Add complete Simplified Chinese and Russian README, evidence guides, and
-  validation history with matching language navigation and parity checks
-  ([#8](https://github.com/OpenBladeProject/synapse-observer/pull/8)).
-
-- Retain unfamiliar numeric settings in reviewed control families, label their meaning as uninterpreted, and capture zero-valued charge-limit queries. ([#2](https://github.com/OpenBladeProject/synapse-observer/pull/2))
-- Add the guided device inventory, passive Synapse observer, and local evidence
-  ZIP export prototype, with discovery fixtures across Blade families and
-  unfamiliar PIDs and report sizes ([#2](https://github.com/OpenBladeProject/synapse-observer/pull/2)).
-- Add Windows support inventory, prompted special-key evidence, and a complete
-  OpenBlade coverage draft with action-window and quality receipts
-  ([#2](https://github.com/OpenBladeProject/synapse-observer/pull/2)).
-- Add dark and high-contrast presentation, an in-app version badge, the
-  OpenBlade tray icon, and clearer recorder-discovery diagnostics
-  ([#2](https://github.com/OpenBladeProject/synapse-observer/pull/2)).
 
 ### Fixed
 
@@ -66,63 +48,47 @@
   Version the corrected draft contracts and retain independent missing-call gaps
   ([#7](https://github.com/OpenBladeProject/synapse-observer/pull/7)).
 
-- Explain how to collect, review, and submit evidence for an existing or new
-  OpenBlade device support request ([#3](https://github.com/OpenBladeProject/synapse-observer/pull/3)).
+### Changed
 
-- Clarify download and evidence-submission instructions in the README and link
-  the latest release ([#2](https://github.com/OpenBladeProject/synapse-observer/pull/2)).
+- Rewrite Chinese and Russian guides with clearer instructions and more natural wording. ([#9](https://github.com/OpenBladeProject/synapse-observer/pull/9))
+- Clarify how to download Synapse Observer and record evidence
+  ([#2](https://github.com/OpenBladeProject/synapse-observer/pull/2)).
+- Explain how to review and submit evidence for an existing or new OpenBlade
+  device support request
+  ([#3](https://github.com/OpenBladeProject/synapse-observer/pull/3)).
 
-- Preserve late stop events and drop totals, bound repeated malformed-record
-  markers, and keep automatic-cleanup guidance when native recording ends
-  ([#2](https://github.com/OpenBladeProject/synapse-observer/pull/2)).
+### Added
 
-- Retain valid events after an invalid interface record, keep the reader draining
-  during recoverable errors, preserve queue-drop counts after polling faults,
-  and clarify cleanup guidance and rejected-record receipts
-  ([#2](https://github.com/OpenBladeProject/synapse-observer/pull/2)).
+- Add complete Simplified Chinese and Russian README, evidence guides, and
+  validation history with matching language navigation and parity checks
+  ([#8](https://github.com/OpenBladeProject/synapse-observer/pull/8)).
 
-- Preserve valid events around malformed ring records, stop observation after
-  reader failure, retain partial-recording warnings, include recording loss in
-  quality receipts, and distinguish call IDs across recordings
-  ([#2](https://github.com/OpenBladeProject/synapse-observer/pull/2)).
+## [0.2.7] - 2026-10-15
 
-- Count drops correctly across successive recordings, show cleanup failures in
-  the gap total, and keep exact restoration instructions after polling failure
-  ([#2](https://github.com/OpenBladeProject/synapse-observer/pull/2)).
-- Identify native buffer-copy and size loss separately from privacy redaction
-  in the quality receipt ([#2](https://github.com/OpenBladeProject/synapse-observer/pull/2)).
+### Added
 
-- Preserve reviewed successful HID responses while labeling unknown returned
-  lengths separately; distinguish observed API failures from recording loss
+- Add a portable Windows app that inventories a Razer Blade, passively observes
+  selected Synapse activity, and saves a local evidence ZIP for OpenBlade
+  support work ([#2](https://github.com/OpenBladeProject/synapse-observer/pull/2)).
+- Guide collection of settings and prompted special-key evidence, with Windows
+  support inventory, coverage summaries, action receipts, and quality receipts
   ([#2](https://github.com/OpenBladeProject/synapse-observer/pull/2)).
-- Show the actual recording end reason, prioritize known queue loss over missing
-  events, and update only changed summaries while polling
-  ([#2](https://github.com/OpenBladeProject/synapse-observer/pull/2)).
-- Correct the marker-limit instructions
+- Add an OpenBlade-branded dark and high-contrast interface with compact status
+  cards, green action buttons, visible keyboard focus, a version badge, and
+  guided navigation through recording and saving
   ([#2](https://github.com/OpenBladeProject/synapse-observer/pull/2)).
 
-- Preserve selected activities and reported key behavior, associate keyboard input
-  with the exact laptop, and keep declarations separate from setting changes
-  ([#2](https://github.com/OpenBladeProject/synapse-observer/pull/2)).
-- Distinguish setter acknowledgements from query responses; preserve the laptop's
-  USB parent when it is connected through a hub
-  ([#2](https://github.com/OpenBladeProject/synapse-observer/pull/2)).
-- Join concurrent recording cleanup, drain queued observations during stop,
-  handle full marker sessions, and save large evidence ZIPs without blocking
-  the window ([#2](https://github.com/OpenBladeProject/synapse-observer/pull/2)).
+### Fixed
 
-- Remove internal keyboard-mode questions from the guide and key check, and let
-  maximization fill the screen's usable area
+- Preserve useful partial evidence, recording-loss details, drop totals, and
+  restoration guidance when recording stops or encounters malformed input,
+  polling errors, or cleanup failures
+  ([#2](https://github.com/OpenBladeProject/synapse-observer/pull/2)).
+- Keep reviewed successful responses and unfamiliar numeric settings without
+  inventing meaning, while separating API failures, capture loss, and privacy
+  redaction in the exported evidence
   ([#2](https://github.com/OpenBladeProject/synapse-observer/pull/2)).
 
-- Identify laptop USB parents by their bus-reported product description when
-  Windows displays a generic composite-device label ([#2](https://github.com/OpenBladeProject/synapse-observer/pull/2)).
-- Accept signed Razer Synapse engine updates without per-version approval; keep
-  hashes and versions as evidence provenance ([#2](https://github.com/OpenBladeProject/synapse-observer/pull/2)).
-- Select common settings from dropdowns during guided recordings, with an Other
-  state option and details for exact restoration ([#2](https://github.com/OpenBladeProject/synapse-observer/pull/2)).
-- Preserve completed 90-byte feature responses without inventing a report ID;
-  retain only reviewed numeric payloads ([#2](https://github.com/OpenBladeProject/synapse-observer/pull/2)).
-- Match the refreshed blocker UI with compact status cards, blue buttons,
-  keyboard focus rings, and automatic navigation to Save after recording
-  ([#2](https://github.com/OpenBladeProject/synapse-observer/pull/2)).
+[0.2.7]: https://github.com/OpenBladeProject/synapse-observer/releases/tag/v0.2.7
+
+[0.2.8]: https://github.com/OpenBladeProject/synapse-observer/compare/v0.2.7...v0.2.8
