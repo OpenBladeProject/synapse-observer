@@ -57,13 +57,25 @@ public sealed partial class WindowsInventorySource
         var target = new ColorProfileTarget(adapterId.LowPart, adapterId.HighPart, sourceId);
         try
         {
+            var colorDirectory = GetWindowsColorDirectory();
+            var materialized = new Dictionary<string, ColorProfileMaterializationResult>(StringComparer.OrdinalIgnoreCase);
+            ColorProfileMaterializationResult Materialize(string value)
+            {
+                var key = TryResolveColorProfilePath(value, colorDirectory, out var path) ? path! : value;
+                if (!materialized.TryGetValue(key, out var result))
+                {
+                    result = MaterializeColorProfile(value, colorDirectory, MakeProfileLabel);
+                    materialized.Add(key, result);
+                }
+                return result;
+            }
             return CollectDisplayColorProfiles(
                 target,
                 GetColorProfileScope,
                 GetColorProfileList,
                 GetColorProfileDefault,
                 NativeLocalFree,
-                value => MaterializeColorProfile(value, GetWindowsColorDirectory(), MakeProfileLabel),
+                Materialize,
                 cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

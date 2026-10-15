@@ -12,6 +12,7 @@ namespace SynapseObserver.Core;
 public sealed partial class WindowsInventorySource : IInventorySource
 {
     private const ushort RazerVendorId = 0x1532;
+    private static readonly Lazy<bool> ButtonReportCountAvailable = new(HasButtonReportCount);
     private const string BiosIdentityKey = @"HARDWARE\DESCRIPTION\System\BIOS";
     private const string SystemInformationIdentityKey =
         @"SYSTEM\CurrentControlSet\Control\SystemInformation";
@@ -691,7 +692,7 @@ public sealed partial class WindowsInventorySource : IInventorySource
                     caps,
                     HidP_GetButtonCaps,
                     HidP_GetValueCaps,
-                    HasButtonReportCount());
+                    ButtonReportCountAvailable.Value);
             }
 
             return true;

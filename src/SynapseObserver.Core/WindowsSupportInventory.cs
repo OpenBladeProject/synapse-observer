@@ -1046,6 +1046,7 @@ public sealed partial class WindowsInventorySource
     {
         const int maxRawModes = 4096;
         var modes = new List<DisplayModeEvidence>(MaxSupportDisplayModes);
+        var seenModes = new HashSet<DisplayModeEvidence>();
         var reachedEnd = false;
         var truncated = false;
         for (var modeIndex = 0; modeIndex < maxRawModes; modeIndex++)
@@ -1057,7 +1058,7 @@ public sealed partial class WindowsInventorySource
                 break;
             }
 
-            if (modes.Contains(mode))
+            if (!seenModes.Add(mode))
             {
                 continue;
             }
