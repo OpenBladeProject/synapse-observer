@@ -311,6 +311,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
             recordingNumber++;
             recording = true;
             observerEnded = false;
+            status = "Recording is active. Follow the selected item, or stop when ready.";
         }
         finally
         {

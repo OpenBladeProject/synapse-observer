@@ -158,8 +158,9 @@ bounds remain explicit partial results without removing the display's modes.
 
 A clean recording can reuse the exact observer DLL verified by the same open
 collector. Each recording uses a fresh mapping and repeats process and device
-checks. Hooks, callback completion, worker completion, and the loaded module's
-identity must all be confirmed. A competing start cannot replace an active
+checks. Hooks, callback completion, successful worker exit, and the loaded
+module's identity must all be confirmed. Reader or evidence-processing errors
+block reuse independently from the native call and cleanup status. A competing start cannot replace an active
 recording, and uncertain cleanup permanently blocks reuse in that Synapse
 process. A late completion does not remove that block. Closing the collector
 loses its verified reuse record; restart Synapse before collecting with another

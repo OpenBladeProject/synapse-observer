@@ -238,3 +238,26 @@ revision and hashes remain in build-manifest.json.
 
 No driver installation, sleep/resume test, firmware-write validation, or public
 release is claimed. This records passive user-mode calls, not firmware readback.
+
+## Recording reuse and support evidence, 2026-10-15
+
+Runtime source: `78c9395ccd5ff54bd8453fb8f81553656a87f7ed`.
+The framework-dependent package passed 478 managed tests and both native owned
+fixtures. Independent Claude reviews were completed, with confirmed findings
+fixed and other claims checked against reachable source paths. Cleanup
+uncertainty remains a permanent reuse refusal for that Synapse process.
+
+The GUI completed two passive recordings in the same Synapse process without
+restarting it between recordings. Both recordings captured calls and confirmed
+hook and worker shutdown. The explicit GUI export retained both recordings with
+separate operation IDs and the five expected evidence files. Local inspection
+checked ZIP structure and excluded local paths and device instance identifiers.
+The ZIP remains private.
+
+These were idle recordings. They validate resident reuse and export retention,
+not a new setting round trip, semantic acknowledgement correlation, firmware
+readback, prompted keys, or another Blade model. The current setting-change
+trial is pending an actual battery-power context: Windows still reported
+external power, and Synapse disabled the planned external-power preset choices.
+A later presentation fix clears the prior stop message when a new recording
+starts; it does not change the tested native or backend implementation.

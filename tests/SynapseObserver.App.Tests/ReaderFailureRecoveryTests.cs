@@ -94,6 +94,8 @@ public sealed class ReaderFailureRecoveryTests
                 await Run(model.CollectCommand);
                 model.AttachConsent = true;
                 await Run(model.StartCommand);
+                Assert.Contains("Recording is active", model.Status);
+                Assert.DoesNotContain("Recording stopped", model.Status);
             }
             model.SetOwnedTestObserver(new OwnedObserver { Events = [Event(1) with { RequestBytes = new byte[91], ResponseBytes = new byte[91], RequestedBytes = 91, OutputBufferCapacity = 91 }], Dropped = iteration == 1 ? 1 : 0 }, [candidate]);
             await Poll(model);
