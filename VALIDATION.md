@@ -267,5 +267,6 @@ response summaries, resident reuse, and export retention on the exercised
 laptop. It does not establish independent firmware readback, prompted-key
 coverage, another feature's behavior, or physical compatibility with another
 Blade model. Later presentation changes improve recording status and recovery
-and add Battery Saver to the suggested presets; they do not change the tested
-native or backend implementation. Raw local evidence remains private.
+and add Battery Saver to the suggested presets. Discovery also reports blocked
+resident observers before offering Start. These changes do not alter the tested
+native hook lifecycle or evidence decoder. Raw local evidence remains private.

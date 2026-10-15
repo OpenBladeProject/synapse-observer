@@ -60,6 +60,56 @@ public sealed class NativeObservationSession : INativeObservationSession
         : this(mapping, mapping.CreateViewAccessor(), new SafeProcessHandle(IntPtr.Zero, false), worker, origin, resident, _ => (true, workerExitCode)) { }
     private static readonly SemaphoreSlim StartGate = new(1, 1);
     private static readonly Dictionary<int, ResidentObserverRegistration> Residents = [];
+    internal static ResidentObserverAvailability ProbeResidentAvailability(Process target)
+    {
+        if (!StartGate.Wait(0))
+            return new(false, "Recording availability is changing. Wait for the current start or stop to finish, then refresh.");
+
+        try
+        {
+            long processStartTime = target.StartTime.ToUniversalTime().Ticks;
+            int observerModuleCount = ObserverModules(target).Length;
+            Residents.TryGetValue(target.Id, out ResidentObserverRegistration? registration);
+            return EvaluateResidentAvailability(
+                registration,
+                target.Id,
+                processStartTime,
+                observerModuleCount);
+        }
+        finally
+        {
+            StartGate.Release();
+        }
+    }
+
+    internal static ResidentObserverAvailability EvaluateResidentAvailability(
+        ResidentObserverRegistration? registration,
+        int processId,
+        long processStartTimeUtcTicks,
+        int observerModuleCount)
+    {
+        if (registration is null)
+            return observerModuleCount == 0
+                ? new(true, string.Empty)
+                : new(false, "This Synapse process hosts an observer that this collector did not verify. Restart Synapse before another recording.");
+
+        if (registration.Identity.ProcessId != processId)
+            return new(false, "The resident observer identity is unavailable. Restart Synapse before another recording.");
+
+        if (registration.Identity.ProcessStartTimeUtcTicks != processStartTimeUtcTicks)
+            return observerModuleCount == 0
+                ? new(true, string.Empty)
+                : new(false, "This new Synapse process already hosts an observer that this collector did not verify. Restart Synapse before another recording.");
+
+        return registration.State switch
+        {
+            ResidentObserverState.Recording => new(false, "A recording is already active or its observer worker is still completing. Stop it before starting another recording."),
+            ResidentObserverState.Faulted => new(false, "The resident observer cannot be reused after a recording or cleanup error. Restart Synapse before another recording."),
+            _ when observerModuleCount == 1 => new(true, string.Empty),
+            _ => new(false, "The exact resident observer module is unavailable. Restart Synapse before another recording."),
+        };
+    }
+
     public static Task<NativeObservationSession> StartAsync(BackendCandidate candidate, string selectedInterfacePath, CancellationToken cancellationToken = default) => StartAsync(candidate, new[] { selectedInterfacePath }, cancellationToken);
     public static Task<NativeObservationSession> StartAsync(BackendCandidate candidate, IReadOnlyList<string> selectedInterfacePaths, CancellationToken cancellationToken = default) => StartAsync(candidate, selectedInterfacePaths, 300, cancellationToken);
     public static Task<NativeObservationSession> StartAsync(BackendCandidate candidate, IReadOnlyList<string> selectedInterfacePaths, uint durationSeconds, CancellationToken cancellationToken = default) => Task.Run(() =>

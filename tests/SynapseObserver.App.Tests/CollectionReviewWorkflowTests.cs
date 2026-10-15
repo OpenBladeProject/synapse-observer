@@ -118,7 +118,7 @@ public sealed class CollectionReviewWorkflowTests
         Assert.False(model.IsRecording);
         Assert.False(model.AttachConsent);
         Assert.Contains("Check recording availability", model.Status);
-        Assert.Contains("restart Synapse normally", model.RecorderStatus);
+        Assert.Contains("Allow observation again", model.RecorderStatus);
         Assert.DoesNotContain("InvalidOperationException", model.Status);
         Assert.DoesNotContain("private", model.RecorderStatus, StringComparison.OrdinalIgnoreCase);
         Assert.Single(model.Evidence!.Markers, marker => marker.Label == "Recording start failed");

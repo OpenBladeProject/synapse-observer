@@ -4,6 +4,11 @@ namespace SynapseObserver.App;
 
 internal static class RecorderDiscoveryDiagnostics
 {
+    public static string AvailabilityStatus(bool ready, bool consent, string diagnostic) =>
+        !ready ? diagnostic + " Your collected evidence is preserved."
+        : !consent ? "Recording is available. Allow observation, then select Start recording. Your collected evidence is preserved."
+        : "Recording is available. Select Start recording when ready. Your collected evidence is preserved.";
+
     public static string Format(IReadOnlyList<BackendCandidate> candidates)
     {
         var verified = candidates.Where(candidate => candidate.Eligible).ToArray();

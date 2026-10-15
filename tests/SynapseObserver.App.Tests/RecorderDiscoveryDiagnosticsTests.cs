@@ -26,6 +26,25 @@ public sealed class RecorderDiscoveryDiagnosticsTests
         Assert.Equal(1, details.Split("Same account required").Length - 1);
     }
 
+    [Theory]
+    [InlineData("Restart Synapse before another recording.")]
+    [InlineData("The laptop interfaces are ambiguous. Save device information.")]
+    public void UnavailableStatusKeepsTheActualRecoveryAndPreservation(string diagnostic)
+    {
+        var status = RecorderDiscoveryDiagnostics.AvailabilityStatus(false, false, diagnostic);
+        Assert.StartsWith(diagnostic, status);
+        Assert.Contains("evidence is preserved", status);
+        Assert.DoesNotContain("Recording is available", status);
+    }
+
+    [Fact]
+    public void AvailableStatusExplainsFreshConsentAfterRecovery()
+    {
+        var status = RecorderDiscoveryDiagnostics.AvailabilityStatus(true, false, "Ready");
+        Assert.Contains("Allow observation, then select Start recording", status);
+        Assert.DoesNotContain("Allow observation", RecorderDiscoveryDiagnostics.AvailabilityStatus(true, true, "Ready"));
+    }
+
     [Fact]
     public void MissingEngineHasOneActionableMessage() =>
         Assert.Equal("No Synapse engine was found. Open Synapse normally, then refresh.", RecorderDiscoveryDiagnostics.Format([]));

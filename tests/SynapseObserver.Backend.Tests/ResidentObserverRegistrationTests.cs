@@ -95,4 +95,122 @@ public sealed class ResidentObserverRegistrationTests
             Identity.ProcessStartTimeUtcTicks + 1,
             observerModuleCount: 1));
     }
+
+    [Theory]
+    [InlineData(0, true)]
+    [InlineData(1, false)]
+    [InlineData(2, false)]
+    public void UnregisteredProcessIsEligibleOnlyWithoutAnObserverModule(
+        int observerModuleCount,
+        bool expectedEligible)
+    {
+        ResidentObserverAvailability availability = NativeObservationSession.EvaluateResidentAvailability(
+            registration: null,
+            Identity.ProcessId,
+            Identity.ProcessStartTimeUtcTicks,
+            observerModuleCount);
+
+        Assert.Equal(expectedEligible, availability.Eligible);
+        if (!expectedEligible)
+            Assert.Contains("did not verify", availability.Diagnostic, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SameVerifiedIdleResidentIsEligible()
+    {
+        var registration = new ResidentObserverRegistration(Identity);
+
+        ResidentObserverAvailability availability = NativeObservationSession.EvaluateResidentAvailability(
+            registration,
+            Identity.ProcessId,
+            Identity.ProcessStartTimeUtcTicks,
+            observerModuleCount: 1);
+
+        Assert.True(availability.Eligible);
+        Assert.Empty(availability.Diagnostic);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(2)]
+    public void IdleResidentRequiresExactlyOneLoadedObserverModule(int observerModuleCount)
+    {
+        var registration = new ResidentObserverRegistration(Identity);
+
+        ResidentObserverAvailability availability = NativeObservationSession.EvaluateResidentAvailability(
+            registration,
+            Identity.ProcessId,
+            Identity.ProcessStartTimeUtcTicks,
+            observerModuleCount);
+
+        Assert.False(availability.Eligible);
+        Assert.Contains("exact resident observer module", availability.Diagnostic, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RecordingResidentIsNotEligible()
+    {
+        var registration = new ResidentObserverRegistration(Identity);
+        Assert.Equal(ResidentStartDecision.Started, registration.TryBegin(Identity));
+
+        ResidentObserverAvailability availability = NativeObservationSession.EvaluateResidentAvailability(
+            registration,
+            Identity.ProcessId,
+            Identity.ProcessStartTimeUtcTicks,
+            observerModuleCount: 1);
+
+        Assert.False(availability.Eligible);
+        Assert.Contains("already active", availability.Diagnostic, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FaultedResidentIsNotEligible()
+    {
+        var registration = new ResidentObserverRegistration(Identity);
+        registration.Fault();
+
+        ResidentObserverAvailability availability = NativeObservationSession.EvaluateResidentAvailability(
+            registration,
+            Identity.ProcessId,
+            Identity.ProcessStartTimeUtcTicks,
+            observerModuleCount: 1);
+
+        Assert.False(availability.Eligible);
+        Assert.Contains("cannot be reused", availability.Diagnostic, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(0, true)]
+    [InlineData(1, false)]
+    public void ReusedPidIsEligibleOnlyWhenNewProcessHasNoObserverModule(
+        int observerModuleCount,
+        bool expectedEligible)
+    {
+        var registration = new ResidentObserverRegistration(Identity);
+
+        ResidentObserverAvailability availability = NativeObservationSession.EvaluateResidentAvailability(
+            registration,
+            Identity.ProcessId,
+            Identity.ProcessStartTimeUtcTicks + 1,
+            observerModuleCount);
+
+        Assert.Equal(expectedEligible, availability.Eligible);
+        if (!expectedEligible)
+            Assert.Contains("new Synapse process", availability.Diagnostic, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RegistrationForAnotherPidIsNotEligible()
+    {
+        var registration = new ResidentObserverRegistration(Identity);
+
+        ResidentObserverAvailability availability = NativeObservationSession.EvaluateResidentAvailability(
+            registration,
+            Identity.ProcessId + 1,
+            Identity.ProcessStartTimeUtcTicks,
+            observerModuleCount: 1);
+
+        Assert.False(availability.Eligible);
+        Assert.Contains("identity is unavailable", availability.Diagnostic, StringComparison.Ordinal);
+    }
 }

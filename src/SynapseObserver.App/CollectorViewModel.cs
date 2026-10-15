@@ -206,7 +206,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
             if (session is not null)
             {
                 await DiscoverRecorderAsync();
-                status = "Recording availability checked. Your collected evidence was preserved.";
+                status = RecorderDiscoveryDiagnostics.AvailabilityStatus(preview || backendCandidate is not null, consent, recorderStatus);
                 return;
             }
 
@@ -254,6 +254,8 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
             || controlCandidates.Select(c => c.UsbParentDeviceInstanceId).Distinct(StringComparer.OrdinalIgnoreCase).Count() != 1)
         {
             recorderStatus = "The laptop's feature-report interfaces could not be identified unambiguously. Save device information so the maintainer can investigate.";
+            collectionDetails = recorderStatus;
+            Marker(EvidenceMarkerKind.Failure, "observer", "Native observer unavailable", EvidenceProvenance.Collector);
             return;
         }
 
@@ -315,7 +317,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
                     backendCandidate = null;
                     startObserverForTest = null;
                     session.AddMarker(new EvidenceMarker(RelativeMilliseconds, EvidenceMarkerKind.Failure, "observer", "Recording start failed", EvidenceProvenance.Collector));
-                    recorderStatus = "Recording could not start. Check recording availability. If an earlier observer cleanup failed, restart Synapse normally before trying again.";
+                    recorderStatus = "Recording could not start. Check recording availability for the next step. Allow observation again when recording becomes available.";
                     status = "Recording did not start. Collected information is still available. Check recording availability or restart Synapse normally.";
                     return;
                 }

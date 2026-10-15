@@ -15,6 +15,8 @@ internal enum ResidentStartDecision
     IdentityMismatch,
 }
 
+internal readonly record struct ResidentObserverAvailability(bool Eligible, string Diagnostic);
+
 internal readonly record struct ResidentObserverIdentity(
     int ProcessId,
     long ProcessStartTimeUtcTicks,
