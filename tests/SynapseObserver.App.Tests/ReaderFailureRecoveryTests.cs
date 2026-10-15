@@ -129,8 +129,17 @@ public sealed class ReaderFailureRecoveryTests
         await Run(model.StartCommand);
         return model;
     }
-    private static Task Cleanup(CollectorViewModel model) => (Task)typeof(CollectorViewModel)
-        .GetField("stopTask", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(model)!;
+    private static async Task Cleanup(CollectorViewModel model)
+    {
+        var field = typeof(CollectorViewModel).GetField("stopTask", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (field.GetValue(model) is not Task)
+        {
+            Assert.True(DateTime.UtcNow < deadline, "The asynchronous reader did not publish its cleanup task.");
+            await Task.Delay(1);
+        }
+        await (Task)field.GetValue(model)!;
+    }
     private static Task Poll(CollectorViewModel model) => (Task)typeof(CollectorViewModel)
         .GetMethod("PollOnceAsync", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(model, null)!;
     private static async Task Run(AsyncCommand command)

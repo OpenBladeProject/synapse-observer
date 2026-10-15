@@ -6,6 +6,7 @@ namespace SynapseObserver.Core;
 
 internal sealed class SanitizedObservationStore : IDisposable
 {
+    private readonly object _commitSync = new();
     private readonly SpoolState? _state;
     private Stream? _writer;
     private long _committedLength;
@@ -20,9 +21,9 @@ internal sealed class SanitizedObservationStore : IDisposable
         _failure = failure;
     }
 
-    internal int Count => _count;
+    internal int Count => Volatile.Read(ref _count);
 
-    internal EvidenceStorageFailure? Failure => _failure;
+    internal EvidenceStorageFailure? Failure => Volatile.Read(ref _failure);
 
     internal static SanitizedObservationStore CreateDefault()
     {
@@ -55,10 +56,15 @@ internal sealed class SanitizedObservationStore : IDisposable
         var directory = Path.GetDirectoryName(fullPath)
             ?? throw new ArgumentException("The spool path must have a parent directory.", nameof(path));
         Directory.CreateDirectory(directory);
-        var state = new SpoolState(fullPath, directory);
+        if (File.Exists(fullPath))
+        {
+            throw new IOException("The sanitized observation spool already exists.");
+        }
+
+        Stream? writer = null;
         try
         {
-            var writer = writerFactory?.Invoke(fullPath) ?? new FileStream(
+            writer = writerFactory?.Invoke(fullPath) ?? new FileStream(
                 fullPath,
                 FileMode.CreateNew,
                 FileAccess.Write,
@@ -71,11 +77,29 @@ internal sealed class SanitizedObservationStore : IDisposable
                 throw new ArgumentException("The observation spool writer must be writable and seekable.", nameof(writerFactory));
             }
 
+            var anchor = new FileStream(
+                fullPath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete,
+                bufferSize: 1,
+                FileOptions.DeleteOnClose | FileOptions.SequentialScan);
+            var state = new SpoolState(fullPath, directory, anchor);
             return new SanitizedObservationStore(state, writer, null);
         }
         catch
         {
-            state.ReleaseOwner();
+            try
+            {
+                writer?.Dispose();
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+            }
+
+            // Until both writer and delete anchor are open, ownership is not
+            // established. A CreateNew collision or throwing injected factory
+            // must never delete a path that may belong to somebody else.
             throw;
         }
     }
@@ -84,7 +108,7 @@ internal sealed class SanitizedObservationStore : IDisposable
     {
         ArgumentNullException.ThrowIfNull(observation);
         ObjectDisposedException.ThrowIf(_disposed, this);
-        if (_failure is not null || _writer is null)
+        if (Failure is not null || _writer is null)
         {
             return false;
         }
@@ -101,12 +125,16 @@ internal sealed class SanitizedObservationStore : IDisposable
         var previousLength = _committedLength;
         try
         {
-            Span<byte> lengthPrefix = stackalloc byte[sizeof(int)];
-            BinaryPrimitives.WriteInt32LittleEndian(lengthPrefix, json.Length);
-            _writer.Write(lengthPrefix);
-            _writer.Write(json);
-            _committedLength = checked(previousLength + sizeof(int) + json.Length);
-            _count++;
+            var record = GC.AllocateUninitializedArray<byte>(checked(sizeof(int) + json.Length));
+            BinaryPrimitives.WriteInt32LittleEndian(record, json.Length);
+            json.CopyTo(record.AsSpan(sizeof(int)));
+            _writer.Write(record);
+            lock (_commitSync)
+            {
+                _committedLength = checked(previousLength + record.Length);
+                Volatile.Write(ref _count, checked(_count + 1));
+            }
+
             return true;
         }
         catch (UnauthorizedAccessException)
@@ -123,15 +151,20 @@ internal sealed class SanitizedObservationStore : IDisposable
         }
     }
 
-    internal IReadOnlyList<SanitizedControlObservation> Snapshot()
+    internal IReadOnlyList<SanitizedControlObservation> Snapshot(
+        out EvidenceStorageFailure? failure)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        if (_state is null)
+        lock (_commitSync)
         {
-            return Array.Empty<SanitizedControlObservation>();
-        }
+            failure = _failure;
+            if (_state is null)
+            {
+                return Array.Empty<SanitizedControlObservation>();
+            }
 
-        return new DiskBackedObservationList(_state.Acquire(), _count, _committedLength);
+            return new DiskBackedObservationList(_state.Acquire(), _count, _committedLength);
+        }
     }
 
     private static SanitizedObservationStore Failed(EvidenceStorageFailure failure) =>
@@ -156,7 +189,14 @@ internal sealed class SanitizedObservationStore : IDisposable
 
     private void Fail(EvidenceStorageFailure failure)
     {
-        _failure ??= failure;
+        lock (_commitSync)
+        {
+            if (_failure is null)
+            {
+                Volatile.Write(ref _failure, failure);
+            }
+        }
+
         try
         {
             _writer?.Dispose();
@@ -333,13 +373,15 @@ internal sealed class SanitizedObservationStore : IDisposable
 
     private sealed class SpoolState
     {
+        private FileStream? _deleteAnchor;
         private int _references = 1;
         private int _ownerReleased;
 
-        internal SpoolState(string path, string directory)
+        internal SpoolState(string path, string directory, FileStream deleteAnchor)
         {
             Path = path;
             Directory = directory;
+            _deleteAnchor = deleteAnchor;
         }
 
         internal string Path { get; }
@@ -376,7 +418,21 @@ internal sealed class SanitizedObservationStore : IDisposable
 
             try
             {
-                File.Delete(Path);
+                try
+                {
+                    Interlocked.Exchange(ref _deleteAnchor, null)?.Dispose();
+                }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+                {
+                }
+
+                // DeleteOnClose provides cleanup if the process terminates.
+                // The explicit fallback covers file systems that ignore it.
+                if (File.Exists(Path))
+                {
+                    File.Delete(Path);
+                }
+
                 if (System.IO.Directory.Exists(Directory)
                     && !System.IO.Directory.EnumerateFileSystemEntries(Directory).Any())
                 {

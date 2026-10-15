@@ -4,7 +4,11 @@ namespace SynapseObserver.Core;
 
 public sealed class EvidenceSession : IDisposable
 {
+    // Metadata stays responsive while the observation writer is on disk.
+    // Disposal closes metadata first, then joins _observationSync; observation
+    // paths must therefore never acquire _sync.
     private readonly object _sync = new();
+    private readonly object _observationSync = new();
     private readonly List<EvidenceMarker> _markers = [];
     private readonly List<SpecialKeyObservation> _specialKeys = [];
     private readonly List<SpecialKeyProbeSummary> _specialKeyProbes = [];
@@ -16,7 +20,7 @@ public sealed class EvidenceSession : IDisposable
     private int _rejectedCoverage;
     private readonly byte[] _comparisonKey = RandomNumberGenerator.GetBytes(32);
     private readonly Dictionary<ComparisonStream, PreviousBuffer> _previousBuffers = [];
-    private bool _disposed;
+    private volatile bool _disposed;
 
     public EvidenceSession(InventorySnapshot inventory, DateTimeOffset? startedAtUtc = null)
         : this(inventory, startedAtUtc, SanitizedObservationStore.CreateDefault())
@@ -40,9 +44,9 @@ public sealed class EvidenceSession : IDisposable
 
     public int MarkerCount { get { lock (_sync) return _markers.Count; } }
 
-    public int ObservationCount { get { lock (_sync) return _observations.Count; } }
+    public int ObservationCount => _observations.Count;
 
-    public EvidenceStorageFailure? StorageFailure { get { lock (_sync) return _observations.Failure; } }
+    public EvidenceStorageFailure? StorageFailure => _observations.Failure;
 
     public InventorySnapshot Inventory { get; }
 
@@ -117,18 +121,18 @@ public sealed class EvidenceSession : IDisposable
     public EvidenceAddResult AddObservation(ControlObservation observation)
     {
         ArgumentNullException.ThrowIfNull(observation);
-        lock (_sync)
+        lock (_observationSync)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             if (_observations.Failure is not null)
             {
-                _rejectedObservations++;
+                Interlocked.Increment(ref _rejectedObservations);
                 return EvidenceAddResult.RejectedStorage;
             }
 
             if (!IsValidObservation(observation))
             {
-                _rejectedObservations++;
+                Interlocked.Increment(ref _rejectedObservations);
                 return EvidenceAddResult.RejectedInvalid;
             }
 
@@ -192,7 +196,7 @@ public sealed class EvidenceSession : IDisposable
             };
             if (!_observations.TryAppend(sanitized))
             {
-                _rejectedObservations++;
+                Interlocked.Increment(ref _rejectedObservations);
                 return EvidenceAddResult.RejectedStorage;
             }
 
@@ -264,20 +268,21 @@ public sealed class EvidenceSession : IDisposable
         lock (_sync)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
+            var observations = _observations.Snapshot(out var storageFailure);
             return new EvidenceSessionSnapshot(
                 EvidenceSessionSnapshot.CurrentSchemaVersion,
                 StartedAtUtc,
                 Inventory,
                 EvidenceSessionSnapshot.Freeze(_markers),
-                _observations.Snapshot(),
+                observations,
                 EvidenceSessionSnapshot.Freeze(_coverage.Values.OrderBy(static item => item.ActivityId, StringComparer.Ordinal)),
                 _rejectedMarkers,
-                _rejectedObservations,
+                Volatile.Read(ref _rejectedObservations),
                 _rejectedCoverage)
             {
                 SpecialKeyObservations = EvidenceSessionSnapshot.Freeze(_specialKeys),
                 SpecialKeyProbes = EvidenceSessionSnapshot.Freeze(_specialKeyProbes),
-                StorageFailure = _observations.Failure,
+                StorageFailure = storageFailure,
             };
         }
     }
@@ -371,6 +376,10 @@ public sealed class EvidenceSession : IDisposable
             }
 
             _disposed = true;
+        }
+
+        lock (_observationSync)
+        {
             CryptographicOperations.ZeroMemory(_comparisonKey);
             foreach (var previous in _previousBuffers.Values)
             {

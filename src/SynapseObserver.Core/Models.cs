@@ -361,6 +361,8 @@ public sealed record EvidenceStorageFailure(EvidenceStorageFailureKind Kind, str
         "A sanitized observation exceeded the per-record storage bound.");
 }
 
+// Owns an immutable disk-spool lease. Dispose after use; enumerate observations
+// for a complete pass, because indexed access replays the prefix.
 public sealed record EvidenceSessionSnapshot(
     string SchemaVersion,
     DateTimeOffset StartedAtUtc,

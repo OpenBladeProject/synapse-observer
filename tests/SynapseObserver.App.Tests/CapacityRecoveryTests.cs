@@ -93,6 +93,124 @@ public sealed class CapacityRecoveryTests
     }
 
     [Fact]
+    public async Task PendingStorageWriteDoesNotBlockMarkersOrCapacitySummary()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"synapse-observer-gated-store-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var model = await RecordingAsync();
+            var oldSession = CurrentSession(model);
+            GatedWriteStream? gated = null;
+            var store = SanitizedObservationStore.Create(
+                Path.Combine(directory, "gated.spool"), path =>
+                {
+                    gated = new GatedWriteStream(new FileStream(
+                        path,
+                        FileMode.CreateNew,
+                        FileAccess.Write,
+                        FileShare.ReadWrite | FileShare.Delete,
+                        bufferSize: 1,
+                        FileOptions.SequentialScan));
+                    return gated;
+                });
+            var session = new EvidenceSession(oldSession.Inventory, startedAtUtc: null, store);
+            Assert.Contains(session.AddObservation(AnchorObservation()),
+                new[] { EvidenceAddResult.Added, EvidenceAddResult.AddedPayloadRedacted });
+            SetCurrentSession(model, session);
+            oldSession.Dispose();
+            var observer = CapacityObserver.SingleCall();
+            model.SetOwnedTestObserver(observer, [Candidate]);
+            gated!.GateNextWrite();
+
+            var returned = System.Diagnostics.Stopwatch.StartNew();
+            var poll = Poll(model);
+            returned.Stop();
+            try
+            {
+                Assert.True(returned.Elapsed < TimeSpan.FromSeconds(1));
+                await gated.WriteBlocked.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                Assert.False(poll.IsCompleted);
+
+                var marker = await Task.Run(() => session.AddMarker(new EvidenceMarker(
+                        0, EvidenceMarkerKind.Failure, "owned-marker", "Metadata remains responsive", EvidenceProvenance.Collector)))
+                    .WaitAsync(TimeSpan.FromSeconds(1));
+                Assert.Equal(EvidenceAddResult.Added, marker);
+                var summary = await Task.Run(() => model.CapacitySummary).WaitAsync(TimeSpan.FromSeconds(1));
+                Assert.Contains("1 control reports saved locally", summary);
+            }
+            finally
+            {
+                gated.ReleaseWrite();
+            }
+
+            await poll.WaitAsync(TimeSpan.FromSeconds(5));
+            using (var evidence = model.Evidence!)
+            {
+                Assert.Equal(2, evidence.Observations.Count);
+                Assert.Contains(evidence.Markers, marker => marker.Label == "Metadata remains responsive");
+                Assert.Null(evidence.StorageFailure);
+            }
+            Assert.All(observer.RawBuffers, buffer => Assert.All(buffer, value => Assert.Equal((byte)0, value)));
+            await Run(model.StopCommand);
+            await model.CloseAsync();
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task CorruptedCommittedSpoolStillStopsAndPublishesFallbackReview()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"synapse-observer-corrupt-store-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var model = await RecordingAsync();
+            var healthyReview = model.ReviewSummary;
+            model.EvidenceDestinationForTest = () => Path.Combine(directory, "partial.zip");
+            var oldSession = CurrentSession(model);
+            CorruptibleWriteStream? corruptible = null;
+            var store = SanitizedObservationStore.Create(
+                Path.Combine(directory, "corrupt.spool"), path =>
+                {
+                    corruptible = new CorruptibleWriteStream(new FileStream(
+                        path,
+                        FileMode.CreateNew,
+                        FileAccess.Write,
+                        FileShare.ReadWrite | FileShare.Delete,
+                        bufferSize: 1,
+                        FileOptions.SequentialScan));
+                    return corruptible;
+                });
+            var session = new EvidenceSession(oldSession.Inventory, startedAtUtc: null, store);
+            Assert.Contains(session.AddObservation(AnchorObservation()),
+                new[] { EvidenceAddResult.Added, EvidenceAddResult.AddedPayloadRedacted });
+            SetCurrentSession(model, session);
+            oldSession.Dispose();
+            corruptible!.CorruptFirstCommittedRecord();
+            model.SetOwnedTestObserver(CapacityObserver.Empty(), [Candidate]);
+
+            await Run(model.StopCommand);
+
+            Assert.False(model.IsRecording);
+            Assert.False(model.IsBusy);
+            Assert.True(model.ShowExport);
+            Assert.True(model.SaveCommand.CanExecute(null));
+            Assert.NotEqual(healthyReview, model.ReviewSummary);
+            Assert.Contains("could not be prepared", model.ReviewSummary, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("free disk space", model.ReviewNotes, StringComparison.OrdinalIgnoreCase);
+            await model.CloseAsync();
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task MarkerCapacityDuringPendingPowerReadCannotAdvanceMarkerPhase()
     {
         var model = await RecordingAsync();
@@ -465,6 +583,25 @@ public sealed class CapacityRecoveryTests
         SpecialKeyExpectedKey.M1, SpecialKeyModeContext.Unknown,
         SpecialKeyProbeEndReason.Timeout, 0, 0, 0, string.Empty);
 
+    private static ControlObservation AnchorObservation() => new(
+        "anchor-op",
+        0,
+        ObservationSource.UserModeCall,
+        "HidD_SetFeature",
+        ObservationDirection.Input,
+        ObservationStatus.Succeeded,
+        0,
+        null,
+        Candidate.VendorId,
+        Candidate.ProductId,
+        Candidate.InterfaceLabel,
+        Candidate.UsagePage,
+        Candidate.Usage,
+        2,
+        new byte[] { 2 },
+        PayloadDisposition.ProvenFeatureControl,
+        0);
+
     private static Task Poll(CollectorViewModel model) =>
         (Task)typeof(CollectorViewModel)
             .GetMethod("PollOnceAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
@@ -648,6 +785,84 @@ public sealed class CapacityRecoveryTests
                 0,
                 relativeMilliseconds,
                 includeResponse ? 1u : 0);
+        }
+    }
+
+    private sealed class GatedWriteStream(FileStream inner) : Stream
+    {
+        private readonly TaskCompletionSource release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private bool gateNextWrite;
+
+        internal TaskCompletionSource WriteBlocked { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal void GateNextWrite() => gateNextWrite = true;
+
+        internal void ReleaseWrite() => release.TrySetResult();
+
+        public override bool CanRead => inner.CanRead;
+        public override bool CanSeek => inner.CanSeek;
+        public override bool CanWrite => inner.CanWrite;
+        public override long Length => inner.Length;
+        public override long Position { get => inner.Position; set => inner.Position = value; }
+        public override void Flush() => inner.Flush();
+        public override int Read(byte[] buffer, int offset, int count) => inner.Read(buffer, offset, count);
+        public override long Seek(long offset, SeekOrigin origin) => inner.Seek(offset, origin);
+        public override void SetLength(long value) => inner.SetLength(value);
+        public override void Write(byte[] buffer, int offset, int count) => Write(buffer.AsSpan(offset, count));
+
+        public override void Write(ReadOnlySpan<byte> buffer)
+        {
+            if (gateNextWrite)
+            {
+                gateNextWrite = false;
+                WriteBlocked.TrySetResult();
+                if (!release.Task.Wait(TimeSpan.FromSeconds(5)))
+                    throw new IOException("The owned write gate timed out.");
+            }
+
+            inner.Write(buffer);
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) inner.Dispose();
+            base.Dispose(disposing);
+        }
+    }
+
+    private sealed class CorruptibleWriteStream(FileStream inner) : Stream
+    {
+        internal void CorruptFirstCommittedRecord()
+        {
+            inner.Flush(flushToDisk: true);
+            using var corruptor = new FileStream(
+                inner.Name,
+                FileMode.Open,
+                FileAccess.Write,
+                FileShare.ReadWrite | FileShare.Delete,
+                bufferSize: 1,
+                FileOptions.WriteThrough);
+            corruptor.Position = sizeof(int);
+            corruptor.WriteByte(0);
+            corruptor.Flush(flushToDisk: true);
+        }
+
+        public override bool CanRead => inner.CanRead;
+        public override bool CanSeek => inner.CanSeek;
+        public override bool CanWrite => inner.CanWrite;
+        public override long Length => inner.Length;
+        public override long Position { get => inner.Position; set => inner.Position = value; }
+        public override void Flush() => inner.Flush();
+        public override int Read(byte[] buffer, int offset, int count) => inner.Read(buffer, offset, count);
+        public override long Seek(long offset, SeekOrigin origin) => inner.Seek(offset, origin);
+        public override void SetLength(long value) => inner.SetLength(value);
+        public override void Write(byte[] buffer, int offset, int count) => inner.Write(buffer, offset, count);
+        public override void Write(ReadOnlySpan<byte> buffer) => inner.Write(buffer);
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) inner.Dispose();
+            base.Dispose(disposing);
         }
     }
 

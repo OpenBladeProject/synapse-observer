@@ -71,7 +71,7 @@ public static class EvidenceBundleWriter
                              FileAccess.ReadWrite,
                              FileShare.None,
                              64 * 1024,
-                             FileOptions.Asynchronous | FileOptions.WriteThrough))
+                             FileOptions.Asynchronous))
             {
                 temporaryCreated = true;
                 using (var archive = new ZipArchive(stream, ZipArchiveMode.Create, leaveOpen: true, Encoding.UTF8))
@@ -87,6 +87,8 @@ public static class EvidenceBundleWriter
                 stream.Flush(flushToDisk: true);
             }
 
+            // Scratch cleanup can fail; complete it before publishing success.
+            projections.Dispose();
             cancellationToken.ThrowIfCancellationRequested();
             File.Move(temporaryPath, fullDestination, overwrite: overwrite);
             temporaryCreated = false;

@@ -11,6 +11,7 @@ internal sealed class ExportProjectionScope : IDisposable
     private static readonly AsyncLocal<ExportProjectionScope?> Active = new();
     private readonly ExportProjectionScope? previous = Active.Value;
     private readonly HashSet<IDisposable> owned = [];
+    private bool disposed;
     internal CancellationToken CancellationToken { get; }
     internal string DirectoryPath { get; }
     internal static ExportProjectionScope? Current => Active.Value;
@@ -27,6 +28,8 @@ internal sealed class ExportProjectionScope : IDisposable
 
     public void Dispose()
     {
+        if (disposed) return;
+        disposed = true;
         Active.Value = previous;
         Exception? firstFailure = null;
         while (owned.Count > 0)

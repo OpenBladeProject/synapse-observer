@@ -72,7 +72,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
             using var snapshot = session.Snapshot();
             collectionReview = await Task.Run(() => EvidenceCollectionReview.Create(snapshot));
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or System.Text.Json.JsonException or ObjectDisposedException)
         {
             // A full capture volume can also prevent temporary review files.
             // Cleanup and export to another volume must remain available.
@@ -764,55 +764,20 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
                 gaps += ex.RejectedRecords;
             }
             visibleStateChanged |= batch.Count > 0 || parseLoss is not null;
-            foreach (var observed in batch)
+            if (batch.Count > 0)
             {
-                if (observed.InterfaceIndex >= controlCandidates.Count)
-                {
-                    // Reject only this out-of-scope record; preserve valid events
-                    // elsewhere in the already-consumed batch.
-                    gaps++;
-                    scopeRejections++;
-                    continue;
-                }
-
-                var device = controlCandidates[(int)observed.InterfaceIndex];
-                var callStatus = observed.CompletionGap == "pending-completion-not-observed" ? ObservationStatus.Pending
-                    : observed.Result ? ObservationStatus.Succeeded : ObservationStatus.Failed;
-                var operationId = $"recording-{recordingNumber}-op-{observed.Sequence}";
-                var at = observerOrigin + observed.RelativeMilliseconds;
-                var completedAt = observerOrigin + observed.CompletionRelativeMilliseconds;
-                var returnedLengthUnknown = observed.Result && observed.Api == "HidD_GetFeature"
-                    && observed.CompletionGap == "return-length-unknown";
-                // HidD exposes no actual byte count. This is an API caveat,
-                // independent of operation failure or lost capture data.
-                var error = returnedLengthUnknown ? null : observed.CompletionGap;
-                // HidD_GetFeature returns BOOL, not an output byte count. Only
-                // DeviceIoControl supplies an actual returned-length value.
-                uint? actualReturnedBytes = observed.Api.StartsWith("DeviceIoControl.", StringComparison.Ordinal)
-                    ? observed.ReturnedBytes : null;
-                AddControlObservation(new ControlObservation(operationId, at, ObservationSource.UserModeCall, observed.Api, ObservationDirection.Input,
-                    callStatus, unchecked((int)observed.NativeError), error, device.VendorId, device.ProductId, device.InterfaceLabel,
-                    device.UsagePage, device.Usage, observed.RequestBytes.Length > 0 ? observed.RequestBytes[0] : null,
-                    observed.RequestBytes, PayloadDisposition.ProvenFeatureControl, completedAt, observed.OutputBufferCapacity,
-                    observed.RequestedBytes, actualReturnedBytes));
-                if (observed.ResponseBytes.Length > 0)
-                {
-                    AddControlObservation(new ControlObservation(operationId, completedAt, ObservationSource.ReturnedBuffer, observed.Api, ObservationDirection.Output,
-                        callStatus, unchecked((int)observed.NativeError), error, device.VendorId, device.ProductId, device.InterfaceLabel,
-                        device.UsagePage, device.Usage,
-                        observed.Api == "DeviceIoControl.HID_GET_FEATURE" && observed.ReturnedBytes == 90
-                            && observed.ResponseBytes.Length == 90 && observed.OutputBufferCapacity >= 91
-                            && device.ReportGeometry?.FeatureBytes == 91 ? null : observed.ResponseBytes[0], observed.ResponseBytes, PayloadDisposition.ProvenFeatureControl, completedAt, observed.OutputBufferCapacity,
-                        observed.RequestedBytes, actualReturnedBytes)
-                    { ReturnedLengthUnknown = returnedLengthUnknown });
-                }
-
-                observedCalls++;
-                if (callStatus == ObservationStatus.Failed) failedCalls++;
-                if (error is not null)
-                {
-                    gaps++;
-                }
+                // Keep one bounded batch in flight. Sanitization and disk writes
+                // run off the dispatcher; UI counters are published after await.
+                var targetSession = session!;
+                var targets = controlCandidates.ToArray();
+                var targetRecording = recordingNumber;
+                var origin = observerOrigin;
+                var captured = await Task.Run(() => StoreObservationBatch(targetSession, targets, batch, targetRecording, origin));
+                observedCalls += captured.Calls;
+                failedCalls += captured.FailedCalls;
+                gaps += captured.Gaps;
+                scopeRejections += captured.ScopeRejections;
+                ApplyRetentionFailures(captured.StorageRejections, captured.InvalidRejections);
             }
         }
         finally
@@ -852,18 +817,88 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
         Changed(nameof(CapacitySummary));
     }
 
-    private void AddControlObservation(ControlObservation observation)
+    private readonly record struct CapturedBatch(int Calls, int FailedCalls, int Gaps,
+        int ScopeRejections, int StorageRejections, int InvalidRejections);
+
+    private static CapturedBatch StoreObservationBatch(EvidenceSession session,
+        IReadOnlyList<LocalHidCandidate> controlCandidates, IReadOnlyList<NativeObservationEvent> batch,
+        int recordingNumber, double observerOrigin)
     {
-        var result = session!.AddObservation(observation);
-        if (result is EvidenceAddResult.RejectedStorage)
+        var observedCalls = 0;
+        var failedCalls = 0;
+        var gaps = 0;
+        var scopeRejections = 0;
+        var storageRejections = 0;
+        var invalidRejections = 0;
+        void AddControlObservation(ControlObservation observation)
         {
-            gaps++;
-            retentionGapDetails = "Local evidence storage failed. Only complete reports saved before the failure can be exported; later reports are counted as gaps.";
-            ReachCapacity("Local evidence storage could not continue. Check free disk space and save the partial ZIP to another location.");
+            var result = session.AddObservation(observation);
+            if (result == EvidenceAddResult.RejectedStorage) { storageRejections++; gaps++; }
+            else if (result is EvidenceAddResult.RejectedInvalid or EvidenceAddResult.RejectedLimit)
+            { invalidRejections++; gaps++; }
         }
-        else if (result is EvidenceAddResult.RejectedInvalid or EvidenceAddResult.RejectedLimit)
+        foreach (var observed in batch)
         {
-            gaps++;
+            if (observed.InterfaceIndex >= controlCandidates.Count)
+            {
+                // Reject only this out-of-scope record; preserve valid events
+                // elsewhere in the already-consumed batch.
+                gaps++;
+                scopeRejections++;
+                continue;
+            }
+
+            var device = controlCandidates[(int)observed.InterfaceIndex];
+            var callStatus = observed.CompletionGap == "pending-completion-not-observed" ? ObservationStatus.Pending
+                : observed.Result ? ObservationStatus.Succeeded : ObservationStatus.Failed;
+            var operationId = $"recording-{recordingNumber}-op-{observed.Sequence}";
+            var at = observerOrigin + observed.RelativeMilliseconds;
+            var completedAt = observerOrigin + observed.CompletionRelativeMilliseconds;
+            var returnedLengthUnknown = observed.Result && observed.Api == "HidD_GetFeature"
+                && observed.CompletionGap == "return-length-unknown";
+            // HidD exposes no actual byte count. This is an API caveat,
+            // independent of operation failure or lost capture data.
+            var error = returnedLengthUnknown ? null : observed.CompletionGap;
+            // HidD_GetFeature returns BOOL, not an output byte count. Only
+            // DeviceIoControl supplies an actual returned-length value.
+            uint? actualReturnedBytes = observed.Api.StartsWith("DeviceIoControl.", StringComparison.Ordinal)
+                ? observed.ReturnedBytes : null;
+            AddControlObservation(new ControlObservation(operationId, at, ObservationSource.UserModeCall, observed.Api, ObservationDirection.Input,
+                callStatus, unchecked((int)observed.NativeError), error, device.VendorId, device.ProductId, device.InterfaceLabel,
+                device.UsagePage, device.Usage, observed.RequestBytes.Length > 0 ? observed.RequestBytes[0] : null,
+                observed.RequestBytes, PayloadDisposition.ProvenFeatureControl, completedAt, observed.OutputBufferCapacity,
+                observed.RequestedBytes, actualReturnedBytes));
+            if (observed.ResponseBytes.Length > 0)
+            {
+                AddControlObservation(new ControlObservation(operationId, completedAt, ObservationSource.ReturnedBuffer, observed.Api, ObservationDirection.Output,
+                    callStatus, unchecked((int)observed.NativeError), error, device.VendorId, device.ProductId, device.InterfaceLabel,
+                    device.UsagePage, device.Usage,
+                    observed.Api == "DeviceIoControl.HID_GET_FEATURE" && observed.ReturnedBytes == 90
+                        && observed.ResponseBytes.Length == 90 && observed.OutputBufferCapacity >= 91
+                        && device.ReportGeometry?.FeatureBytes == 91 ? null : observed.ResponseBytes[0], observed.ResponseBytes, PayloadDisposition.ProvenFeatureControl, completedAt, observed.OutputBufferCapacity,
+                    observed.RequestedBytes, actualReturnedBytes)
+                { ReturnedLengthUnknown = returnedLengthUnknown });
+            }
+
+            observedCalls++;
+            if (callStatus == ObservationStatus.Failed) failedCalls++;
+            if (error is not null)
+            {
+                gaps++;
+            }
+        }
+        return new CapturedBatch(observedCalls, failedCalls, gaps, scopeRejections, storageRejections, invalidRejections);
+    }
+
+    private void ApplyRetentionFailures(int storageRejections, int invalidRejections)
+    {
+        if (storageRejections > 0)
+        {
+            retentionGapDetails = "Local evidence storage failed. Only complete reports saved before the failure can be exported; later reports are counted as gaps.";
+            ReachCapacity("Local evidence storage could not continue. Check free disk space or choose another location.");
+        }
+        else if (invalidRejections > 0)
+        {
             retentionGapDetails = "An observation could not be retained. Its rejection is counted as a recording gap in the evidence.";
         }
     }
@@ -953,8 +988,10 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
         if (stage == 4)
         {
             startingSetting = "Custom: CPU Boost, GPU High";
-            ReachCapacity("Local evidence storage could not continue. Check free disk space and save the partial ZIP to another location.");
+            // Render a completed failure state without launching asynchronous
+            // cleanup in this disconnected preview.
             recording = false;
+            ReachCapacity("Local evidence storage could not continue. Check free disk space or choose another location.");
             ResetEntries();
             status = CapacityInstructions;
         }

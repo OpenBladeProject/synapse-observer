@@ -69,7 +69,51 @@ public sealed class ContinuousObservationStorageTests
     }
 
     [Fact]
-    public void SessionDisposal_KeepsInflightSnapshotReadableUntilLeaseIsDisposed()
+    public async Task Snapshot_DoesNotWaitForAnInProgressDiskWrite()
+    {
+        var directory = TemporaryDirectory();
+        var spoolPath = Path.Combine(directory, "observations.spool");
+        using var entered = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        GatedWriteStream? gated = null;
+        var store = SanitizedObservationStore.Create(spoolPath, path =>
+        {
+            gated = new GatedWriteStream(new FileStream(
+                path,
+                FileMode.CreateNew,
+                FileAccess.Write,
+                FileShare.ReadWrite | FileShare.Delete,
+                bufferSize: 1,
+                FileOptions.SequentialScan), entered, release);
+            return gated;
+        });
+        using var session = new EvidenceSession(Inventory(91), null, store);
+        Assert.Equal(EvidenceAddResult.Added, session.AddObservation(
+            Observation(FeatureReportTestData.Create(3, 3, [1, 5, 25]), "op-1", 1)));
+
+        gated!.GateNextWrite = true;
+        var append = Task.Run(() => session.AddObservation(
+            Observation(FeatureReportTestData.Create(3, 3, [1, 5, 50]), "op-2", 2)));
+        Assert.True(entered.Wait(TimeSpan.FromSeconds(5)));
+        try
+        {
+            var snapshotTask = Task.Run(session.Snapshot);
+            Assert.True(await Task.WhenAny(snapshotTask, Task.Delay(TimeSpan.FromSeconds(2))) == snapshotTask);
+            using var snapshot = await snapshotTask;
+            Assert.Equal("op-1", Assert.Single(snapshot.Observations).OperationId);
+        }
+        finally
+        {
+            release.Set();
+        }
+
+        Assert.Equal(EvidenceAddResult.Added, await append);
+        using var completed = session.Snapshot();
+        Assert.Equal(2, completed.Observations.Count);
+    }
+
+    [Fact]
+    public void KernelDeleteAnchor_KeepsSpoolUntilLastSnapshotLeaseIsDisposed()
     {
         var directory = TemporaryDirectory();
         var spoolPath = Path.Combine(directory, "observations.spool");
@@ -85,6 +129,47 @@ public sealed class ContinuousObservationStorageTests
         snapshot.Dispose();
         Assert.False(File.Exists(spoolPath));
         DeleteDirectory(directory);
+    }
+
+    [Fact]
+    public void Create_DoesNotClobberOrDeleteExistingPath()
+    {
+        var directory = TemporaryDirectory();
+        var spoolPath = Path.Combine(directory, "observations.spool");
+        var sentinel = Encoding.UTF8.GetBytes("owned-by-somebody-else");
+        File.WriteAllBytes(spoolPath, sentinel);
+        try
+        {
+            Assert.Throws<IOException>(() => SanitizedObservationStore.Create(spoolPath));
+            Assert.Equal(sentinel, File.ReadAllBytes(spoolPath));
+        }
+        finally
+        {
+            File.Delete(spoolPath);
+            DeleteDirectory(directory);
+        }
+    }
+
+    [Fact]
+    public void Create_ThrowingFactoryDoesNotDeleteFileWithoutEstablishedOwnership()
+    {
+        var directory = TemporaryDirectory();
+        var spoolPath = Path.Combine(directory, "observations.spool");
+        var sentinel = Encoding.UTF8.GetBytes("factory-created-before-failure");
+        try
+        {
+            Assert.Throws<IOException>(() => SanitizedObservationStore.Create(spoolPath, path =>
+            {
+                File.WriteAllBytes(path, sentinel);
+                throw new IOException("Synthetic factory failure.");
+            }));
+            Assert.Equal(sentinel, File.ReadAllBytes(spoolPath));
+        }
+        finally
+        {
+            File.Delete(spoolPath);
+            DeleteDirectory(directory);
+        }
     }
 
     [Fact]
@@ -123,7 +208,7 @@ public sealed class ContinuousObservationStorageTests
         Assert.DoesNotContain(directory, snapshot.StorageFailure?.Summary ?? string.Empty, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain(
             Convert.ToHexString(Encoding.UTF8.GetBytes("SERIAL-private-device")),
-            Convert.ToHexString(File.ReadAllBytes(spoolPath)),
+            Convert.ToHexString(ReadShared(spoolPath)),
             StringComparison.Ordinal);
     }
 
@@ -203,10 +288,20 @@ public sealed class ContinuousObservationStorageTests
         }
     }
 
+    private static byte[] ReadShared(string path)
+    {
+        using var input = new FileStream(
+            path,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.ReadWrite | FileShare.Delete);
+        using var output = new MemoryStream();
+        input.CopyTo(output);
+        return output.ToArray();
+    }
+
     private sealed class PartialWriteFailureStream(Stream inner) : Stream
     {
-        private bool prefixWrittenAfterArming;
-
         internal bool FailNextPayloadWrite { get; set; }
 
         public override bool CanRead => inner.CanRead;
@@ -230,15 +325,52 @@ public sealed class ContinuousObservationStorageTests
                 return;
             }
 
-            if (!prefixWrittenAfterArming)
+            inner.Write(buffer[..Math.Max(1, buffer.Length / 2)]);
+            FailNextPayloadWrite = false;
+            throw new IOException("Synthetic partial spool write failure.");
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
             {
-                prefixWrittenAfterArming = true;
-                inner.Write(buffer);
-                return;
+                inner.Dispose();
             }
 
-            inner.Write(buffer[..Math.Max(1, buffer.Length / 2)]);
-            throw new IOException("Synthetic partial spool write failure.");
+            base.Dispose(disposing);
+        }
+    }
+
+    private sealed class GatedWriteStream(
+        Stream inner,
+        ManualResetEventSlim entered,
+        ManualResetEventSlim release) : Stream
+    {
+        internal bool GateNextWrite { get; set; }
+
+        public override bool CanRead => inner.CanRead;
+        public override bool CanSeek => inner.CanSeek;
+        public override bool CanWrite => inner.CanWrite;
+        public override long Length => inner.Length;
+        public override long Position { get => inner.Position; set => inner.Position = value; }
+        public override void Flush() => inner.Flush();
+        public override int Read(byte[] buffer, int offset, int count) => inner.Read(buffer, offset, count);
+        public override long Seek(long offset, SeekOrigin origin) => inner.Seek(offset, origin);
+        public override void SetLength(long value) => inner.SetLength(value);
+
+        public override void Write(byte[] buffer, int offset, int count) =>
+            Write(buffer.AsSpan(offset, count));
+
+        public override void Write(ReadOnlySpan<byte> buffer)
+        {
+            if (GateNextWrite)
+            {
+                GateNextWrite = false;
+                entered.Set();
+                release.Wait();
+            }
+
+            inner.Write(buffer);
         }
 
         protected override void Dispose(bool disposing)

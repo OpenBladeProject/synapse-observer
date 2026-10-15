@@ -492,14 +492,88 @@ public sealed class EvidenceBundleWriterTests
         Assert.Contains(":set-delayed:", Assert.Single(observations, item => item.OperationId == "get-late").CorrelatedRequestReferenceId);
     }
 
+    [Fact]
+    public void Drafts_ReadCaptureOnceForWindowRoutingAndReviewReadsDoNotScaleWithWindowCount()
+    {
+        using var session = new EvidenceSession(SyntheticPreview.CreateInventory());
+        for (var index = 0; index < 20; index++)
+            AddCompleteMarkers(session, $"action-{index}", index * 10, index * 10 + 9);
+        session.AddObservation(new ControlObservation(
+            "seed", 1, ObservationSource.UserModeCall, "HidD_SetFeature",
+            ObservationDirection.Input, ObservationStatus.Succeeded, 0, null,
+            0x1532, 0xFFFF, "hid-preview-01", 1, 2, 0,
+            FeatureReportTestData.Create(3, 3, [1, 5, 197]), PayloadDisposition.ProvenFeatureControl));
+        using var snapshot = session.Snapshot();
+        var seed = Assert.Single(snapshot.Observations);
+        var generated = new GeneratedObservations(200, index => seed with
+        {
+            OperationId = $"op-{index}", RelativeMilliseconds = index,
+        });
+        var source = snapshot with { Observations = generated };
+        using var projections = new ExportProjectionScope();
+        var annotation = ContributionDraftBuilder.CreateAnnotationDraft(source);
+        Assert.Equal(1, generated.EnumerationCount);
+        Assert.Equal(200, annotation.ActionWindows.Sum(window => window.Observations.Count));
+        foreach (var window in annotation.ActionWindows)
+            Assert.Equal(10, window.Observations.Count());
+        Assert.Equal(1, generated.EnumerationCount);
+        var readsBeforeReview = generated.EnumerationCount;
+        var quality = ContributionDraftBuilder.CreateQualityReceipt(source);
+        Assert.Equal(20, quality.Counts.CompleteActionWindows);
+        Assert.InRange(generated.EnumerationCount - readsBeforeReview, 1, 15);
+    }
+
+    [Fact]
+    public async Task WriteSnapshotAsync_ScratchCleanupFailureDoesNotPublishOrReplaceDestination()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"synapse-observer-tests-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            using var session = new EvidenceSession(SyntheticPreview.CreateInventory());
+            using var snapshot = session.Snapshot();
+            var source = snapshot with { Markers = new CleanupFailureMarkers() };
+            var destination = Path.Combine(directory, "evidence.zip");
+            await File.WriteAllTextAsync(destination, "existing");
+            await Assert.ThrowsAsync<IOException>(() => EvidenceBundleWriter.WriteSnapshotAsync(source, destination));
+            Assert.Equal("existing", await File.ReadAllTextAsync(destination));
+            Assert.Equal(new[] { destination }, Directory.GetFiles(directory));
+        }
+        finally { Directory.Delete(directory, recursive: true); }
+    }
+
+    private sealed class CleanupFailureMarkers : IReadOnlyList<EvidenceMarker>
+    {
+        private bool registered;
+        public int Count => 0;
+        public EvidenceMarker this[int index] => throw new ArgumentOutOfRangeException(nameof(index));
+        public IEnumerator<EvidenceMarker> GetEnumerator()
+        {
+            if (!registered)
+            {
+                ExportProjectionScope.Current!.Add(new FailedProjectionCleanup());
+                registered = true;
+            }
+            return Enumerable.Empty<EvidenceMarker>().GetEnumerator();
+        }
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+    }
+
+    private sealed class FailedProjectionCleanup : IDisposable
+    {
+        public void Dispose() => throw new IOException("Synthetic scratch cleanup failure.");
+    }
+
     private sealed class GeneratedObservations(int count, Func<int, SanitizedControlObservation> factory)
         : IReadOnlyList<SanitizedControlObservation>
     {
         public int Count => count;
+        public int EnumerationCount { get; private set; }
         public SanitizedControlObservation this[int index] => index >= 0 && index < count
             ? factory(index) : throw new ArgumentOutOfRangeException(nameof(index));
         public IEnumerator<SanitizedControlObservation> GetEnumerator()
         {
+            EnumerationCount++;
             for (var index = 0; index < count; index++) yield return factory(index);
         }
         System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
