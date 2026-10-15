@@ -155,3 +155,14 @@ opaque labels. Only recognized preset filenames and their SHA-256 hashes are
 retained, after a bounded read from the Windows color directory. Custom names,
 custom content hashes, paths, and all profile contents are omitted. Missing APIs, inaccessible files, and
 bounds remain explicit partial results without removing the display's modes.
+
+A clean recording can reuse the exact observer DLL verified by the same open
+collector. Each recording uses a fresh mapping and repeats process and device
+checks. Hooks, callback completion, worker completion, and the loaded module's
+identity must all be confirmed. A competing start cannot replace an active
+recording, and uncertain cleanup permanently blocks reuse in that Synapse
+process. A late completion does not remove that block. Closing the collector
+loses its verified reuse record; restart Synapse before collecting with another
+window or build. The observer and fixed Windows API owners stay loaded until
+the vendor process exits; no trampolines are freed while other threads may use
+them.

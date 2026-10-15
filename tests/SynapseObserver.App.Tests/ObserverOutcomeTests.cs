@@ -174,6 +174,25 @@ public sealed class ObserverOutcomeTests
         Assert.Equal(1, observer.Disposals);
     }
 
+    [Theory]
+    [InlineData(true, 170)]
+    [InlineData(false, 0)]
+    public async Task UncertainCleanupRevokesConsentAndRequiresRestart(bool confirmedStop, int failure)
+    {
+        var model = await Recording();
+        model.SetOwnedTestObserver(new OwnedObserver([])
+        {
+            ConfirmStop = confirmedStop,
+            Failure = failure,
+        });
+        await Run(model.StopCommand);
+        Assert.False(model.AttachConsent);
+        Assert.False(model.StartCommand.CanExecute(null));
+        Assert.Contains("restart Synapse", model.Status, StringComparison.OrdinalIgnoreCase);
+        Assert.Single(model.Evidence!.Markers, marker => marker.Kind == EvidenceMarkerKind.RecordingStopped);
+        await model.CloseAsync();
+    }
+
     private static async Task<CollectorViewModel> Recording()
     {
         var model = new CollectorViewModel(true);
@@ -211,6 +230,7 @@ public sealed class ObserverOutcomeTests
         public int Failure { get; set; }
         public int Dropped { get; set; }
         public bool GateStop { get; set; }
+        public bool ConfirmStop { get; set; } = true;
         public int Stops { get; private set; }
         public int Disposals { get; private set; }
         public TaskCompletionSource StopEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -223,7 +243,7 @@ public sealed class ObserverOutcomeTests
         }
         public async Task<NativeSessionStatus> StopAsync(CancellationToken cancellationToken = default)
         {
-            Stops++; Finished = true; StopEntered.TrySetResult();
+            Stops++; Finished = ConfirmStop; StopEntered.TrySetResult();
             if (GateStop) await ReleaseStop.Task;
             return GetStatus();
         }

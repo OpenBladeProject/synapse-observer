@@ -4,6 +4,11 @@
 
 ### Improved
 
+- Start another recording in the same collector window after a confirmed clean
+  stop, without restarting Synapse. Keep earlier evidence and recheck the current
+  process and laptop before every recording
+  ([#7](https://github.com/OpenBladeProject/synapse-observer/pull/7)).
+
 - Include independent Windows identity sources, per-action power context, parsed
   HID capabilities, and a collection review in the GUI and exported ZIP
   ([#7](https://github.com/OpenBladeProject/synapse-observer/pull/7)).

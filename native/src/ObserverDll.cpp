@@ -1,6 +1,26 @@
 #include "ObserverShared.h"
 #include <algorithm>
+#include <atomic>
 using namespace observer;
+namespace {
+enum class WorkerState : DWORD { Idle, Recording, Faulted };
+enum class WorkerClaim : DWORD { Acquired, Busy, Faulted };
+std::atomic<WorkerState> workerState{WorkerState::Idle};
+
+WorkerClaim TryClaimWorker() {
+    WorkerState expected = WorkerState::Idle;
+    if (workerState.compare_exchange_strong(expected, WorkerState::Recording, std::memory_order_acq_rel))
+        return WorkerClaim::Acquired;
+    return expected == WorkerState::Faulted ? WorkerClaim::Faulted : WorkerClaim::Busy;
+}
+
+void CompleteWorker(bool cleanupConfirmed) {
+    WorkerState expected = WorkerState::Recording;
+    if (cleanupConfirmed && workerState.compare_exchange_strong(expected, WorkerState::Idle, std::memory_order_acq_rel))
+        return;
+    workerState.store(WorkerState::Faulted, std::memory_order_release);
+}
+}
 extern "C" __declspec(dllexport) DWORD WINAPI ObserverProtocolVersion() { return 2; }
 extern "C" __declspec(dllexport) DWORD WINAPI ObserverStart(LPVOID argument) {
     if (!argument) return ERROR_INVALID_PARAMETER;
@@ -15,9 +35,19 @@ extern "C" __declspec(dllexport) DWORD WINAPI ObserverStart(LPVOID argument) {
     if (!mapping) return GetLastError();
     auto shared = static_cast<SharedState*>(MapViewOfFile(mapping, FILE_MAP_READ | FILE_MAP_WRITE, 0, 0, sizeof(SharedState)));
     if (!shared) { DWORD error = GetLastError(); CloseHandle(mapping); return error; }
-    if (!StartLive(config.selectedObjectNames, config.featureBytes, config.interfaceCount)) {
-        InterlockedExchange(&shared->failure, ERROR_NOT_SUPPORTED);
-        if (!Stop()) InterlockedExchange(&shared->failure, ERROR_BUSY);
+    const WorkerClaim claim = TryClaimWorker();
+    if (claim != WorkerClaim::Acquired) {
+        InterlockedExchange(&shared->failure, claim == WorkerClaim::Faulted ? ERROR_INVALID_STATE : ERROR_BUSY);
+        InterlockedExchange(&shared->finished, 1);
+        UnmapViewOfFile(shared); CloseHandle(mapping);
+        return ERROR_SUCCESS;
+    }
+    bool cleanupConfirmed = false;
+    const auto start = StartLive(config.selectedObjectNames, config.featureBytes, config.interfaceCount);
+    if (start != StartResult::Started) {
+        const DWORD error = start == StartResult::Invalid ? ERROR_INVALID_PARAMETER :
+            start == StartResult::Busy ? ERROR_BUSY : ERROR_INVALID_STATE;
+        InterlockedExchange(&shared->failure, error);
         InterlockedExchange(&shared->finished, 1);
     } else {
         InterlockedExchange(&shared->ready, 1);
@@ -31,8 +61,11 @@ extern "C" __declspec(dllexport) DWORD WINAPI ObserverStart(LPVOID argument) {
         InterlockedExchangeAdd(&shared->dropped, static_cast<LONG>(std::min<uint64_t>(Dropped(), LONG_MAX)));
         if (!detached) InterlockedExchange(&shared->failure, ERROR_BUSY);
         InterlockedExchange(&shared->finished, 1);
+        cleanupConfirmed = detached && InterlockedCompareExchange(&shared->failure, 0, 0) == 0;
     }
-    UnmapViewOfFile(shared); CloseHandle(mapping);
+    const bool unmapped = UnmapViewOfFile(shared) != FALSE;
+    const bool closed = CloseHandle(mapping) != FALSE;
+    CompleteWorker(cleanupConfirmed && unmapped && closed);
     // The DLL and trampolines remain pinned until the vendor process exits.
     return ERROR_SUCCESS;
 }

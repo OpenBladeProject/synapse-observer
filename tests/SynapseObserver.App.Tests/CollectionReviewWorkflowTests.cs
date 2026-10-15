@@ -47,6 +47,34 @@ public sealed class CollectionReviewWorkflowTests
         await model.CloseAsync();
     }
 
+    [Fact]
+    public async Task CleanStopAllowsExplicitSecondRecordingAndPreservesPriorEvidence()
+    {
+        var model = new CollectorViewModel(preview: true);
+        await Run(model.CollectCommand);
+        model.AttachConsent = true;
+        await Run(model.StartCommand);
+        model.StartingSetting = "Balanced";
+        await Run(model.MarkCommand);
+        model.ChangedSetting = "Silent";
+        await Run(model.MarkCommand);
+        await Run(model.MarkCommand);
+        await Run(model.StopCommand);
+        var first = model.Evidence!;
+        Assert.True(model.AttachConsent);
+        Assert.True(model.StartCommand.CanExecute(null));
+        Assert.False(model.IsRecording);
+        await Run(model.StartCommand);
+        Assert.True(model.IsRecording);
+        await Run(model.StopCommand);
+        var second = model.Evidence!;
+        Assert.Equal(first.Observations.Count, second.Observations.Count);
+        Assert.Equal(2, second.Markers.Count(item => item.Kind == EvidenceMarkerKind.RecordingStarted));
+        Assert.Equal(2, second.Markers.Count(item => item.Kind == EvidenceMarkerKind.RecordingStopped));
+        Assert.Single(ContributionDraftBuilder.CreateAnnotationDraft(second).ActionWindows);
+        await model.CloseAsync();
+    }
+
     private static async Task Run(AsyncCommand command)
     {
         Assert.True(command.CanExecute(null));

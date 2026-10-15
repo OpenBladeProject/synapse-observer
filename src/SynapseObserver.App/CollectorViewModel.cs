@@ -284,8 +284,12 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
         {
             if (!preview)
             {
+                // Recheck the current process and selected laptop for every
+                // user-started recording, including reuse after a clean stop.
+                await DiscoverRecorderAsync();
                 if (backendCandidate is null)
                 {
+                    status = recorderStatus;
                     return;
                 }
 
@@ -491,8 +495,14 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
             recording = false;
             stopping = false;
             busy = false;
-            consent = false;
-            backendCandidate = null;
+            var cleanStop = stopFailure is null
+                && (nativeStatus is { Finished: true, Failure: 0 }
+                    || preview && nativeStatus is null);
+            if (!cleanStop)
+            {
+                consent = false;
+                backendCandidate = null;
+            }
 
             var unfinished = HasCurrentStep && stepPhase > 0;
             if (unfinished)
@@ -503,7 +513,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
             session?.AddMarker(new EvidenceMarker(RelativeMilliseconds, EvidenceMarkerKind.RecordingStopped, "session", "Recording stopped", EvidenceProvenance.Observer));
             recorderStatus = nativeStatus?.Diagnostic ?? "Recording stopped. Gaps and user-reported restoration remain labeled in the evidence.";
             if (nativeStatus is { Failure: not 0 }) CountNativeFailureGap();
-            if (nativeStatus is { Failure: not 0 } || stopFailure is not null)
+            if (!cleanStop)
             {
                 session?.AddMarker(new EvidenceMarker(RelativeMilliseconds, EvidenceMarkerKind.Failure, "observer", "Recording cleanup has a gap", EvidenceProvenance.Observer));
                 status = "Recording ended with a gap. Save the partial evidence; restart Synapse manually before another session.";

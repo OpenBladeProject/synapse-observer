@@ -1,6 +1,7 @@
 using System.Buffers.Binary;
 using System.IO.MemoryMappedFiles;
 using System.Security.Cryptography;
+using Microsoft.Win32.SafeHandles;
 using SynapseObserver.Backend;
 using Xunit;
 
@@ -87,6 +88,86 @@ public sealed class NativeObservationSessionTests
         var disposal = session.DisposeAsync();
         Assert.True(disposal.IsCompletedSuccessfully);
         await disposal;
+    }
+
+    [Fact]
+    public async Task CleanResidentIsReusableOnlyAfterWorkerCompletionIsConfirmed()
+    {
+        var mapping = MemoryMappedFile.CreateNew(null,
+            NativeObservationSession.HeaderSize + NativeObservationSession.Slots * NativeEventParser.RecordSize,
+            MemoryMappedFileAccess.ReadWrite);
+        using var writer = mapping.CreateViewAccessor();
+        writer.Write(0, 1);
+        writer.Write(4, 1);
+        var identity = new ResidentObserverIdentity(1, 2, "observer.dll", new string('A', 64), (nint)3);
+        var resident = new ResidentObserverRegistration(identity);
+        Assert.Equal(ResidentStartDecision.Started, resident.TryBegin(identity));
+        using var completed = new EventWaitHandle(false, EventResetMode.ManualReset);
+        var borrowedWorker = new SafeFileHandle(completed.SafeWaitHandle.DangerousGetHandle(), ownsHandle: false);
+        await using var session = new NativeObservationSession(mapping, Origin, resident, borrowedWorker);
+
+        Task<NativeSessionStatus> stop = session.StopAsync();
+        await Task.Delay(50);
+        Assert.Equal(ResidentObserverState.Recording, resident.State);
+        completed.Set();
+        NativeSessionStatus status = await stop;
+
+        Assert.Equal(0, status.Failure);
+        Assert.Equal(ResidentObserverState.Idle, resident.State);
+    }
+
+    [Fact]
+    public async Task NativeFailurePermanentlyFaultsResidentAfterWorkerCompletion()
+    {
+        var mapping = MemoryMappedFile.CreateNew(null,
+            NativeObservationSession.HeaderSize + NativeObservationSession.Slots * NativeEventParser.RecordSize,
+            MemoryMappedFileAccess.ReadWrite);
+        using var writer = mapping.CreateViewAccessor();
+        writer.Write(0, 1);
+        writer.Write(4, 1);
+        writer.Write(8, 170);
+        var identity = new ResidentObserverIdentity(1, 2, "observer.dll", new string('A', 64), (nint)3);
+        var resident = new ResidentObserverRegistration(identity);
+        Assert.Equal(ResidentStartDecision.Started, resident.TryBegin(identity));
+        using var completed = new EventWaitHandle(true, EventResetMode.ManualReset);
+        var borrowedWorker = new SafeFileHandle(completed.SafeWaitHandle.DangerousGetHandle(), ownsHandle: false);
+        await using var session = new NativeObservationSession(mapping, Origin, resident, borrowedWorker);
+
+        NativeSessionStatus status = await session.StopAsync();
+
+        Assert.Equal(170, status.Failure);
+        Assert.Equal(ResidentObserverState.Faulted, resident.State);
+        Assert.Equal(ResidentStartDecision.Faulted, resident.TryBegin(identity));
+    }
+
+    [Fact]
+    public async Task LateWorkerCompletionCannotReverseAnUncertainStop()
+    {
+        var mapping = MemoryMappedFile.CreateNew(null,
+            NativeObservationSession.HeaderSize + NativeObservationSession.Slots * NativeEventParser.RecordSize,
+            MemoryMappedFileAccess.ReadWrite);
+        using var writer = mapping.CreateViewAccessor();
+        writer.Write(0, 1);
+        writer.Write(4, 1);
+        var identity = new ResidentObserverIdentity(1, 2, "observer.dll", new string('A', 64), (nint)3);
+        var resident = new ResidentObserverRegistration(identity);
+        Assert.Equal(ResidentStartDecision.Started, resident.TryBegin(identity));
+        using var completed = new EventWaitHandle(false, EventResetMode.ManualReset);
+        var borrowedWorker = new SafeFileHandle(completed.SafeWaitHandle.DangerousGetHandle(), ownsHandle: false);
+        await using var session = new NativeObservationSession(mapping, Origin, resident, borrowedWorker);
+
+        NativeSessionStatus first = await session.StopAsync();
+        Assert.Equal(170, first.Failure);
+        Assert.Equal(ResidentObserverState.Faulted, resident.State);
+
+        completed.Set();
+        NativeSessionStatus late = await session.StopAsync();
+
+        Assert.True(late.Finished);
+        Assert.Equal(170, late.Failure);
+        Assert.Contains("Late completion", late.Diagnostic, StringComparison.Ordinal);
+        Assert.Equal(ResidentObserverState.Faulted, resident.State);
+        Assert.Equal(ResidentStartDecision.Faulted, resident.TryBegin(identity));
     }
 
     private static byte[] Record(ulong sequence, byte marker, uint operation = 1)

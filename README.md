@@ -65,8 +65,9 @@ See [what the ZIP contains](docs/capture-contents.md).
 ## Recording notes
 
 You make and restore settings in Synapse. The collector observes its activity
-and records your action markers. Recordings last up to five minutes. Restart
-Synapse normally before starting another recording.
+and records your action markers. Recordings last up to five minutes. Keep this
+window open to record more settings after stopping. If cleanup cannot be
+confirmed, the app asks you to restart Synapse before another recording.
 
 Nothing is uploaded automatically. Review the ZIP before sharing it. Ordinary
 typing, macros, mouse input, device paths, and serial-number inventory fields
