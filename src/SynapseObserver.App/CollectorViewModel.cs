@@ -677,7 +677,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
 
                 // The shared ring has 32 slots. Multi-row lighting frames can
                 // exhaust it within 100 ms; drain at 20 ms while keeping the
-                // native five-minute bound and explicit dropped-event accounting.
+                // native ten-minute bound and explicit dropped-event accounting.
                 await Task.Delay(20, cancellationToken);
             }
         }

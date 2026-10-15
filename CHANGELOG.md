@@ -4,6 +4,10 @@
 
 ### Improved
 
+- Allow a recording to run for up to ten minutes so longer guided sequences can
+  reach their restoration marker before the observer stops
+  ([#7](https://github.com/OpenBladeProject/synapse-observer/pull/7)).
+
 - Start another recording in the same collector window after a confirmed clean
   stop, without restarting Synapse. Keep earlier evidence and recheck the current
   process and laptop before every recording. Clarify start and failure guidance

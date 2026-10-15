@@ -40,7 +40,7 @@ the engine rather than discarding them. Engine queue overflow increments the
 dropped-record counter. During stop, the managed reader stays active while the
 native worker drains for up to one second; an absent reader causes the remaining
 queued records to be counted as dropped at that deadline.
-Up to eight feature collections from one laptop may be observed for five minutes.
+Up to eight feature collections from one laptop may be observed for ten minutes.
 Event timestamps use QueryPerformanceCounter; managed relative time starts before
 attachment. Each event keeps call entry and API-return completion separately;
 a pending asynchronous operation's API-return timestamp does not claim its I/O

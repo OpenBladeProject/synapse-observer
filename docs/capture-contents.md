@@ -75,7 +75,7 @@ with the JSON files when attaching the ZIP to a support request.
 
 ## Collection limits
 
-- A recording lasts at most five minutes.
+- A recording lasts at most ten minutes.
 - One identified physical Blade laptop can contribute up to eight feature
   collections during live observation.
 - Feature reports are bounded to 4,096 bytes per observation, 4 MiB of retained

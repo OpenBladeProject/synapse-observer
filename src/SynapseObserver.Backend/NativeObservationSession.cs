@@ -20,6 +20,8 @@ public sealed class NativeObservationSession : INativeObservationSession
 {
     internal const int HeaderSize = 32;
     internal const int Slots = 32;
+    internal const uint DefaultRecordingDurationSeconds = 600;
+    internal const uint MaximumRecordingDurationSeconds = 600;
     private readonly MemoryMappedFile mapping;
     private readonly MemoryMappedViewAccessor view;
     private readonly SafeProcessHandle process;
@@ -113,14 +115,21 @@ public sealed class NativeObservationSession : INativeObservationSession
     }
 
     public static Task<NativeObservationSession> StartAsync(BackendCandidate candidate, string selectedInterfacePath, CancellationToken cancellationToken = default) => StartAsync(candidate, new[] { selectedInterfacePath }, cancellationToken);
-    public static Task<NativeObservationSession> StartAsync(BackendCandidate candidate, IReadOnlyList<string> selectedInterfacePaths, CancellationToken cancellationToken = default) => StartAsync(candidate, selectedInterfacePaths, 300, cancellationToken);
+    public static Task<NativeObservationSession> StartAsync(BackendCandidate candidate, IReadOnlyList<string> selectedInterfacePaths, CancellationToken cancellationToken = default) => StartAsync(candidate, selectedInterfacePaths, DefaultRecordingDurationSeconds, cancellationToken);
     public static Task<NativeObservationSession> StartAsync(BackendCandidate candidate, IReadOnlyList<string> selectedInterfacePaths, uint durationSeconds, CancellationToken cancellationToken = default) => Task.Run(() =>
     {
-        if (durationSeconds is < 1 or > 300) throw new ArgumentOutOfRangeException(nameof(durationSeconds));
+        ValidateRecordingDuration(durationSeconds);
         StartGate.Wait(cancellationToken);
         try { return Start(candidate, selectedInterfacePaths, durationSeconds, cancellationToken); }
         finally { StartGate.Release(); }
     }, cancellationToken);
+
+    internal static void ValidateRecordingDuration(uint durationSeconds)
+    {
+        if (durationSeconds is < 1 or > MaximumRecordingDurationSeconds)
+            throw new ArgumentOutOfRangeException(nameof(durationSeconds));
+    }
+
     private static NativeObservationSession Start(BackendCandidate candidate, IReadOnlyList<string> interfacePaths, uint durationSeconds, CancellationToken token)
     {
         long origin = Stopwatch.GetTimestamp();

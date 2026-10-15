@@ -26,7 +26,8 @@ extern "C" __declspec(dllexport) DWORD WINAPI ObserverStart(LPVOID argument) {
     if (!argument) return ERROR_INVALID_PARAMETER;
     StartConfig config{};
     memcpy(&config, argument, sizeof(config));
-    if (config.size != sizeof(config) || config.durationSeconds == 0 || config.durationSeconds > 300 ||
+    if (config.size != sizeof(config) || config.durationSeconds == 0 ||
+        config.durationSeconds > MaximumRecordingDurationSeconds ||
         config.mappingName[127] || config.interfaceCount == 0 || config.interfaceCount > 8) return ERROR_INVALID_PARAMETER;
     HMODULE pinned{};
     if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,

@@ -11,10 +11,14 @@ int main() {
     Check(module != nullptr, "load matching owned DLL");
     auto start = reinterpret_cast<LPTHREAD_START_ROUTINE>(GetProcAddress(module, "ObserverStart"));
     Check(start != nullptr, "typed startup export");
-    StartConfig config{}; config.size = sizeof(config); config.durationSeconds = 301;
-    Check(start(&config) == ERROR_INVALID_PARAMETER, "reject unbounded duration before hooks");
-    config.durationSeconds = 1; config.interfaceCount = 1; config.featureBytes[0] = 12;
+    StartConfig config{}; config.size = sizeof(config); config.interfaceCount = 1; config.featureBytes[0] = 12;
+    wcscpy_s(config.mappingName, L"Local\\SynapseObserver-OwnedTest-DurationBoundary");
     wcscpy_s(config.selectedObjectNames[0], L"\\Device\\OwnedFixtureNoDevice");
+    config.durationSeconds = 0;
+    Check(start(&config) == ERROR_INVALID_PARAMETER, "reject zero duration before hooks");
+    config.durationSeconds = MaximumRecordingDurationSeconds + 1;
+    Check(start(&config) == ERROR_INVALID_PARAMETER, "reject unbounded duration before hooks");
+    config.durationSeconds = MaximumRecordingDurationSeconds;
     for (unsigned recording = 1; recording <= 2; ++recording) {
         swprintf_s(config.mappingName, L"Local\\SynapseObserver-OwnedTest-%lu-%u", GetCurrentProcessId(), recording);
         HANDLE mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, sizeof(SharedState), config.mappingName);

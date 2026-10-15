@@ -12,6 +12,26 @@ public sealed class NativeObservationSessionTests
     private const long Frequency = 10_000_000;
     private static readonly long Origin = 1_000;
 
+    [Theory]
+    [InlineData(1u)]
+    [InlineData(600u)]
+    public void RecordingDurationWithinBoundIsAccepted(uint durationSeconds)
+    {
+        NativeObservationSession.ValidateRecordingDuration(durationSeconds);
+        Assert.Equal(
+            NativeObservationSession.MaximumRecordingDurationSeconds,
+            NativeObservationSession.DefaultRecordingDurationSeconds);
+    }
+
+    [Theory]
+    [InlineData(0u)]
+    [InlineData(601u)]
+    public void RecordingDurationOutsideBoundIsRejected(uint durationSeconds)
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            NativeObservationSession.ValidateRecordingDuration(durationSeconds));
+    }
+
     [Fact]
     public async Task MalformedSlotIsReleasedWhileValidPrefixAndSuffixArePreserved()
     {
