@@ -1,5 +1,7 @@
 # Evidence ZIP contents
 
+English | [简体中文](zh-CN/capture-contents.md) | [Русский](ru-RU/capture-contents.md)
+
 Saving creates one local ZIP. Nothing is uploaded automatically. The files are
 bounded JSON drafts plus a short text guide.
 
