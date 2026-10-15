@@ -2,12 +2,12 @@
 
 [English](../support-evidence-requirements.md) | 简体中文 | [Русский](../ru-RU/support-evidence-requirements.md)
 
-Synapse Observer 从 OpenBlade 安全支持笔记本所需的证据反向设计采集流程。观测器收集被动证据并准备草稿，绝不授予机型或命令生产使用资格。
+Synapse Observer 的采集流程根据 OpenBlade 安全支持一款笔记本所需的证据设计。观测器仅被动收集证据并生成草稿，不会据此将任何机型或命令纳入正式支持。
 
 <a id="capability-families"></a>
 ## 能力类别
 
-覆盖草稿保留 OpenBlade 设备覆盖模板中的每个叶项，并补充旧模板尚未表达的当前产品要求。完整类别如下：
+覆盖草稿保留 OpenBlade 设备覆盖模板中的每个最细分项目，并补充旧模板尚未表达的当前产品要求。完整类别如下：
 
 - 身份与固件：USB 和 HID 描述符、机型编号、BIOS、EC、MCU、相关接口、HID 拓扑、Windows 平台详情、已签名驱动和软件的来源信息；
 - 性能：预设、Custom CPU 和 GPU 级别、CPU 功率限制、CPU 电压优化、GPU 核心和显存偏移、使用及不使用散热底座时的 HyperBoost、HyperBoost 基础模式，以及足功率交流电、每个 USB-C 功率类别和电池下的回读；Windows 无法区分适配器类别时，还包括通用外部电源证据；
@@ -29,9 +29,10 @@ Synapse Observer 从 OpenBlade 安全支持笔记本所需的证据反向设计�
 <a id="what-passive-collection-can-establish"></a>
 ## 被动采集能够证明什么
 
-`coverage-draft.json` 仅使用 `NotInvestigated` 和 `Captured`。`Captured` 表示 ZIP 包含该叶项真实且有边界的观测。Windows 清单可支持身份、描述符、显示、驱动或 LampArray 叶项。Feature 叶项需要一个通过隐私审核的报告，且位于包含初始、更改、操作和恢复标记的完整操作窗口中。特殊按键叶项需要提示式输入及相匹配的按键、模式和探测摘要。只有提示时，仅推进通用输入证据叶项。精确的功能角色需要独立观测到的 Windows 按键或经过审核的信号来确认。
+`coverage-draft.json` 仅使用 `NotInvestigated` 和 `Captured`。`Captured` 表示 ZIP 包含该项目的真实观测，且观测范围有限。Windows 清单可为身份、描述符、显示、驱动或 LampArray 项目提供证据。
+Feature 项目需要通过隐私审核的报告，而且报告必须位于完整的操作时间窗口内，窗口中包含初始、更改、操作和恢复标记。特殊按键项目需要按提示操作得到的输入，以及相匹配的按键、模式和探测摘要。如果只有提示信息，就只能更新通用输入证据项目。要确认按键的具体功能，还需独立观测到的 Windows 按键或经过审核的信号。
 
-此状态刻意限定范围。一个亮度、颜色、方向、矩阵行或性能级别不能证明整个支持范围。识别报告结构是隐私判断，不是命令定义。用户标记描述贡献者选择的内容，不证明固件回读或恢复成功。不支持的报告正文仍被隐去，保留结构和质量缺口。
+这一状态只确认上述范围。采集到某个亮度、颜色、方向、矩阵行或性能级别，不能证明整个范围都受支持。识别报告结构是隐私判断，不是命令定义。用户标记描述贡献者选择的内容，不证明固件回读或恢复成功。不支持的报告正文仍被隐去，保留结构和质量缺口。
 
 观测层为 `UserModeFeatureApi`、`WindowsRawInput` 和 `WindowsInventory`，不得改称 USB 传输。导出的草稿不是 PCAP 文件，也不声称符合独立 OpenBlade 抓包仓库的注释验证器要求。
 
@@ -46,10 +47,10 @@ Synapse Observer 从 OpenBlade 安全支持笔记本所需的证据反向设计�
 4. 保存已确认的原状态，应用一个类型化值，通过独立回读确认，恢复精确的保存状态，再通过回读确认恢复。
 5. 证明不支持的设备和固件规则会产生零写入。
 6. 验证控制器冲突、相关电源上下文、重启和重连行为，并在需要时进行有人值守的睡眠/恢复验证。
-7. 用已提交的清理后测试数据支撑生产代码，并完成明确的机型准入审核。
+7. 让生产代码使用已提交且经过清理的测试数据进行验证，并完成明确的机型准入审核。
 
 提交或回读有歧义时，停止验证并转为只读。维护者不得重放结果不明的写入，也不得以用户报告的恢复代替确认。
 
-源检查表是架构版本 2 的 [`device-coverage.template.json`](https://github.com/OpenBladeProject/openblade-captures/blob/main/templates/device-coverage.template.json)，完整证据阶梯位于抓包仓库的 [`CAPTURE_GUIDE.md`](https://github.com/OpenBladeProject/openblade-captures/blob/main/CAPTURE_GUIDE.md)。
+源检查表使用格式版本 2，即 [`device-coverage.template.json`](https://github.com/OpenBladeProject/openblade-captures/blob/main/templates/device-coverage.template.json)，各阶段所需的完整证据见抓包仓库的 [`CAPTURE_GUIDE.md`](https://github.com/OpenBladeProject/openblade-captures/blob/main/CAPTURE_GUIDE.md)。
 
-数值范围不是本采集器的生产准入规则。在经过精确审核的散热、Custom CPU/GPU、固定风扇和充电上限命令族内，不熟悉的数值会保留，并标记 `numericMeaningUninterpreted: true`。报告族、控制标签、通道、长度、校验和、填充、来源和状态检查仍然适用。查询输入参数必须符合已审核的全零结构。这样可以研究新机型的数值，而不声称已经理解或支持它们。
+数值范围不是本采集器的生产准入规则。在经过精确审核的散热、Custom CPU/GPU、固定风扇和充电上限命令族内，不熟悉的数值会保留，并标记 `numericMeaningUninterpreted: true`。报告族、控制标签、通道、长度、校验和、填充、来源和状态检查仍然适用。查询输入参数必须符合已审核的全零结构。这样可以保留新机型的数值供研究，但不代表已理解其含义或已支持这些值。

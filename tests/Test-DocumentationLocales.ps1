@@ -11,6 +11,13 @@ function Assert-EqualMatches([string]$source, [string]$translation, [string]$pat
     $b = @([regex]::Matches($translation, $pattern) | ForEach-Object { $_.Value } | Sort-Object)
     if (($a -join "`n") -cne ($b -join "`n")) { throw "$label differs from English source" }
 }
+function Normalize-NumericGrouping([string]$text) {
+    # English commas and Russian spaces group thousands without changing the value.
+    return [regex]::Replace($text, '(?<![\p{L}\p{N}])\d{1,3}(?:[, \u00A0\u202F]\d{3})+(?!\d)', {
+        param($match)
+        $match.Value -replace '[, \u00A0\u202F]', ''
+    })
+}
 function Get-ParagraphCount([string]$text) {
     return [regex]::Matches($text.Trim(), '\S[\s\S]*?(?:\r?\n\s*\r?\n|$)').Count
 }
@@ -32,7 +39,7 @@ foreach ($source in $sources) {
         Assert-EqualMatches $english $plain '```[\s\S]*?```' "$relative fenced code"
         Assert-EqualMatches $english $plain '(?m)^#{1,6} ' "$relative heading levels"
         Assert-EqualMatches $english $plain '(?m)^\s*(?:-|\d+\.) ' "$relative list structure"
-        Assert-EqualMatches $english $plain '(?<![\p{L}\p{N}])\d+(?:[.,:]\d+)*(?![\p{L}\p{N}])' "$relative numeric facts"
+        Assert-EqualMatches (Normalize-NumericGrouping $english) (Normalize-NumericGrouping $plain) '(?<![\p{L}\p{N}])\d+(?:[.,:]\d+)*(?![\p{L}\p{N}])' "$relative numeric facts"
         Assert-EqualMatches $english $plain 'https?://[^\s)\]>]+' "$relative external links"
         if ((Get-ParagraphCount $english) -ne (Get-ParagraphCount $plain)) { throw "$relative paragraph coverage differs" }
         $expected = @([regex]::Matches($english, '(?m)^#{2,6} (.+)$') | ForEach-Object { Get-Slug $_.Groups[1].Value })
