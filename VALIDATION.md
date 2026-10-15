@@ -1,5 +1,7 @@
 # Prototype validation
 
+English | [简体中文](docs/zh-CN/VALIDATION.md) | [Русский](docs/ru-RU/VALIDATION.md)
+
 The implementation is a development prototype. Synthetic checks and the live
 trials below do not establish complete Synapse coverage or all-model compatibility.
 

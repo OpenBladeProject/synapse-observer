@@ -1,5 +1,7 @@
 # Evidence format
 
+English | [简体中文](zh-CN/evidence-format.md) | [Русский](ru-RU/evidence-format.md)
+
 Every explicit export contains `manifest.json`, `coverage-draft.json`,
 `annotation-draft.json`, `quality-receipt.json`, and `README.txt`. The manifest
 records the collector build/source revision, inventory sections, action markers,
