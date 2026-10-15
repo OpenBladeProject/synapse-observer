@@ -270,8 +270,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
         {
             recorderStatus = processes.Count == 0 ? "Start Synapse normally and open your laptop's controls. Then check recording availability. You can save device information now."
                 : eligible.Length > 1 ? "More than one verified Synapse engine is running. Close duplicate Synapse instances, then check recording availability."
-                : processes.Select(candidate => candidate.Diagnostic).Distinct(StringComparer.Ordinal).ToArray() is [var onlyReason] ? onlyReason
-                : "No recording target was verified. Open your laptop's controls in Synapse, start both apps normally, then refresh. See collection details.";
+                : RecorderDiscoveryDiagnostics.UnavailableSummary(processes);
         }
 
         collectionDetails = RecorderDiscoveryDiagnostics.Format(processes);

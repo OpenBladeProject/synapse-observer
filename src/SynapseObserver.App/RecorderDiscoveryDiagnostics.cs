@@ -9,6 +9,18 @@ internal static class RecorderDiscoveryDiagnostics
         : !consent ? "Recording is available. Allow observation, then select Start recording. Your collected evidence is preserved."
         : "Recording is available. Select Start recording when ready. Your collected evidence is preserved.";
 
+    public static string UnavailableSummary(IReadOnlyList<BackendCandidate> candidates)
+    {
+        // Only the verified HID owner can report resident observer state. Its
+        // recovery step takes priority over unrelated Electron helper failures.
+        var blocked = candidates.Where(candidate => candidate.VerifiedTargetBlocked)
+            .Select(candidate => candidate.Diagnostic).Distinct(StringComparer.Ordinal).ToArray();
+        if (blocked.Length > 0) return string.Join("\n", blocked);
+        return candidates.Select(candidate => candidate.Diagnostic).Distinct(StringComparer.Ordinal).ToArray() is [var onlyReason]
+            ? onlyReason
+            : "No recording target was verified. Open your laptop's controls in Synapse, start both apps normally, then refresh. See collection details.";
+    }
+
     public static string Format(IReadOnlyList<BackendCandidate> candidates)
     {
         var verified = candidates.Where(candidate => candidate.Eligible).ToArray();

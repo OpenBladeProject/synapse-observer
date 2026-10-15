@@ -46,6 +46,25 @@ public sealed class RecorderDiscoveryDiagnosticsTests
     }
 
     [Fact]
+    public void BlockedVerifiedOwnerKeepsRestartGuidanceAheadOfHelperFailures()
+    {
+        const string restart = "The resident observer cannot be reused. Restart Synapse before another recording.";
+        BackendCandidate[] candidates = [new(1, "engine", false, restart, VerifiedTargetBlocked: true),
+            .. Enumerable.Range(2, 8).Select(id => new BackendCandidate(id, "helper", false, "Open laptop controls"))];
+        var summary = RecorderDiscoveryDiagnostics.UnavailableSummary(candidates);
+        Assert.Equal(restart, summary);
+        Assert.StartsWith(restart, RecorderDiscoveryDiagnostics.AvailabilityStatus(false, false, summary));
+    }
+
+    [Fact]
+    public void UnavailableSummaryRetainsOneReasonAndCombinesBlockedOwnersWithoutDuplication()
+    {
+        Assert.Equal("Open laptop controls", RecorderDiscoveryDiagnostics.UnavailableSummary([new(1, "engine", false, "Open laptop controls")]));
+        BackendCandidate[] candidates = [new(1, "engine", false, "Restart Synapse", true), new(2, "engine", false, "Stop active recording", true), new(3, "helper", false, "Restart Synapse", true)];
+        Assert.Equal("Restart Synapse\nStop active recording", RecorderDiscoveryDiagnostics.UnavailableSummary(candidates));
+    }
+
+    [Fact]
     public void MissingEngineHasOneActionableMessage() =>
         Assert.Equal("No Synapse engine was found. Open Synapse normally, then refresh.", RecorderDiscoveryDiagnostics.Format([]));
 }

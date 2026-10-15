@@ -67,6 +67,8 @@ public sealed class NativeObservationSession : INativeObservationSession
 
         try
         {
+            // TargetPolicy may have cached Modules before this gate was acquired.
+            target.Refresh();
             long processStartTime = target.StartTime.ToUniversalTime().Ticks;
             int observerModuleCount = ObserverModules(target).Length;
             Residents.TryGetValue(target.Id, out ResidentObserverRegistration? registration);
