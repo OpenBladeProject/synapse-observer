@@ -28,7 +28,15 @@
   from firmware readback
   ([#7](https://github.com/OpenBladeProject/synapse-observer/pull/7)).
 
+### Changed
+
+- Rewrite Chinese and Russian guides with clearer instructions and more natural wording. ([#9](https://github.com/OpenBladeProject/synapse-observer/pull/9))
+
 ### Added
+
+- Add complete Simplified Chinese and Russian README, evidence guides, and
+  validation history with matching language navigation and parity checks
+  ([#8](https://github.com/OpenBladeProject/synapse-observer/pull/8)).
 
 - Retain unfamiliar numeric settings in reviewed control families, label their meaning as uninterpreted, and capture zero-valued charge-limit queries. ([#2](https://github.com/OpenBladeProject/synapse-observer/pull/2))
 - Add the guided device inventory, passive Synapse observer, and local evidence

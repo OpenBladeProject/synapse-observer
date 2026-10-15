@@ -1,5 +1,7 @@
 # OpenBlade support evidence requirements
 
+English | [简体中文](zh-CN/support-evidence-requirements.md) | [Русский](ru-RU/support-evidence-requirements.md)
+
 Synapse Observer works backwards from the evidence OpenBlade needs before it can
 support a laptop safely. The observer collects passive evidence and prepares a
 draft. It never admits a model or command for production use.

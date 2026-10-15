@@ -1,5 +1,7 @@
 # Synapse Observer
 
+English | [简体中文](README.zh-CN.md) | [Русский](README.ru-RU.md)
+
 Help add support for your Razer Blade to [OpenBlade](https://github.com/OpenBladeProject/openblade-core)
 by collecting information about your laptop and recording setting changes in
 Synapse. You can save and send the results without a terminal or repository checkout.
