@@ -413,13 +413,13 @@ Local exact-PID runtime metadata contains tuning-related fields, but that
 neither establishes editable UI availability nor admits commands. These are
 session-level limits, not permanent model capability claims.
 
-The attempt to open Windows Settings through Computer Use timed out awaiting
-app approval. HDR, VRR, dynamic refresh, and Windows display-brightness changes
-remain untested. Physical M/Fn keys, keyboard legends, per-key color mapping,
-physical LED observations, EC/MCU versions, adapter rating, and cooling-pad
-behavior also remain unverified. No sleep/resume or startup hardware test was
-attempted. Prior unchanged shared-path evidence is reused; no all-model or
-complete-support claim is made.
+Windows Settings was subsequently opened with user approval. The display
+follow-up below records the exercised controls and distinguishes Windows UI
+observations from incomplete action markers. Physical M/Fn keys, keyboard
+legends, per-key color mapping, physical LED observations, EC/MCU versions,
+adapter rating, and cooling-pad behavior remain unverified. No sleep/resume or
+startup hardware test was attempted. Prior unchanged shared-path evidence is
+reused; no all-model or complete-support claim is made.
 
 A later presentation correction names the review count "complete action
 sequence" because the public marker API accepts omitted values. Its focused
@@ -433,3 +433,61 @@ The final summary wording package at source
 Its executable SHA-256 is
 `903C002F58A9E58036FA1B23D7C25ADEEF062B52F7346CB8BAC975CEF0B82F7A`.
 This package remains framework-dependent and does not bundle .NET.
+
+## Windows display follow-up, 2026-10-15
+
+The live collector remained at `7c0c8d7`; the later wording and picker changes
+were verified separately. Windows Settings confirmed the initial 60 Hz mode,
+HDR Off, dynamic refresh Off, Native_CTR color profile, and brightness 61%.
+
+| Windows control | Starting selection | Temporary selection | Restored selection | Exported action evidence |
+| --- | --- | --- | --- | --- |
+| HDR | Off | On | Off, Native_CTR profile | Incomplete; starting marker only |
+| Dynamic refresh | Off, 60 Hz selected | 240 Hz selected, dynamic refresh On | Dynamic refresh Off, then original 60 Hz | Incomplete; starting marker only |
+| Variable refresh | On | Off | On | Complete four-marker sequence |
+| Display brightness | 61% | 62% | 61% | Complete four-marker sequence |
+
+At 60 Hz, Windows explicitly disabled dynamic refresh and requested a higher
+selected rate. At 240 Hz, the control became available; when On, desktop mode
+showed 60 Hz or 240 Hz. Advanced display reported VRR support at 48-240 Hz at
+240 Hz and 48-60 Hz after restoring 60 Hz. The separate Windows graphics VRR
+toggle was exercised; no game or frame-pacing result is claimed.
+
+HDR and dynamic refresh reached the native recording time bound before their
+changed/restored markers were saved. Physical restoration was checked in
+Windows, but their exported windows remain incomplete with no associated
+observations. The ZIP contains paired recording start/stop markers, not an
+explicit timeout-cause marker. No marker was backfilled. A preparation-only
+brightness recording also remains without action markers. These histories
+are preserved alongside the later successful VRR and brightness sequences.
+
+The final private archive has SHA-256
+`B2D4F1BAE48A14CF884009F522B0DFA879687836BAB645AB5EB616D521E577E1`.
+Its five files retain 3,405 successful observations, 1,431 complete reviewed
+input bodies, ten semantic-only response summaries, and all 986 output bodies
+excluded. Nine recordings have paired starts/stops. Of nine action windows,
+six are complete; the original fan, HDR, and dynamic-refresh attempts remain
+incomplete. The AC and subsequent export prefixes are unchanged. There are no
+failed calls, rejected records, dropped-event markers, cleanup failures, or
+session gaps. A bounded scan found no excluded paths, accounts, serial fields,
+instance identifiers, email addresses, or Windows SIDs. Successful HID calls
+within a Windows-setting action window do not establish a causal display
+command or firmware readback.
+
+The live test exposed two shared UI defects: timeout restoration guidance
+always named Synapse, and a state picker could retain the extent of a shorter
+previous catalog. Source `fe8aa7c190378c157b191fd5204f78988e38a6d1` corrects
+the guidance and uses a bounded, non-virtualized state-choice panel. Its full
+package script passed 516 managed tests (312 Core, 119 App, 85 Backend) and
+both native owned-process fixtures. The framework-dependent executable SHA-256
+is `BA19E53CA560B014E7B5BB4ED29EB30F14BD5D53ED5933B6916DB48E27C4D0C6`;
+the portable ZIP SHA-256 is
+`B3E98F891B0218D68476F9AB52C69CB51B79F2E79993D5FCB2D8EEBDFC7A35B0`.
+.NET remains unbundled. In its disconnected GUI, switching from a three-choice
+battery-protection list to six-choice keyboard brightness exposed all six
+options, including 75%, 100%, and Other state. Other state was selectable in
+the compact window. This is UI validation, not new live protocol evidence.
+
+Claude's narrow wording and picker reviews completed. Independent triage found
+no additional introduced defect requiring a change. The collector's native
+observer, backend, and decoder are unchanged by these two UI corrections.
