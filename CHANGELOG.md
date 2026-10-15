@@ -17,6 +17,9 @@
 
 ### Fixed
 
+- Clarify download and evidence-submission instructions in the README and link
+  the latest release ([#2](https://github.com/OpenBladeProject/synapse-observer/pull/2)).
+
 - Preserve late stop events and drop totals, bound repeated malformed-record
   markers, and keep automatic-cleanup guidance when native recording ends
   ([#2](https://github.com/OpenBladeProject/synapse-observer/pull/2)).
