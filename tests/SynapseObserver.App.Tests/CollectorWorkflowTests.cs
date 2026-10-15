@@ -462,6 +462,69 @@ public sealed class CollectorWorkflowTests
         Assert.Equal(CoverageState.Pending, Assert.Single(model.Evidence!.Coverage, item => item.ActivityId == "special-key-m1").State);
     }
 
+    [Fact]
+    public void SelectingFnRefreshesStatusWithConditionalProbeGuidance()
+    {
+        var model = new CollectorViewModel(true);
+        var notifications = new List<string?>();
+        model.PropertyChanged += (_, item) => notifications.Add(item.PropertyName);
+
+        model.ExpectedSpecialKey = SpecialKeyExpectedKey.Fn;
+
+        Assert.Contains(nameof(CollectorViewModel.SpecialKeyStatus), notifications);
+        Assert.Contains("may not produce a Windows input event", model.SpecialKeyStatus);
+        Assert.Contains("Click Check key for 5 seconds", model.SpecialKeyStatus);
+        Assert.Contains("keep this collector window in front", model.SpecialKeyStatus);
+        Assert.Contains("If your laptop has an Fn + P shortcut", model.SpecialKeyStatus);
+        Assert.Contains("may change a setting", model.SpecialKeyStatus);
+        Assert.DoesNotContain("not detected", model.SpecialKeyStatus, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task FnTimeoutWithoutInputPreservesDeclarationAndExplainsObservationLimit()
+    {
+        var model = new CollectorViewModel(true);
+        await Run(model.CollectCommand);
+        var selected = model.Activities.ToList().FindIndex(activity => activity.Id == "special-key-fn");
+        model.SelectedActivityIndex = selected;
+        model.StartingSetting = "Shows the function-row overlay";
+        await Run(model.MarkCommand);
+        typeof(CollectorViewModel).GetField("activeProbeLabel", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.SetValue(model, "probe-001");
+
+        model.CompleteSpecialKeyProbe(new(SpecialKeyExpectedKey.Fn, SpecialKeyModeContext.Unknown,
+            SpecialKeyProbeEndReason.Timeout, 0, 0, 0, ""));
+
+        var coverage = Assert.Single(model.Evidence!.Coverage, item => item.ActivityId == "special-key-fn");
+        Assert.Equal(CoverageState.Completed, coverage.State);
+        Assert.Equal("Shows the function-row overlay", Assert.Single(model.Evidence.Markers,
+            item => item.ActivityId == "special-key-fn").Value);
+        Assert.Equal(SpecialKeyProbeEndReason.Timeout, Assert.Single(model.Evidence.SpecialKeyProbes).EndReason);
+        Assert.Contains("no Windows input observations", model.SpecialKeyStatus);
+        Assert.Contains("finished normally", model.SpecialKeyStatus);
+        Assert.Contains("report any visible behavior", model.SpecialKeyStatus);
+        Assert.Contains("does not show whether the physical key worked", model.SpecialKeyStatus);
+        Assert.DoesNotContain("not detected", model.SpecialKeyStatus, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData(SpecialKeyProbeEndReason.Cancelled)]
+    [InlineData(SpecialKeyProbeEndReason.FocusLost)]
+    [InlineData(SpecialKeyProbeEndReason.LimitReached)]
+    [InlineData(SpecialKeyProbeEndReason.Unavailable)]
+    [InlineData(SpecialKeyProbeEndReason.Disposed)]
+    public async Task InterruptedProbeKeepsItsReasonWithoutNormalCompletionClaim(SpecialKeyProbeEndReason reason)
+    {
+        var model = new CollectorViewModel(true);
+        await Run(model.CollectCommand);
+        typeof(CollectorViewModel).GetField("activeProbeLabel", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.SetValue(model, "probe-001");
+
+        model.CompleteSpecialKeyProbe(new(SpecialKeyExpectedKey.Fn, SpecialKeyModeContext.Unknown, reason, 0, 0, 0, ""));
+
+        Assert.Contains(reason.ToString(), model.SpecialKeyStatus);
+        Assert.DoesNotContain("finished normally", model.SpecialKeyStatus);
+        Assert.Equal(reason, Assert.Single(model.Evidence!.SpecialKeyProbes).EndReason);
+    }
+
     [Theory]
     [InlineData(0)]
     [InlineData(1)]

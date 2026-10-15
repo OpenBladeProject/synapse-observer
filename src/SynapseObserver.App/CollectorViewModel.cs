@@ -166,9 +166,9 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
         ? CurrentActivity.IsReadOnly ? "Report the current state or behavior you have already observed. Save the report without changing a setting."
         : !recording ? "Start recording before changing this setting, or choose a current-state report to continue without recording."
         : observerEnded ? EndedRecordingInstructions
-        : stepPhase == 0 ? "Select the setting currently shown. Then begin this step."
-        : stepPhase == 1 ? "Change one available setting in its usual controls. Select its new value below, then mark the change."
-        : $"Restore the starting setting: {startingSetting}. Mark restoration after the controls show that value."
+        : stepPhase == 0 ? "Wait for the original controls to finish updating. Select the setting currently shown, then begin this step."
+        : stepPhase == 1 ? "Change one available setting in its usual controls. Wait until those controls finish updating and show the new value, then select it below and mark the change."
+        : $"Wait for any syncing to finish. Restore the starting setting: {startingSetting}, then wait for the controls to finish updating and show that value before marking restoration."
         : "Stop recording and save the evidence ZIP.";
     private string EndedRecordingInstructions => (stepPhase > 0
         ? $"Restore the starting setting: {startingSetting}. " : "Recording is unavailable. ")
@@ -177,10 +177,10 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
     public string StepStatus => !HasCurrentStep ? "Your setting changes and restoration markers are recorded." : CurrentActivity.IsReadOnly ? "This is your report, not a hardware measurement or firmware confirmation."
         : !recording ? "Current-state reports are available without observing Synapse. Setting changes need a recording."
         : observerEnded ? "Recording is unavailable. Restore any unfinished setting and save the evidence after cleanup."
-        : stepPhase == 0 ? "Examples are suggestions, not confirmed support. Skip or mark unavailable if needed."
+        : stepPhase == 0 ? "If Synapse shows \"Syncing Profiles\", wait before changing a setting. Skip anything you cannot test."
         : stepPhase == 1 && ChangedEntry.HasValue && !HasDistinctChangedSetting ? "Choose a value different from the starting setting."
-        : stepPhase == 1 ? "The collector observes Synapse. It does not change a setting for you."
-        : "Restoration will be recorded as your observation of the displayed setting.";
+        : stepPhase == 1 ? "Wait for Synapse to finish syncing before restoring. If it stays stuck, stop recording and save partial evidence."
+        : "This records your observation of the restored setting. If Synapse stays stuck syncing, stop recording and save partial evidence.";
     public string MarkButtonText => HasCurrentStep && CurrentActivity.IsReadOnly ? "Save current state" : stepPhase == 0 ? "Begin this step" : stepPhase == 1 ? "I changed it" : "I restored it";
     public string ObservationSummary => $"{observedCalls} observed calls · {failedCalls} failed calls · {gaps} recording gaps";
     public string ExportSummary => $"The ZIP contains device information, {observedCalls} observed calls, recording coverage, and your action markers. Unproven or sensitive payloads are omitted. Review it before sharing.";

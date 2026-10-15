@@ -11,7 +11,7 @@ internal sealed partial class CollectorViewModel
     private string activeProbeLabel = string.Empty;
     private double probeOrigin;
     private SpecialKeyExpectedKey expectedSpecialKey = SpecialKeyExpectedKey.M1;
-    private string specialKeyStatus = "Optional: identify one M or Fn key. Keep this window active and press only the selected key for five seconds.";
+    private string specialKeyStatus = SpecialKeySelectionGuidance(SpecialKeyExpectedKey.M1);
     public sealed record SpecialKeyChoice(SpecialKeyExpectedKey Key, string Label);
     public IReadOnlyList<SpecialKeyChoice> SpecialKeyChoices { get; } = Enum.GetValues<SpecialKeyExpectedKey>()
         .Select(key => new SpecialKeyChoice(key, key == SpecialKeyExpectedKey.FnP ? "Fn + P" : key.ToString())).ToArray();
@@ -26,7 +26,14 @@ internal sealed partial class CollectorViewModel
     public SpecialKeyExpectedKey ExpectedSpecialKey
     {
         get => expectedSpecialKey;
-        set { if (probingSpecialKey || !Enum.IsDefined(value)) return; expectedSpecialKey = value; Changed(); }
+        set
+        {
+            if (probingSpecialKey || !Enum.IsDefined(value) || expectedSpecialKey == value) return;
+            expectedSpecialKey = value;
+            specialKeyStatus = SpecialKeySelectionGuidance(value);
+            Changed();
+            Changed(nameof(SpecialKeyStatus));
+        }
     }
     public AsyncCommand? ProbeSpecialKeyCommand { get; private set; }
     public AsyncCommand? CancelSpecialKeyProbeCommand { get; private set; }
@@ -84,14 +91,32 @@ internal sealed partial class CollectorViewModel
             // A probe is separate evidence. It never replaces a declaration
             // or treats missing input as proof that the key is unavailable.
         }
-        specialKeyStatus = $"{summary.ExpectedKey}: {summary.ObservationCount} input observations · {summary.EndReason}. " +
-            "The key check has finished. No signal does not prove that the key is unavailable.";
+        specialKeyStatus = SpecialKeyCompletionStatus(summary);
         RefreshSpecialKeyProbe();
     }
 
     internal void CancelSpecialKeyProbe() => specialKeyProbe?.Disarm();
     private static string SpecialKeyActivity(SpecialKeyExpectedKey key) => key switch
     { SpecialKeyExpectedKey.Fn => "special-key-fn", SpecialKeyExpectedKey.FnP => "special-key-fn-p", _ => "special-key-" + key.ToString().ToLowerInvariant() };
+    private static string SpecialKeySelectionGuidance(SpecialKeyExpectedKey key) => key == SpecialKeyExpectedKey.Fn
+        ? "Fn alone may not produce a Windows input event. Click Check key for 5 seconds, keep this collector window in front, and press only Fn during the check. Then report any visible Fn behavior in the Fn key evidence item. If your laptop has an Fn + P shortcut, you can probe it separately; it may change a setting."
+        : "Optional: identify one M or Fn key. Click Check key for 5 seconds, keep this collector window in front, and press only the selected key during the check.";
+    private static string SpecialKeyCompletionStatus(SpecialKeyProbeSummary summary)
+    {
+        if (summary.EndReason == SpecialKeyProbeEndReason.Timeout)
+        {
+            if (summary.ExpectedKey == SpecialKeyExpectedKey.Fn && summary.ObservationCount == 0)
+                return "Fn: no Windows input observations were captured in five seconds. The check finished normally. " +
+                    "Fn alone may be handled without a Windows event, so report any visible behavior in the Fn key evidence item. " +
+                    "This result does not show whether the physical key worked.";
+
+            return $"{summary.ExpectedKey}: {summary.ObservationCount} input observations in five seconds. " +
+                "The check finished normally. No signal does not prove that the key is unavailable.";
+        }
+
+        return $"{summary.ExpectedKey}: {summary.ObservationCount} input observations. Probe ended: {summary.EndReason}. " +
+            "No signal does not prove that the key is unavailable.";
+    }
     private void RefreshSpecialKeyProbe()
     {
         Changed(nameof(ProbeSpecialKeyCommand)); Changed(nameof(CancelSpecialKeyProbeCommand));

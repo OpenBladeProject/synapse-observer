@@ -30,9 +30,10 @@ See [model coverage](docs/model-coverage.md).
    recording**.
 3. Choose an evidence item and enter the exact setting shown in Synapse. Select
    **Begin this step** before changing it.
-4. Change one setting in Synapse. Enter the new value and select **I changed it**.
-   Restore the exact starting setting in Synapse, check that its controls show
-   that value, then select **I restored it**.
+4. Change one setting in Synapse. Wait for syncing to finish and the new value
+   to appear, then enter it and select **I changed it**. Restore the exact
+   starting setting, wait for syncing to finish again, check that its controls
+   show that value, then select **I restored it**.
 5. Use **Other state…** for an unfamiliar value. Select **Skip** or **Setting
    unavailable** for items you cannot test.
 6. If you recorded settings, select **Stop recording**. Select **Save evidence
@@ -42,7 +43,8 @@ See [model coverage](docs/model-coverage.md).
 The guide covers performance, fans, keyboard lighting and layout, the illuminated
 logo, special keys, battery settings, and display controls. For optional M-key/Fn
 checks, press the prompted key with the collector window active. Each
-check lasts five seconds.
+check lasts five seconds. Fn alone may produce no input that this check can
+observe. You can still report its visible behavior in the Fn key evidence item.
 
 See [what the ZIP contains](docs/capture-contents.md).
 
@@ -70,6 +72,10 @@ You make and restore settings in Synapse. The collector observes its activity
 and records your action markers. Recordings last up to ten minutes. Keep this
 window open to record more settings after stopping. If cleanup cannot be
 confirmed, the app asks you to restart Synapse before another recording.
+
+Wait for **Syncing Profiles** to finish before changing or restoring another
+setting. If Synapse stays stuck, stop recording and save the partial ZIP. Restore
+any unfinished setting when Synapse responds. A partial ZIP is still useful.
 
 Nothing is uploaded automatically. Review the ZIP before sharing it. Ordinary
 typing, macros, mouse input, device paths, and serial-number inventory fields
