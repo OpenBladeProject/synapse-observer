@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## [0.2.9] - 2026-10-16
+
 ### Fixed
 
 - Explain when to wait for Synapse profile syncing before changing or restoring
