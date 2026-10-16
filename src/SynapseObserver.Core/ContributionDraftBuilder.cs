@@ -190,7 +190,7 @@ public static class ContributionDraftBuilder
 
     // Bundle export shares one set of windows across the three draft documents.
     internal static (ContributionCoverageDraft Coverage, ContributionAnnotationDraft Annotation,
-        ContributionQualityReceipt Quality) CreateDrafts(
+        ContributionQualityReceipt Quality, ObservationQualityStatistics Statistics) CreateDrafts(
         EvidenceSessionSnapshot snapshot, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
@@ -201,27 +201,27 @@ public static class ContributionDraftBuilder
         cancellationToken.ThrowIfCancellationRequested();
         var annotation = CreateAnnotationDraft(snapshot, windows);
         cancellationToken.ThrowIfCancellationRequested();
-        var quality = CreateQualityReceipt(snapshot, windows, coverage);
+        var quality = CreateQualityReceipt(snapshot, windows, coverage, out var statistics);
         cancellationToken.ThrowIfCancellationRequested();
-        return (coverage, annotation, quality);
+        return (coverage, annotation, quality, statistics);
     }
 
     public static ContributionCoverageDraft CreateCoverageDraft(EvidenceSessionSnapshot snapshot)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
-        return CreateCoverageDraft(snapshot, CreateActionWindows(snapshot));
+        return CreateCoverageDraft(snapshot, CreateActionWindows(snapshot, retainSources: false));
     }
 
     private static ContributionCoverageDraft CreateCoverageDraft(
-        EvidenceSessionSnapshot snapshot, IReadOnlyList<ContributionActionWindowDraft> windows)
+        EvidenceSessionSnapshot snapshot, IReadOnlyList<ContributionActionWindowDraft> windows, bool retainReferences = true)
     {
         var evidence = CapabilityPaths.ToDictionary(
             static path => path,
-            static _ => new List<ContributionEvidenceReference>(),
+            static _ => new CoverageReferences(),
             StringComparer.Ordinal);
 
         AddInventoryEvidence(snapshot.Inventory, evidence);
-        AddFeatureEvidence(snapshot, windows, evidence);
+        AddFeatureEvidence(snapshot, windows, evidence, retainReferences);
         AddSpecialKeyEvidence(snapshot, evidence);
 
         var identities = snapshot.Inventory.MachineIdentity.Value;
@@ -237,7 +237,7 @@ public static class ContributionDraftBuilder
             .Select(path => new ContributionCoverageEntry(
                 path,
                 evidence[path].Count == 0 ? ContributionCoverageStatus.NotInvestigated : ContributionCoverageStatus.Captured,
-                evidence[path].AsReadOnly()))
+                evidence[path].Records))
             .ToArray();
 
         return new ContributionCoverageDraft(
@@ -278,24 +278,27 @@ public static class ContributionDraftBuilder
         };
     }
 
-    public static ContributionQualityReceipt CreateQualityReceipt(EvidenceSessionSnapshot snapshot)
+    public static ContributionQualityReceipt CreateQualityReceipt(EvidenceSessionSnapshot snapshot) =>
+        CreateQualityAnalysis(snapshot).Quality;
+
+    internal static (ContributionQualityReceipt Quality, ObservationQualityStatistics Statistics) CreateQualityAnalysis(
+        EvidenceSessionSnapshot snapshot)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
-        var windows = CreateActionWindows(snapshot);
-        return CreateQualityReceipt(snapshot, windows, CreateCoverageDraft(snapshot, windows));
+        using var projections = new ExportProjectionScope();
+        var windows = CreateActionWindows(snapshot, retainSources: false);
+        var quality = CreateQualityReceipt(snapshot, windows,
+            CreateCoverageDraft(snapshot, windows, retainReferences: false), out var statistics);
+        return (quality, statistics);
     }
 
     private static ContributionQualityReceipt CreateQualityReceipt(
         EvidenceSessionSnapshot snapshot, IReadOnlyList<ContributionActionWindowDraft> windows,
-        ContributionCoverageDraft coverageDraft)
+        ContributionCoverageDraft coverageDraft, out ObservationQualityStatistics statistics)
     {
-        var associated = windows.SelectMany(static window => window.Observations)
-            .Select(static item => item.ReferenceId)
-            .ToHashSet(StringComparer.Ordinal);
-        var reviewed = snapshot.Observations.Count(static item =>
-            item.PayloadProjectionKind != FeaturePayloadProjectionKind.MetadataOnly);
-        var redacted = snapshot.Observations.Count(static item => !item.CompletePayloadRetained);
-        var gaps = CreateQualityGaps(snapshot, windows, associated);
+        statistics = ObservationQualityStatistics.Collect(snapshot.Observations,
+            item => windows.Any(window => WithinWindow(item, window)));
+        var gaps = CreateQualityGaps(snapshot, windows, statistics);
         var inventoryGapCount = gaps.Count(static gap => gap.Code.StartsWith("Inventory", StringComparison.Ordinal));
         var coverage = coverageDraft.Coverage;
         var capturedCoverage = coverage.Count(static item => item.Status == ContributionCoverageStatus.Captured);
@@ -311,14 +314,13 @@ public static class ContributionDraftBuilder
                 windows.Count,
                 windows.Count(static item => item.CompleteUserReportedSequence),
                 snapshot.Observations.Count,
-                reviewed,
-                redacted,
-                snapshot.Observations.Select(ObservationReference).Count(reference => !associated.Contains(reference)),
+                statistics.Reviewed,
+                statistics.Redacted,
+                statistics.Unassociated,
                 snapshot.SpecialKeyObservations.Count,
                 snapshot.RejectedMarkerCount + snapshot.RejectedObservationCount + snapshot.RejectedCoverageCount)
             {
-                ReviewedSemanticOnlyResponses = snapshot.Observations.Count(static item =>
-                    item.SemanticResponse is not null && !item.CompletePayloadRetained),
+                ReviewedSemanticOnlyResponses = statistics.SemanticOnly,
             },
             gaps,
             MaintainerStages,
@@ -327,7 +329,7 @@ public static class ContributionDraftBuilder
             false);
     }
 
-    private static IReadOnlyList<ContributionActionWindowDraft> CreateActionWindows(EvidenceSessionSnapshot snapshot)
+    private static IReadOnlyList<ContributionActionWindowDraft> CreateActionWindows(EvidenceSessionSnapshot snapshot, bool retainSources = true)
     {
         var labels = snapshot.Coverage.ToDictionary(static item => item.ActivityId, static item => item.Label, StringComparer.Ordinal);
         var windows = new List<ContributionActionWindowDraft>();
@@ -364,7 +366,36 @@ public static class ContributionDraftBuilder
             }
         }
 
-        return windows.OrderBy(static item => item.StartRelativeMilliseconds).ToArray();
+        var ordered = windows.OrderBy(static item => item.StartRelativeMilliseconds).ToArray();
+        var sources = retainSources ? ordered.Select(_ => new ExportDiskList<IndexedObservation>()).ToArray() : null;
+        var counts = new int[ordered.Length];
+        var observationIndex = 0;
+        // Read/deserialise the capture spool once regardless of window count.
+        // Correlation later reads only the records routed to its own window.
+        foreach (var observation in snapshot.Observations)
+        {
+            var indexed = new IndexedObservation(observation, ObservationReference(observation, observationIndex), observationIndex++);
+            for (var windowIndex = 0; windowIndex < ordered.Length; windowIndex++)
+            {
+                if (!WithinWindow(observation, ordered[windowIndex])) continue;
+                counts[windowIndex]++;
+                sources?[windowIndex].Add(indexed);
+            }
+        }
+        for (var windowIndex = 0; windowIndex < ordered.Length; windowIndex++)
+        {
+            var window = ordered[windowIndex];
+            IEnumerable<IndexedObservation> source = sources is not null ? sources[windowIndex]
+                : snapshot.Observations.Select((item, index) => new IndexedObservation(item, ObservationReference(item, index), index))
+                    .Where(item => WithinWindow(item.Item, window));
+            ordered[windowIndex] = window with
+            {
+                Observations = new WindowObservationProjection(source, counts[windowIndex]),
+                Gap = window.CompleteUserReportedSequence && counts[windowIndex] == 0
+                    ? "No user-mode feature observation fell inside this action window." : window.Gap,
+            };
+        }
+        return ordered;
     }
 
     private static void AddSettingWindow(
@@ -400,36 +431,12 @@ public static class ContributionDraftBuilder
         var ordered = HasOrderedUserSequence(markers);
         var unchanged = ordered && HasUnchangedReportedValues(markers);
         var complete = ordered && !unchanged;
-        var sourceObservations = snapshot.Observations
-            .Select((item, index) => (Item: item, Reference: ObservationReference(item, index), Index: index))
-            .Where(item => item.Item.RelativeMilliseconds >= start && item.Item.RelativeMilliseconds <= end)
-            .ToArray();
-        var correlations = CorrelateReviewedSemanticResponses(sourceObservations);
-        var observations = sourceObservations
-            .Select(item => new ContributionObservationDraft(
-                ContributionObservationLayer.UserModeFeatureApi,
-                item.Reference,
-                item.Item.OperationId,
-                GetObservationRole(item.Item),
-                item.Item.RelativeMilliseconds,
-                item.Item.Api,
-                item.Item.Direction,
-                item.Item.Status,
-                item.Item.PayloadProjectionKind,
-                item.Item.PayloadDisposition,
-                item.Item.CompletePayloadRetained,
-                false)
-            {
-                SemanticResponse = item.Item.SemanticResponse,
-                CorrelatedRequestReferenceId = correlations.GetValueOrDefault(item.Reference),
-            })
-            .ToArray();
         var markerDrafts = markers.Select(CreateMarkerDraft).ToArray();
         labels.TryGetValue(activityId, out var label);
         var gap = unchanged
             ? "The reported starting and target values are unchanged; this sequence does not establish a setting change."
             : complete
-            ? observations.Length == 0 ? "No user-mode feature observation fell inside this action window." : null
+            ? null
             : "An ordered starting, target, action, and restoration sequence is not present.";
         return new ContributionActionWindowDraft(
             activityId,
@@ -438,7 +445,7 @@ public static class ContributionDraftBuilder
             end,
             complete,
             markerDrafts,
-            observations,
+            [],
             gap)
         {
             PowerSourceAtAction = GetActionPowerSource(markers),
@@ -499,7 +506,7 @@ public static class ContributionDraftBuilder
 
     private static void AddInventoryEvidence(
         InventorySnapshot inventory,
-        Dictionary<string, List<ContributionEvidenceReference>> evidence)
+        Dictionary<string, CoverageReferences> evidence)
     {
         if (IsUsable(inventory.PowerSource.State))
         {
@@ -622,30 +629,35 @@ public static class ContributionDraftBuilder
     private static void AddFeatureEvidence(
         EvidenceSessionSnapshot snapshot,
         IReadOnlyList<ContributionActionWindowDraft> windows,
-        Dictionary<string, List<ContributionEvidenceReference>> evidence)
+        Dictionary<string, CoverageReferences> evidence,
+        bool retainReferences)
     {
-        var sourceByReference = snapshot.Observations
-            .Select((item, index) => (Item: item, Reference: ObservationReference(item, index)))
-            .ToDictionary(static item => item.Reference, static item => item.Item, StringComparer.Ordinal);
-        foreach (var window in windows.Where(static item => item.CompleteUserReportedSequence))
+        var index = 0;
+        foreach (var source in snapshot.Observations)
         {
-            foreach (var observation in window.Observations.Where(static item =>
-                         item.ProjectionKind != FeaturePayloadProjectionKind.MetadataOnly
-                         && item.CompletePayloadRetained))
+            var reference = ObservationReference(source, index++);
+            if (source.PayloadProjectionKind == FeaturePayloadProjectionKind.MetadataOnly
+                || !source.CompletePayloadRetained) continue;
+            // Only capability paths for this one record are deduplicated. The
+            // complete capture and its reference set never enter a RAM collection.
+            var referencedPaths = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var window in windows)
             {
-                if (!sourceByReference.TryGetValue(observation.ReferenceId, out var source))
-                {
-                    continue;
-                }
-
-                var summary = $"Reviewed {observation.ProjectionKind} report inside action {window.ActivityId}.";
+                if (!window.CompleteUserReportedSequence || !WithinWindow(source, window)) continue;
+                var summary = $"Reviewed {source.PayloadProjectionKind} report inside action {window.ActivityId}.";
                 foreach (var path in MapFeatureCapability(source, window.PowerSourceAtAction))
                 {
-                    Add(evidence, path, ContributionObservationLayer.UserModeFeatureApi, observation.ReferenceId, summary);
+                    if (referencedPaths.Add(path) && (retainReferences || evidence[path].Count == 0))
+                        Add(evidence, path, ContributionObservationLayer.UserModeFeatureApi,
+                            reference, summary, deduplicate: false);
                 }
             }
         }
     }
+
+    private static bool WithinWindow(SanitizedControlObservation observation, ContributionActionWindowDraft window) =>
+        observation.RelativeMilliseconds >= window.StartRelativeMilliseconds
+        && observation.RelativeMilliseconds <= window.EndRelativeMilliseconds;
 
     private static IEnumerable<string> MapFeatureCapability(
         SanitizedControlObservation observation,
@@ -859,7 +871,7 @@ public static class ContributionDraftBuilder
 
     private static void AddSpecialKeyEvidence(
         EvidenceSessionSnapshot snapshot,
-        Dictionary<string, List<ContributionEvidenceReference>> evidence)
+        Dictionary<string, CoverageReferences> evidence)
     {
         var completedProbes = snapshot.SpecialKeyProbes
             .Where(static probe => probe.ObservationCount > 0)
@@ -913,7 +925,7 @@ public static class ContributionDraftBuilder
     private static IReadOnlyList<ContributionQualityGap> CreateQualityGaps(
         EvidenceSessionSnapshot snapshot,
         IReadOnlyList<ContributionActionWindowDraft> windows,
-        HashSet<string> associated)
+        ObservationQualityStatistics statistics)
     {
         var gaps = new List<ContributionQualityGap>();
         AddSectionGap(gaps, "machineIdentity", snapshot.Inventory.MachineIdentity.State);
@@ -1006,7 +1018,7 @@ public static class ContributionDraftBuilder
                 "The observer reported that recording evidence may be incomplete."));
         }
 
-        if (snapshot.Observations.Select(ObservationReference).Any(reference => !associated.Contains(reference)))
+        if (statistics.Unassociated > 0)
         {
             gaps.Add(new ContributionQualityGap(
                 "observations",
@@ -1014,8 +1026,7 @@ public static class ContributionDraftBuilder
                 "One or more control observations could not be associated with a prompted action window."));
         }
 
-        if (snapshot.Observations.Any(static item =>
-                item.ErrorCategory is "unreadable-buffer" or "buffer-exceeds-limit"))
+        if (statistics.CapturePayloadLoss)
         {
             gaps.Add(new ContributionQualityGap(
                 "observations",
@@ -1023,7 +1034,7 @@ public static class ContributionDraftBuilder
                 "One or more native observations could not retain a call payload because the source buffer was unreadable or exceeded the bounded copy limit."));
         }
 
-        if (snapshot.Observations.Any(static item => !item.CompletePayloadRetained))
+        if (statistics.Redacted > 0)
         {
             gaps.Add(new ContributionQualityGap(
                 "observations",
@@ -1031,7 +1042,7 @@ public static class ContributionDraftBuilder
                 "One or more unsupported, malformed, failed, sensitive, or over-limit report bodies were withheld."));
         }
 
-        if (snapshot.Observations.Any(static item => item.ReturnedLengthUnknown))
+        if (statistics.ReturnedLengthUnknown)
         {
             gaps.Add(new ContributionQualityGap(
                 "observations",
@@ -1039,7 +1050,7 @@ public static class ContributionDraftBuilder
                 "HidD_GetFeature succeeded, but the API does not provide an actual returned-byte count."));
         }
 
-        if (snapshot.Observations.Any(static item => item.Status == ObservationStatus.Failed))
+        if (statistics.ApiFailure)
         {
             gaps.Add(new ContributionQualityGap(
                 "observations",
@@ -1047,12 +1058,18 @@ public static class ContributionDraftBuilder
                 "One or more observed calls completed with a failure status."));
         }
 
-        if (snapshot.Observations.Any(static item => item.Status is ObservationStatus.Pending or ObservationStatus.Cancelled))
+        if (statistics.IncompleteCompletion)
         {
             gaps.Add(new ContributionQualityGap(
                 "observations",
                 "CompletionNotObserved",
                 "One or more observed calls remained pending or were cancelled before completion was observed."));
+        }
+
+        if (snapshot.StorageFailure is not null)
+        {
+            gaps.Add(new ContributionQualityGap("session.storage", "EvidenceStorageFailure",
+                "Local evidence storage failed. The bundle contains the committed records retained before that failure."));
         }
 
         if (snapshot.RejectedMarkerCount + snapshot.RejectedObservationCount + snapshot.RejectedCoverageCount > 0)
@@ -1090,17 +1107,26 @@ public static class ContributionDraftBuilder
     private static bool IsUsable(CollectionState state) =>
         state is CollectionState.Collected or CollectionState.Partial;
 
+    private sealed class CoverageReferences
+    {
+        internal ExportDiskList<ContributionEvidenceReference> Records { get; } = new();
+        // Only bounded inventory and special-key references use this set.
+        // Every control-observation reference bypasses it with deduplicate:false.
+        internal HashSet<(ContributionObservationLayer Layer, string Reference)> MetadataReferences { get; } = [];
+        internal int Count => Records.Count;
+    }
+
     private static void Add(
-        Dictionary<string, List<ContributionEvidenceReference>> evidence,
+        Dictionary<string, CoverageReferences> evidence,
         string path,
         ContributionObservationLayer layer,
         string referenceId,
-        string summary)
+        string summary, bool deduplicate = true)
     {
         if (evidence.TryGetValue(path, out var entries)
-            && !entries.Any(item => item.Layer == layer && item.ReferenceId == referenceId))
+            && (!deduplicate || entries.MetadataReferences.Add((layer, referenceId))))
         {
-            entries.Add(new ContributionEvidenceReference(layer, referenceId, summary));
+            entries.Records.Add(new ContributionEvidenceReference(layer, referenceId, summary));
         }
     }
 
@@ -1132,70 +1158,118 @@ public static class ContributionDraftBuilder
             : ContributionObservationRole.UnclassifiedFeatureCall;
     }
 
-    private static IReadOnlyDictionary<string, string> CorrelateReviewedSemanticResponses(
-        IReadOnlyList<(SanitizedControlObservation Item, string Reference, int Index)> observations)
-    {
-        var correlations = new Dictionary<string, string>(StringComparer.Ordinal);
-        var consumedRequests = new HashSet<string>(StringComparer.Ordinal);
-        var ordered = observations
-            .OrderBy(static item => item.Item.RelativeMilliseconds)
-            .ThenBy(static item => item.Index)
-            .ToArray();
+    private sealed record IndexedObservation(SanitizedControlObservation Item, string Reference, int Index);
 
-        foreach (var response in ordered.Where(static item => item.Item.SemanticResponse is not null))
+    // Count is available without creating annotation rows. Review/quality paths
+    // never enumerate this projection; ZIP serialization streams it once.
+    private sealed class WindowObservationProjection(IEnumerable<IndexedObservation> source, int count)
+        : IReadOnlyList<ContributionObservationDraft>
+    {
+        public int Count => count;
+        public ContributionObservationDraft this[int index] => index >= 0 && index < count
+            ? this.Skip(index).First() : throw new ArgumentOutOfRangeException(nameof(index));
+
+        public IEnumerator<ContributionObservationDraft> GetEnumerator()
         {
-            var candidates = ordered.Where(request =>
-                    !consumedRequests.Contains(request.Reference)
-                    && IsMatchingReviewedThermalSetter(request, response))
-                .ToArray();
-            if (candidates.Length != 1)
+            using var correlations = CorrelateReviewedSemanticResponses(source);
+            using var correlation = correlations.GetEnumerator();
+            var hasCorrelation = correlation.MoveNext();
+            foreach (var item in source)
             {
-                continue;
+                while (hasCorrelation && correlation.Current.Index < item.Index)
+                    hasCorrelation = correlation.MoveNext();
+                yield return new ContributionObservationDraft(
+                    ContributionObservationLayer.UserModeFeatureApi, item.Reference, item.Item.OperationId,
+                    GetObservationRole(item.Item), item.Item.RelativeMilliseconds, item.Item.Api,
+                    item.Item.Direction, item.Item.Status, item.Item.PayloadProjectionKind,
+                    item.Item.PayloadDisposition, item.Item.CompletePayloadRetained, false)
+                {
+                    SemanticResponse = item.Item.SemanticResponse,
+                    CorrelatedRequestReferenceId = hasCorrelation && correlation.Current.Index == item.Index
+                        ? correlation.Current.RequestReference : null,
+                };
             }
-
-            correlations.Add(response.Reference, candidates[0].Reference);
-            consumedRequests.Add(candidates[0].Reference);
         }
 
-        return correlations;
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
     }
 
-    private static bool IsMatchingReviewedThermalSetter(
-        (SanitizedControlObservation Item, string Reference, int Index) request,
-        (SanitizedControlObservation Item, string Reference, int Index) response)
+    private sealed record CorrelationEvent(string Key, double Time, bool IsResponse, int Index, string Reference);
+    private sealed record CorrelationResult(int Index, string RequestReference);
+
+    private static ExportDiskList<CorrelationResult> CorrelateReviewedSemanticResponses(
+        IEnumerable<IndexedObservation> observations)
     {
-        var semantic = response.Item.SemanticResponse;
-        if (semantic?.Kind != ReviewedFeatureResponseKind.ThermalSetterAcknowledgement
-            || request.Item.Source != ObservationSource.UserModeCall
-            || request.Item.Direction != ObservationDirection.Input
-            || request.Item.Status != ObservationStatus.Succeeded
-            || !request.Item.CompletePayloadRetained
-            || request.Item.PayloadProjectionKind != FeaturePayloadProjectionKind.ReviewedThermalMode
-            || request.Item.HeaderHints is not
+        using var ordered = ExportExternalSort.Sort(CorrelationEvents(observations),
+            Comparer<CorrelationEvent>.Create(static (left, right) =>
             {
-                Status: 0,
-                CommandClass: 0x0D,
-                CommandId: 0x02,
-            } header
-            || header.TransactionId != semantic.TransactionId
-            || request.Item.VendorId != response.Item.VendorId
-            || request.Item.ProductId != response.Item.ProductId
-            || !string.Equals(request.Item.InterfaceLabel, response.Item.InterfaceLabel, StringComparison.Ordinal)
-            || request.Item.UsagePage != response.Item.UsagePage
-            || request.Item.Usage != response.Item.Usage
-            || request.Item.RelativeMilliseconds > response.Item.RelativeMilliseconds
-            || (request.Item.CompletedRelativeMilliseconds ?? request.Item.RelativeMilliseconds)
-                > response.Item.RelativeMilliseconds)
+                var comparison = StringComparer.Ordinal.Compare(left.Key, right.Key);
+                if (comparison != 0) return comparison;
+                comparison = left.Time.CompareTo(right.Time);
+                if (comparison != 0) return comparison;
+                // A request completing exactly when a response starts is eligible.
+                comparison = left.IsResponse.CompareTo(right.IsResponse);
+                return comparison != 0 ? comparison : left.Index.CompareTo(right.Index);
+            }));
+        using var matches = new ExportDiskList<CorrelationResult>();
+        string? key = null;
+        string? pendingReference = null;
+        var pendingCount = 0;
+        foreach (var item in ordered)
         {
-            return false;
+            if (item.Key != key)
+            {
+                key = item.Key;
+                pendingReference = null;
+                pendingCount = 0;
+            }
+            if (!item.IsResponse)
+            {
+                pendingReference = item.Reference;
+                // Two unresolved candidates remain ambiguous forever: the old
+                // matcher consumes a request only when exactly one is eligible.
+                pendingCount = Math.Min(2, pendingCount + 1);
+            }
+            else if (pendingCount == 1)
+            {
+                matches.Add(new CorrelationResult(item.Index, pendingReference!));
+                pendingCount = 0;
+                pendingReference = null;
+            }
         }
-
-        var payload = TryGetPayload(request.Item);
-        return payload is { Length: 4 }
-            && ReviewedThermalEncoding.TryDecode(payload, out var channel, out var mode)
-            && channel == semantic.ThermalChannel
-            && mode == semantic.ThermalMode;
+        return ExportExternalSort.Sort(matches,
+            Comparer<CorrelationResult>.Create(static (left, right) => left.Index.CompareTo(right.Index)));
     }
+
+    private static IEnumerable<CorrelationEvent> CorrelationEvents(
+        IEnumerable<IndexedObservation> observations)
+    {
+        foreach (var entry in observations)
+        {
+            var item = entry.Item;
+            if (item.SemanticResponse is { Kind: ReviewedFeatureResponseKind.ThermalSetterAcknowledgement } semantic)
+            {
+                yield return new CorrelationEvent(CorrelationKey(item, semantic.TransactionId,
+                    semantic.ThermalChannel, semantic.ThermalMode), item.RelativeMilliseconds, true, entry.Index, entry.Reference);
+            }
+            if (item.Source != ObservationSource.UserModeCall
+                || item.Direction != ObservationDirection.Input
+                || item.Status != ObservationStatus.Succeeded
+                || !item.CompletePayloadRetained
+                || item.PayloadProjectionKind != FeaturePayloadProjectionKind.ReviewedThermalMode
+                || item.HeaderHints is not { Status: 0, CommandClass: 0x0D, CommandId: 0x02 } header)
+                continue;
+            var payload = TryGetPayload(item);
+            if (payload is not { Length: 4 }
+                || !ReviewedThermalEncoding.TryDecode(payload, out var channel, out var mode)) continue;
+            yield return new CorrelationEvent(CorrelationKey(item, header.TransactionId, channel, mode),
+                Math.Max(item.CompletedRelativeMilliseconds ?? item.RelativeMilliseconds, item.RelativeMilliseconds), false, entry.Index, entry.Reference);
+        }
+    }
+
+    private static string CorrelationKey(SanitizedControlObservation item, byte transaction,
+        ReviewedThermalChannel channel, ReviewedThermalMode mode) =>
+        $"{item.VendorId}|{item.ProductId}|{item.InterfaceLabel}|{item.UsagePage}|{item.Usage}|{transaction}|{channel}|{mode}";
 
     private static IReadOnlyList<string> DistinctValues(IEnumerable<string?> values) =>
         values.OfType<string>()

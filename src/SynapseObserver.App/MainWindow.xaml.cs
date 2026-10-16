@@ -13,6 +13,8 @@ public partial class MainWindow : Window
     private bool closing;
     private bool wasRecording;
     private bool hadInventory;
+    private bool pendingExportFocus;
+    private bool hadCapacityRecovery;
     private SpecialKeyProbe? specialKeyProbe;
 
     public MainWindow(bool preview)
@@ -45,14 +47,20 @@ public partial class MainWindow : Window
             }
             var finished = wasRecording && !viewModel.IsRecording;
             wasRecording = viewModel.IsRecording;
-            if (finished)
+            var recoveryAvailable = viewModel.ShowCapacityRecovery;
+            pendingExportFocus |= finished || recoveryAvailable && !hadCapacityRecovery;
+            hadCapacityRecovery = recoveryAvailable;
+            if (pendingExportFocus && !viewModel.IsBusy)
             {
+                pendingExportFocus = false;
                 Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, new Action(() =>
                 {
                     if (!closing && IsEnabled && IsVisible && viewModel.ShowExport)
                     {
                         ExportCard.BringIntoView();
-                        SaveEvidenceButton.Focus();
+                        if (viewModel.ShowCapacityRecovery && viewModel.CapacityRestorationRequired && !viewModel.CapacityRestorationConfirmed)
+                            CapacityRestorationCheckBox.Focus();
+                        else SaveEvidenceButton.Focus();
                     }
                 }));
             }
@@ -64,6 +72,11 @@ public partial class MainWindow : Window
         viewModel.SetPreviewStage(stage);
         Show();
         UpdateLayout();
+        if (stage == 4)
+        {
+            ExportCard.BringIntoView();
+            UpdateLayout();
+        }
         // The preview uses a real maximized window; record dimensions to catch
         // restored-size caps that also restrict Windows maximization.
         File.WriteAllText(Path.ChangeExtension(path, ".layout.json"), System.Text.Json.JsonSerializer.Serialize(new

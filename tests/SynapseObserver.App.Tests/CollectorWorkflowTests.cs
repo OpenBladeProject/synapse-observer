@@ -462,6 +462,69 @@ public sealed class CollectorWorkflowTests
         Assert.Equal(CoverageState.Pending, Assert.Single(model.Evidence!.Coverage, item => item.ActivityId == "special-key-m1").State);
     }
 
+    [Fact]
+    public void SelectingFnRefreshesStatusWithConditionalProbeGuidance()
+    {
+        var model = new CollectorViewModel(true);
+        var notifications = new List<string?>();
+        model.PropertyChanged += (_, item) => notifications.Add(item.PropertyName);
+
+        model.ExpectedSpecialKey = SpecialKeyExpectedKey.Fn;
+
+        Assert.Contains(nameof(CollectorViewModel.SpecialKeyStatus), notifications);
+        Assert.Contains("may not produce a Windows input event", model.SpecialKeyStatus);
+        Assert.Contains("Click Check key for 5 seconds", model.SpecialKeyStatus);
+        Assert.Contains("keep this collector window in front", model.SpecialKeyStatus);
+        Assert.Contains("If your laptop has an Fn + P shortcut", model.SpecialKeyStatus);
+        Assert.Contains("may change a setting", model.SpecialKeyStatus);
+        Assert.DoesNotContain("not detected", model.SpecialKeyStatus, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task FnTimeoutWithoutInputPreservesDeclarationAndExplainsObservationLimit()
+    {
+        var model = new CollectorViewModel(true);
+        await Run(model.CollectCommand);
+        var selected = model.Activities.ToList().FindIndex(activity => activity.Id == "special-key-fn");
+        model.SelectedActivityIndex = selected;
+        model.StartingSetting = "Shows the function-row overlay";
+        await Run(model.MarkCommand);
+        typeof(CollectorViewModel).GetField("activeProbeLabel", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.SetValue(model, "probe-001");
+
+        model.CompleteSpecialKeyProbe(new(SpecialKeyExpectedKey.Fn, SpecialKeyModeContext.Unknown,
+            SpecialKeyProbeEndReason.Timeout, 0, 0, 0, ""));
+
+        var coverage = Assert.Single(model.Evidence!.Coverage, item => item.ActivityId == "special-key-fn");
+        Assert.Equal(CoverageState.Completed, coverage.State);
+        Assert.Equal("Shows the function-row overlay", Assert.Single(model.Evidence.Markers,
+            item => item.ActivityId == "special-key-fn").Value);
+        Assert.Equal(SpecialKeyProbeEndReason.Timeout, Assert.Single(model.Evidence.SpecialKeyProbes).EndReason);
+        Assert.Contains("no Windows input observations", model.SpecialKeyStatus);
+        Assert.Contains("finished normally", model.SpecialKeyStatus);
+        Assert.Contains("report any visible behavior", model.SpecialKeyStatus);
+        Assert.Contains("does not show whether the physical key worked", model.SpecialKeyStatus);
+        Assert.DoesNotContain("not detected", model.SpecialKeyStatus, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData(SpecialKeyProbeEndReason.Cancelled)]
+    [InlineData(SpecialKeyProbeEndReason.FocusLost)]
+    [InlineData(SpecialKeyProbeEndReason.LimitReached)]
+    [InlineData(SpecialKeyProbeEndReason.Unavailable)]
+    [InlineData(SpecialKeyProbeEndReason.Disposed)]
+    public async Task InterruptedProbeKeepsItsReasonWithoutNormalCompletionClaim(SpecialKeyProbeEndReason reason)
+    {
+        var model = new CollectorViewModel(true);
+        await Run(model.CollectCommand);
+        typeof(CollectorViewModel).GetField("activeProbeLabel", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.SetValue(model, "probe-001");
+
+        model.CompleteSpecialKeyProbe(new(SpecialKeyExpectedKey.Fn, SpecialKeyModeContext.Unknown, reason, 0, 0, 0, ""));
+
+        Assert.Contains(reason.ToString(), model.SpecialKeyStatus);
+        Assert.DoesNotContain("finished normally", model.SpecialKeyStatus);
+        Assert.Equal(reason, Assert.Single(model.Evidence!.SpecialKeyProbes).EndReason);
+    }
+
     [Theory]
     [InlineData(0)]
     [InlineData(1)]
@@ -470,6 +533,11 @@ public sealed class CollectorWorkflowTests
     {
         var model = await RecordingAsync();
         var observer = new GatedOwnedObserver(failure: failure);
+        EvidenceSessionSnapshot? finalSnapshot = null;
+        model.PropertyChanged += (_, _) =>
+        {
+            if (!model.IsRecording && !model.IsBusy) finalSnapshot ??= model.Evidence;
+        };
         model.SetOwnedTestObserver(observer, startPump: true);
         model.StopCommand.Execute(null);
         await observer.StopEntered.Task;
@@ -481,7 +549,8 @@ public sealed class CollectorWorkflowTests
         Assert.Equal(1, observer.Stops);
         Assert.Equal(1, observer.Disposals);
         Assert.Equal(1, observer.MaximumConcurrentPolls);
-        Assert.Single(model.Evidence!.Markers, item => item.Kind == EvidenceMarkerKind.RecordingStopped);
+        using var evidence = Assert.IsType<EvidenceSessionSnapshot>(finalSnapshot);
+        Assert.Single(evidence.Markers, item => item.Kind == EvidenceMarkerKind.RecordingStopped);
         Assert.Equal(failure != 0, model.Status.Contains("ended with a gap"));
     }
 
@@ -490,13 +559,14 @@ public sealed class CollectorWorkflowTests
     {
         var model = await RecordingAsync();
         var session = (EvidenceSession)typeof(CollectorViewModel).GetField("session", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(model)!;
+        var observer = new GatedOwnedObserver(dropped: 1);
+        model.SetOwnedTestObserver(observer);
         while (session.Snapshot().Markers.Count < EvidenceLimits.MaxMarkers)
             Assert.Equal(EvidenceAddResult.Added, session.AddMarker(new(0, EvidenceMarkerKind.Failure, "owned-fixture", "Owned quota fixture", EvidenceProvenance.Collector)));
         model.StartingSetting = "Balanced";
         await Run(model.MarkCommand);
         Assert.True(model.ShowStartingValue);
         Assert.Contains("session is full", model.Status);
-        var observer = new GatedOwnedObserver(dropped: 1);
         model.SetOwnedTestObserver(observer, startPump: true);
         model.StopCommand.Execute(null);
         await observer.PolledDuringStop.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -638,7 +708,7 @@ public sealed class CollectorWorkflowTests
     [Theory]
     [InlineData(1, "HidD_SetFeature", 0)]
     [InlineData(1, "invalid api", 1)]
-    [InlineData(EvidenceLimits.MaxObservations + 1, "HidD_SetFeature", 1)]
+    [InlineData(4097, "HidD_SetFeature", 0)]
     public async Task RetentionRejectionsAreGapsButPrivacyRedactionIsNot(int count, string api, int expectedGaps)
     {
         var model = await RecordingAsync();
@@ -650,8 +720,7 @@ public sealed class CollectorWorkflowTests
         await Run(model.StopCommand);
         Assert.Equal(expectedGaps, model.Evidence!.RejectedObservationCount);
         Assert.Contains($"{expectedGaps} recording gaps", model.ObservationSummary);
-        if (count > EvidenceLimits.MaxObservations)
-            Assert.Contains($"{EvidenceLimits.MaxObservations} observation limit", model.CollectionDetails);
+        Assert.Equal(count - expectedGaps, model.Evidence.Observations.Count);
         Assert.All(events, observation => Assert.All(observation.RequestBytes, value => Assert.Equal((byte)0, value)));
     }
 

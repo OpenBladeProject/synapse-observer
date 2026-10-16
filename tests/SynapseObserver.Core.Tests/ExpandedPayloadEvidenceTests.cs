@@ -244,9 +244,10 @@ public sealed class ExpandedPayloadEvidenceTests
     {
         var session = Session(91);
         session.AddObservation(Observation(new byte[91]));
+        using var snapshot = session.Snapshot();
         session.Dispose();
         session.Dispose();
-        Assert.Single(session.Snapshot().Observations);
+        Assert.Single(snapshot.Observations);
         Assert.Throws<ObjectDisposedException>(() => session.AddObservation(Observation(new byte[91])));
     }
 

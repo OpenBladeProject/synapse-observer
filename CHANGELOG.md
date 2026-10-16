@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+## [0.2.9] - 2026-10-16
+
+### Fixed
+
+- Explain when to wait for Synapse profile syncing before changing or restoring
+  settings, and how to save partial evidence if syncing stays stuck. Make the
+  separate Fn key check easier to find and distinguish a completed no-input
+  check from an interrupted probe
+  ([#13](https://github.com/OpenBladeProject/synapse-observer/pull/13)).
+
+- Stream sanitized control reports to local disk and export one ZIP without
+  the previous observation, retained-payload, or JSON-entry size ceilings.
+  Keep memory bounded during recording and export, preserve late setting
+  changes and responses, and allow partial export after a storage failure.
+  Keep optional key-check limits separate from control recording and retain
+  queue-loss totals within each guided action window
+  ([#13](https://github.com/OpenBladeProject/synapse-observer/pull/13)).
+
 ## [0.2.8] - 2026-10-15
 
 ### Improved

@@ -77,17 +77,20 @@ with the JSON files when attaching the ZIP to a support request.
 
 ## Collection limits
 
+- Sanitized control observations are written to a local temporary spool as they arrive, then streamed into one ZIP. There is no fixed observation count, total retained-payload allowance, or JSON-entry size ceiling. Memory use stays bounded; available local disk space determines how much can be retained. The temporary spool contains the same privacy-filtered fields as the manifest, never raw reports or the comparison secret. A storage failure stops collection with an explicit gap; only completely stored records are exported. Failed or cancelled export preserves the collection for retry. Temporary evidence is released when the collection and its active exports close.
+- An interrupted setting keeps its exact starting-value reminder. A late restoration confirmed after recording stopped is exported as a separate user-reported context marker, leaving the earlier recorded sequence incomplete. Partial save is available without confirmation. Marker space is reserved for cleanup. Queue-loss notices coalesce within each recording and guided action window, preserving its first-loss timestamp and latest recording-wide cumulative count. Cleanup failures retain the existing manual Synapse restart requirement.
 - A recording lasts at most ten minutes.
 - One identified physical Blade laptop can contribute up to eight feature
   collections during live observation.
-- Feature reports are bounded to 4,096 bytes per observation, 4 MiB of retained
-  bodies per session, 4,096 observations, and 16 KiB per native observer event.
+- Feature reports are bounded to 4,096 bytes per observation and 16 KiB per native observer event.
 - The session accepts up to 512 markers and 128 guided coverage items.
   Reaching the marker limit preserves earlier evidence, counts rejected markers,
   and leaves stop/export available. The independent coverage draft still contains
   the complete maintained capability universe; it is not limited by the guided-item bound.
 - Special-key evidence is bounded to 256 observations, 32 observations per
-  prompted probe, and 64 probe summaries.
+  prompted probe, and 64 probe summaries. Reaching a total key-input or probe
+  limit disables further optional key checks; setting recordings can continue. A probe that cannot retain
+  its result does not claim normal completion.
 - Display text is limited to 256 characters and opaque identifier tokens to 80
   characters.
 - Payload comparison keeps at most 64 streams and 16 changed-byte ranges per
@@ -103,7 +106,7 @@ with the JSON files when attaching the ZIP to a support request.
   color-profile lists retain up to 32 associations plus the two default-profile
   records for each queried scope. Only recognized preset files are hashed, with
   hashing limited to 16 MiB per file.
-- Each JSON entry is limited to 16 MiB. Export writes a private temporary file,
+- Export streams JSON entries to a private temporary ZIP,
   flushes it, and replaces the selected ZIP only after every entry succeeds.
 
 The ZIP excludes HID interface paths, PnP instance paths, serial-number fields,

@@ -336,8 +336,33 @@ public enum EvidenceAddResult
     RejectedInvalid,
     RejectedLimit,
     RejectedPayloadPolicy,
+    RejectedStorage,
 }
 
+public enum EvidenceStorageFailureKind
+{
+    IoFailure,
+    AccessDenied,
+    RecordTooLarge,
+}
+
+public sealed record EvidenceStorageFailure(EvidenceStorageFailureKind Kind, string Summary)
+{
+    public static EvidenceStorageFailure IoFailure { get; } = new(
+        EvidenceStorageFailureKind.IoFailure,
+        "The sanitized evidence store could not write another observation.");
+
+    public static EvidenceStorageFailure AccessDenied { get; } = new(
+        EvidenceStorageFailureKind.AccessDenied,
+        "Windows denied access to the sanitized evidence store.");
+
+    public static EvidenceStorageFailure RecordTooLarge { get; } = new(
+        EvidenceStorageFailureKind.RecordTooLarge,
+        "A sanitized observation exceeded the per-record storage bound.");
+}
+
+// Owns an immutable disk-spool lease. Dispose after use; enumerate observations
+// for a complete pass, because indexed access replays the prefix.
 public sealed record EvidenceSessionSnapshot(
     string SchemaVersion,
     DateTimeOffset StartedAtUtc,
@@ -347,15 +372,24 @@ public sealed record EvidenceSessionSnapshot(
     IReadOnlyList<CoverageItem> Coverage,
     int RejectedMarkerCount,
     int RejectedObservationCount,
-    int RejectedCoverageCount)
+    int RejectedCoverageCount) : IDisposable
 {
     public const string CurrentSchemaVersion = "synapse-observer.session.v2";
 
     public IReadOnlyList<SpecialKeyObservation> SpecialKeyObservations { get; init; } = [];
     public IReadOnlyList<SpecialKeyProbeSummary> SpecialKeyProbes { get; init; } = [];
+    public EvidenceStorageFailure? StorageFailure { get; init; }
 
     internal static IReadOnlyList<T> Freeze<T>(IEnumerable<T> values) =>
         new ReadOnlyCollection<T>(values.ToArray());
+
+    public void Dispose()
+    {
+        if (Observations is IDisposable disposable)
+        {
+            disposable.Dispose();
+        }
+    }
 }
 
 public sealed record CollectorBuildEvidence(
