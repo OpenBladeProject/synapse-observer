@@ -506,6 +506,28 @@ public sealed class CollectorWorkflowTests
         Assert.DoesNotContain("not detected", model.SpecialKeyStatus, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public async Task RejectedFnInputIsNotReportedAsNormalSilenceOrRetainedEvidence()
+    {
+        var model = new CollectorViewModel(true);
+        await Run(model.CollectCommand);
+        typeof(CollectorViewModel).GetField("activeProbeLabel", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.SetValue(model, "probe-001");
+        var item = new SpecialKeyObservation(0, SpecialKeyExpectedKey.Fn, SpecialKeyModeContext.Unknown,
+            "hid-preview-01", SpecialKeyObservationOrigin.WindowsRawInput, SpecialKeyPhase.KeyDown, 0x41);
+        Assert.Equal(EvidenceAddResult.RejectedInvalid, model.RecordSpecialKeyObservation(item));
+        model.CompleteSpecialKeyProbe(new(SpecialKeyExpectedKey.Fn, SpecialKeyModeContext.Unknown,
+            SpecialKeyProbeEndReason.Timeout, 1, 0, 0, ""));
+        using var evidence = model.Evidence!;
+        var summary = Assert.Single(evidence.SpecialKeyProbes);
+        Assert.Equal(0, summary.ObservationCount);
+        Assert.Equal(1, summary.RejectedPacketCount);
+        Assert.Empty(evidence.SpecialKeyObservations);
+        Assert.Contains("rejected", model.SpecialKeyStatus);
+        Assert.DoesNotContain("finished normally", model.SpecialKeyStatus);
+        Assert.DoesNotContain("no Windows input observations", model.SpecialKeyStatus);
+        Assert.Contains(ContributionDraftBuilder.CreateQualityReceipt(evidence).Gaps, gap => gap.Code == "RejectedInput");
+    }
+
     [Theory]
     [InlineData(SpecialKeyProbeEndReason.Cancelled)]
     [InlineData(SpecialKeyProbeEndReason.FocusLost)]

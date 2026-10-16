@@ -133,3 +133,5 @@ topology required for an unfamiliar native-brightness driver stack. Driver-file
 signature checks do not separately verify catalog signatures: an `Unsigned`
 result is not proof that a Windows driver lacks a valid catalog signature.
 These collection limits are included in the quality receipt.
+
+The optional key check also listens to eligible Generic Desktop input collections with an undefined usage. Windows delivers that page to the foreground collector, which checks each device before reading its report body. Mouse data and unrelated devices are ignored. Unknown report contents remain redacted. Incomplete optional descriptor details do not block a check when its top-level usage and input size were collected. Rejected input and interrupted or unavailable checks are reported separately from a completed check with no input.

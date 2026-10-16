@@ -60,8 +60,34 @@ public sealed class SpecialKeyProbeTests
         Assert.True(SpecialKeyProbeParser.IsInputCandidate(Candidate(page: 12, usage: 1)));
         Assert.True(SpecialKeyProbeParser.IsInputCandidate(Candidate(page: 0xFF00, usage: 1)));
         Assert.False(SpecialKeyProbeParser.IsInputCandidate(Candidate(page: 1, usage: 2)));
-        Assert.False(SpecialKeyProbeParser.IsInputCandidate(Candidate() with { DescriptorState = CollectionState.Partial }));
+        Assert.False(SpecialKeyProbeParser.IsInputCandidate(Candidate() with { DescriptorState = CollectionState.Unavailable }));
         Assert.False(SpecialKeyProbeParser.IsInputCandidate(Candidate(length: 0)));
+    }
+
+    [Fact]
+    public void UndefinedDesktopCollectionIsAdmittedWithoutGuessingFnOrRetainingBytes()
+    {
+        var candidate = Candidate(page: 1, usage: 0, length: 16);
+        Assert.True(SpecialKeyProbeParser.IsInputCandidate(candidate));
+        Assert.True(SpecialKeyProbeParser.IsSingleBladeRoot([candidate, Candidate()]));
+        using var parser = new SpecialKeyProbeParser(SpecialKeyExpectedKey.Fn, SpecialKeyModeContext.Unknown);
+        byte[] report = new byte[16];
+        report[0] = 4; report[1] = 10;
+        var pressed = Assert.IsType<SpecialKeyObservation>(parser.Hid(candidate, report, 0));
+        report[1] = 0;
+        var released = Assert.IsType<SpecialKeyObservation>(parser.Hid(candidate, report, 1));
+        Assert.Equal(SpecialKeyObservationOrigin.UnknownHidMetadata, pressed.Origin);
+        Assert.Null(pressed.ReviewedSignal);
+        Assert.Null(pressed.VirtualKey);
+        Assert.Equal(1, released.ChangedByteCount);
+        Assert.Equal(new ChangedByteRange(1, 1), Assert.Single(released.ChangedRanges!));
+        Assert.NotEqual(pressed.ProbeEqualityLabel, released.ProbeEqualityLabel);
+        Assert.Equal(2, parser.Summary(SpecialKeyProbeEndReason.Timeout).ObservationCount);
+        Assert.DoesNotContain(Convert.ToHexString(report), JsonSerializer.Serialize(released));
+        Assert.False(SpecialKeyProbeParser.IsInputCandidate(candidate with { VendorId = 0xFFFF }));
+        Assert.True(SpecialKeyProbeParser.IsInputCandidate(candidate with { DescriptorState = CollectionState.Partial }));
+        Assert.False(SpecialKeyProbeParser.IsInputCandidate(candidate with { DescriptorState = CollectionState.Partial, ReportGeometry = null }));
+        Assert.False(SpecialKeyProbeParser.IsSingleBladeRoot([candidate, Candidate(root: "other-root")]));
     }
 
     [Fact]
