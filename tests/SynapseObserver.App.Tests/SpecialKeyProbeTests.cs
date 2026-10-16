@@ -12,6 +12,22 @@ public sealed class SpecialKeyProbeTests
         new("private-device-path", label, model, 0x1532, pid, null, page, usage, new(length, 0, 0),
             CollectionState.Collected, null, null, null, null, root, "private-hardware-id", model);
 
+    [Fact]
+    public void LaterDescriptorScanMustMatchEligibleExportedInventory()
+    {
+        var candidate = Candidate(page: 1, usage: 0, length: 16);
+        var saved = new HidInterfaceEvidence(candidate.InterfaceLabel, candidate.VendorId, candidate.ProductId,
+            candidate.VersionNumber, candidate.UsagePage, candidate.Usage, candidate.ReportGeometry,
+            CollectionState.Collected, null);
+        Assert.True(CollectorViewModel.CanRetainSpecialKeyInput(candidate, [saved]));
+        Assert.True(CollectorViewModel.CanRetainSpecialKeyInput(candidate, [saved with { DescriptorState = CollectionState.Partial }]));
+        Assert.False(CollectorViewModel.CanRetainSpecialKeyInput(candidate, [saved with
+            { DescriptorState = CollectionState.Partial, UsagePage = null, Usage = null, ReportGeometry = null }]));
+        Assert.False(CollectorViewModel.CanRetainSpecialKeyInput(candidate, [saved with { ReportGeometry = new(8, 0, 0) }]));
+        Assert.False(CollectorViewModel.CanRetainSpecialKeyInput(candidate, [saved with { InterfaceLabel = "hid-other" }]));
+        Assert.False(CollectorViewModel.CanRetainSpecialKeyInput(candidate, [saved with { ProductId = 0x0001 }]));
+    }
+
     [Theory]
     [InlineData(0x41)] [InlineData(0x50)] [InlineData(0x30)] [InlineData(0x20)] [InlineData(0x0D)] [InlineData(0xBA)]
     public void OrdinaryTypingIsCountedWithoutValues(int key)

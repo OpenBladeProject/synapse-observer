@@ -60,9 +60,14 @@ public sealed class SpecialKeyProbe : IDisposable
         deliveredObservations = 0;
         callback = onObservation;
         foreground = isForeground;
-        if (!SpecialKeyProbeParser.IsSingleBladeRoot(inputCandidates) || !HasFocus())
+        if (!SpecialKeyProbeParser.IsSingleBladeRoot(inputCandidates))
         {
             End(SpecialKeyProbeEndReason.Unavailable);
+            return false;
+        }
+        if (!HasFocus())
+        {
+            End(SpecialKeyProbeEndReason.FocusLost);
             return false;
         }
         candidates = inputCandidates.Where(SpecialKeyProbeParser.IsInputCandidate)

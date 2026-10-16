@@ -23,6 +23,30 @@ public sealed class CollectionReviewWorkflowTests
         await model.CloseAsync();
     }
 
+    [Theory]
+    [InlineData(SpecialKeyProbeEndReason.Timeout)]
+    [InlineData(SpecialKeyProbeEndReason.FocusLost)]
+    public async Task StandaloneKeyCheckRefreshesVisibleReview(SpecialKeyProbeEndReason reason)
+    {
+        var model = new CollectorViewModel(preview: true);
+        await Run(model.CollectCommand);
+        Assert.Contains("No Synapse recording or key check yet", model.ReviewSummary);
+        typeof(CollectorViewModel).GetField("activeProbeLabel", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .SetValue(model, "probe-001");
+        var notifications = new List<string?>();
+        model.PropertyChanged += (_, item) => notifications.Add(item.PropertyName);
+
+        await model.CompleteSpecialKeyProbeAsync(new(SpecialKeyExpectedKey.Fn, SpecialKeyModeContext.Unknown,
+            reason, 0, 0, 0, string.Empty));
+
+        Assert.Contains("1 key check", model.ReviewSummary);
+        Assert.DoesNotContain("No Synapse recording or key check yet", model.ReviewSummary);
+        Assert.Contains(nameof(CollectorViewModel.ReviewSummary), notifications);
+        Assert.Contains(nameof(CollectorViewModel.ReviewNotes), notifications);
+        Assert.False(model.IsBusy);
+        await model.CloseAsync();
+    }
+
     [Fact]
     public async Task EveryActionPhaseUsesFreshPowerAndStopRefreshesReview()
     {

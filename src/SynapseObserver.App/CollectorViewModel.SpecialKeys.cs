@@ -5,6 +5,7 @@ namespace SynapseObserver.App;
 internal sealed partial class CollectorViewModel
 {
     private SpecialKeyProbe? specialKeyProbe;
+    private Task specialKeyReviewTask = Task.CompletedTask;
     private Func<bool>? probeForeground;
     private bool probingSpecialKey;
     private int probeSequence;
@@ -41,11 +42,18 @@ internal sealed partial class CollectorViewModel
     public AsyncCommand? ProbeSpecialKeyCommand { get; private set; }
     public AsyncCommand? CancelSpecialKeyProbeCommand { get; private set; }
 
+    internal static bool CanRetainSpecialKeyInput(LocalHidCandidate candidate, IReadOnlyList<HidInterfaceEvidence> inventory) =>
+        SpecialKeyProbeParser.IsInputCandidate(candidate) && inventory.Any(item =>
+            item.InterfaceLabel == candidate.InterfaceLabel && item.VendorId == candidate.VendorId
+            && item.ProductId == candidate.ProductId && item.UsagePage == candidate.UsagePage && item.Usage == candidate.Usage
+            && item.ReportGeometry == candidate.ReportGeometry
+            && SpecialKeyInputCollection.IsEligible(item.VendorId, item.DescriptorState, item.UsagePage, item.Usage, item.ReportGeometry));
+
     internal void ConfigureSpecialKeyProbe(SpecialKeyProbe probe, Func<bool> isForeground)
     {
         specialKeyProbe = probe;
         probeForeground = isForeground;
-        probe.Completed += CompleteSpecialKeyProbe;
+        probe.Completed += summary => specialKeyReviewTask = CompleteSpecialKeyProbeAsync(summary);
         ProbeSpecialKeyCommand = new AsyncCommand(() => GuardAsync(ProbeSpecialKeyAsync), () => CanProbeSpecialKeys);
         CancelSpecialKeyProbeCommand = new AsyncCommand(() => { probe.Disarm(); return Task.CompletedTask; }, () => probingSpecialKey);
         RefreshSpecialKeyProbe();
@@ -123,6 +131,17 @@ internal sealed partial class CollectorViewModel
             specialKeyStatus = "Some input evidence could not be retained. Save the collection gaps.";
         }
         return result;
+    }
+
+    internal async Task CompleteSpecialKeyProbeAsync(SpecialKeyProbeSummary summary)
+    {
+        CompleteSpecialKeyProbe(summary);
+        if (!recording)
+        {
+            await UpdateCollectionReviewAsync();
+            Changed(nameof(ReviewSummary));
+            Changed(nameof(ReviewNotes));
+        }
     }
 
     internal void CompleteSpecialKeyProbe(SpecialKeyProbeSummary summary)
