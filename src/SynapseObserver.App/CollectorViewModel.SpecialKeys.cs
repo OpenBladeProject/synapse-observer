@@ -74,9 +74,9 @@ internal sealed partial class CollectorViewModel
                 var result = RecordSpecialKeyObservation(item);
                 if (result == EvidenceAddResult.RejectedLimit || session.SpecialKeyObservationCount >= EvidenceLimits.MaxSpecialKeyObservations)
                 {
+                    // Completion synchronously publishes counts, gaps and the
+                    // key-limit guidance. Preserve that complete result.
                     specialKeyProbe.EndAtCapacity();
-                    specialKeyStatus = "The optional key-check limit has been reached. Setting recordings can continue; all collected key evidence will be included in the ZIP.";
-                    RefreshSpecialKeyProbe();
                 }
             }, probeForeground, SpecialKeyModeContext.Unknown);
         }

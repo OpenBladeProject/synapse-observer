@@ -25,6 +25,7 @@ public sealed class SpecialKeyProbe : IDisposable
     private Func<bool>? foreground;
     private TimeSpan duration;
     private bool disposed;
+    private int deliveredObservations;
 
     public SpecialKeyProbe(nint hwnd)
     {
@@ -56,6 +57,7 @@ public sealed class SpecialKeyProbe : IDisposable
         if (duration <= TimeSpan.Zero || duration > TimeSpan.FromSeconds(10))
             throw new ArgumentOutOfRangeException(nameof(timeout));
         parser = new SpecialKeyProbeParser(expectedKey, modeContext);
+        deliveredObservations = 0;
         callback = onObservation;
         foreground = isForeground;
         if (!SpecialKeyProbeParser.IsSingleBladeRoot(inputCandidates) || !HasFocus())
@@ -103,7 +105,7 @@ public sealed class SpecialKeyProbe : IDisposable
         {
             try { ReadInput(lParam); }
             catch (Exception exception) when (exception is ExternalException or ArgumentException or OverflowException)
-            { parser?.Reject(); }
+            { End(SpecialKeyProbeEndReason.Unavailable); }
         }
         return 0;
     }
@@ -116,15 +118,18 @@ public sealed class SpecialKeyProbe : IDisposable
         RawInputHeader header;
         try
         {
-            if (GetRawInputData(handle, RidHeader, headerBuffer, ref size, headerSize) != headerSize) { parser?.Reject(); return; }
+            if (GetRawInputData(handle, RidHeader, headerBuffer, ref size, headerSize) != headerSize)
+            { End(SpecialKeyProbeEndReason.Unavailable); return; }
             header = Marshal.PtrToStructure<RawInputHeader>(headerBuffer);
         }
         finally { ClearAndFree(headerBuffer, (int)headerSize); }
-        // Page-only registration can deliver mouse headers too. Never read a
-        // mouse body or count unrelated mouse activity as a failed key packet.
+        // Ignore any queued mouse header defensively, even though the page
+        // registration excludes mice. Never read a mouse report body.
         if (header.Type == 0) return;
-        if (header.Type is not (1 or 2) || header.Size < headerSize || header.Size > MaxPacketBytes) { parser?.Reject(); return; }
         var candidate = ResolveCandidate(header.Device);
+        var disposition = ClassifyInputHeader(header.Type, header.Size, headerSize, candidate is not null);
+        if (disposition == InputHeaderDisposition.Ignore) return;
+        if (disposition == InputHeaderDisposition.Reject) { parser?.Reject(); return; }
         if (candidate is null || !CheckActive()) return;
         int length = (int)header.Size;
         nint buffer = Marshal.AllocHGlobal(length);
@@ -176,6 +181,10 @@ public sealed class SpecialKeyProbe : IDisposable
     private void Emit(SpecialKeyObservation? observation)
     {
         if (observation is null || !CheckActive()) return;
+        // End may run inside the callback when retained-input capacity is
+        // reached. Count delivery before that synchronous completion, while
+        // an expiry/focus failure above must not count an undelivered packet.
+        deliveredObservations++;
         callback?.Invoke(observation);
         if (parser?.ObservationCount >= SpecialKeyProbeParser.MaxObservations) End(SpecialKeyProbeEndReason.LimitReached);
     }
@@ -197,7 +206,7 @@ public sealed class SpecialKeyProbe : IDisposable
         callback = null;
         foreground = null;
         if (current is null) return;
-        var summary = current.Summary(removed ? reason : SpecialKeyProbeEndReason.Unavailable);
+        var summary = current.Summary(removed ? reason : SpecialKeyProbeEndReason.Unavailable, deliveredObservations);
         if (!removed) summary = summary with { Gap = "Windows did not confirm removal of the input registration. Collection has stopped; close the collector before another probe. " + summary.Gap };
         current.Dispose();
         Completed?.Invoke(summary);
@@ -228,7 +237,17 @@ public sealed class SpecialKeyProbe : IDisposable
             Usage = desktopPage && c.UsagePage == 1 ? (ushort)0 : c.Usage!.Value,
             Flags = desktopPage && c.UsagePage == 1 ? 0x20u : 0,
             Target = target,
-        }).DistinctBy(r => (r.UsagePage, r.Usage)).ToArray();
+        }).DistinctBy(r => (r.UsagePage, r.Usage)).Concat(desktopPage
+            ? [new RawInputDevice { UsagePage = 1, Usage = 2, Flags = 0x10u }]
+            : Array.Empty<RawInputDevice>()).ToArray();
+    }
+
+    internal enum InputHeaderDisposition { Ignore, Reject, Read }
+    internal static InputHeaderDisposition ClassifyInputHeader(uint type, uint bytes, uint headerBytes, bool selected)
+    {
+        if (!selected || type == 0) return InputHeaderDisposition.Ignore;
+        return type is 1 or 2 && bytes >= headerBytes && bytes <= MaxPacketBytes
+            ? InputHeaderDisposition.Read : InputHeaderDisposition.Reject;
     }
 
     internal static RawInputDevice[] CreateRemovalRegistrations(IEnumerable<RawInputDevice> active) =>
@@ -360,7 +379,8 @@ internal sealed class SpecialKeyProbeParser(SpecialKeyExpectedKey expected, Spec
         return signal is not null;
     }
 
-    internal SpecialKeyProbeSummary Summary(SpecialKeyProbeEndReason reason) => new(expected, mode, reason, ObservationCount,
+    internal SpecialKeyProbeSummary Summary(SpecialKeyProbeEndReason reason, int? deliveredObservations = null) =>
+        new(expected, mode, reason, Math.Clamp(deliveredObservations ?? ObservationCount, 0, ObservationCount),
         ignoredTyping, rejected, "Input is not firmware readback. Expected key and mode are user-reported. Ordinary typing and macros are omitted; P is admitted only for the Fn+P prompt and does not prove Fn. Unknown HID bodies are redacted. No event does not prove that a key or capability is absent.");
 
     public void Dispose()

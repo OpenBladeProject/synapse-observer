@@ -140,6 +140,22 @@ public sealed class SpecialKeyProbeTests
     }
 
     [Theory]
+    [InlineData(0x02E0, "Razer Blade 16 RZ09-0581")]
+    [InlineData(0x02C6, "Razer Blade 16 RZ09-0528")]
+    public void ExistingReviewedFnEnvelopeWorksOnUndefinedDesktopCollection(ushort pid, string model)
+    {
+        using var parser = new SpecialKeyProbeParser(SpecialKeyExpectedKey.Fn, SpecialKeyModeContext.Unknown);
+        var candidate = Candidate(pid, model, 1, 0, 16);
+        byte[] report = new byte[16];
+        report[0] = 4; report[1] = 10;
+        Assert.Equal("Fn", parser.Hid(candidate, report, 1)!.ReviewedSignal);
+        Assert.Equal(SpecialKeyObservationOrigin.UnknownHidMetadata,
+            parser.Hid(candidate with { ProductId = 0xFFFF }, report, 2)!.Origin);
+        report[15] = 0x41;
+        Assert.Equal(SpecialKeyObservationOrigin.UnknownHidMetadata, parser.Hid(candidate, report, 3)!.Origin);
+    }
+
+    [Theory]
     [InlineData(0, 1, 8, false)] [InlineData(4, 0, 8, false)]
     [InlineData(4, 2, 16, true)] [InlineData(4, 2, 15, false)]
     [InlineData(4, 33, 140, false)] [InlineData(-1, -1, 8, false)]
@@ -149,6 +165,17 @@ public sealed class SpecialKeyProbeTests
         BinaryPrimitives.WriteUInt32LittleEndian(body, unchecked((uint)size));
         BinaryPrimitives.WriteUInt32LittleEndian(body.AsSpan(4), unchecked((uint)count));
         Assert.Equal(accepted, SpecialKeyProbeParser.TryGetHidShape(body, 4, out _, out _));
+    }
+
+    [Fact]
+    public void ExpiryBetweenParsingAndDeliveryDoesNotInventRetainedInput()
+    {
+        using var parser = new SpecialKeyProbeParser(SpecialKeyExpectedKey.Fn, SpecialKeyModeContext.Unknown);
+        Assert.NotNull(parser.Hid(Candidate(page: 1, usage: 0, length: 4), [4, 10, 0, 0], 4999));
+        // Emit's final foreground/deadline gate declined the parsed packet.
+        Assert.Equal(1, parser.ObservationCount);
+        Assert.Equal(0, parser.Summary(SpecialKeyProbeEndReason.Timeout, deliveredObservations: 0).ObservationCount);
+        Assert.Equal(1, parser.Summary(SpecialKeyProbeEndReason.LimitReached, deliveredObservations: 1).ObservationCount);
     }
 
     [Fact]

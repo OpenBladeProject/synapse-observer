@@ -16,11 +16,12 @@ public sealed class SpecialKeyRegistrationTests
     {
         var active = SpecialKeyProbe.CreateRegistrations(
             [Candidate(1, 0), Candidate(1, 6), Candidate(1, 2), Candidate(12, 1), Candidate(0xFF00, 1)], 123);
-        Assert.Equal(3, active.Length);
-        var desktop = Assert.Single(active, r => r.UsagePage == 1);
+        Assert.Equal(4, active.Length);
+        var desktop = Assert.Single(active, r => r.UsagePage == 1 && r.Usage == 0);
         Assert.Equal((ushort)0, desktop.Usage);
         Assert.Equal(0x20u, desktop.Flags);
-        Assert.All(active, r => Assert.Equal((nint)123, r.Target));
+        Assert.All(active.Where(r => r.Flags != 0x10u), r => Assert.Equal((nint)123, r.Target));
+        Assert.Contains(active, r => r.UsagePage == 1 && r.Usage == 2 && r.Flags == 0x10u && r.Target == 0);
         Assert.All(active.Where(r => r.UsagePage != 1), r => Assert.Equal(0u, r.Flags));
         var removals = SpecialKeyProbe.CreateRemovalRegistrations(active);
         Assert.Equal(active.Length, removals.Length);
@@ -28,7 +29,7 @@ public sealed class SpecialKeyRegistrationTests
         {
             Assert.Equal(active[i].UsagePage, removals[i].UsagePage);
             Assert.Equal(active[i].Usage, removals[i].Usage);
-            Assert.Equal(active[i].Flags | 1u, removals[i].Flags);
+            Assert.Equal(active[i].UsagePage == 1 && active[i].Usage == 0 ? 0x21u : 1u, removals[i].Flags);
             Assert.Equal((nint)0, removals[i].Target);
         }
         // A failed removal can retry against the untouched registration plan.
@@ -45,6 +46,17 @@ public sealed class SpecialKeyRegistrationTests
         Assert.Contains(active, r => r.UsagePage == 12 && r.Usage == 1 && r.Flags == 0);
         Assert.Empty(SpecialKeyProbe.CreateRegistrations([Candidate(1, 2)], 123));
     }
+
+    [Theory]
+    [InlineData(0u, 40u, true, 0)]
+    [InlineData(2u, 8192u, false, 0)]
+    [InlineData(99u, 40u, false, 0)]
+    [InlineData(2u, 8192u, true, 1)]
+    [InlineData(2u, 8u, true, 1)]
+    [InlineData(2u, 48u, true, 2)]
+    public void UnrelatedHeadersCannotCreateSelectedDeviceRejections(uint type, uint bytes, bool selected,
+        int expected) =>
+        Assert.Equal((SpecialKeyProbe.InputHeaderDisposition)expected, SpecialKeyProbe.ClassifyInputHeader(type, bytes, 24, selected));
 
     [Fact]
     public void WindowsAcceptsPageRegistrationAndRemovesItFromOwnedMessageWindow()
