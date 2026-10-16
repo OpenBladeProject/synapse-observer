@@ -25,7 +25,21 @@ public sealed class SpecialKeyExpanderTests
             {
                 var model = new CollectorViewModel(true);
                 model.SetPreviewStage(5);
-                var expander = new Expander { Header = "Optional M / Fn key check", DataContext = model };
+                // Pin the stock WPF template: hosted runners may have no usable desktop
+                // theme, and another test can shut down Application's theme resources.
+                // Keep the real header toggle and its two-way templated-parent binding.
+                var theme = new ResourceDictionary
+                {
+                    Source = new Uri("/PresentationFramework.Aero2;component/themes/aero2.normalcolor.xaml", UriKind.Relative),
+                };
+                var expander = new Expander
+                {
+                    Header = "Optional M / Fn key check",
+                    DataContext = model,
+                    OverridesDefaultStyle = true,
+                    Style = (Style)theme[typeof(Expander)],
+                };
+                expander.Resources.MergedDictionaries.Add(theme);
                 expander.SetBinding(Expander.IsExpandedProperty, new Binding(nameof(CollectorViewModel.IsSpecialKeyExpanded))
                 {
                     Mode = BindingMode.TwoWay,
