@@ -266,9 +266,8 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
 
         recorderStatus = "Checking the native observer's availability.";
         var candidates = await Task.Run(() => inventorySource.DiscoverLocalControlCandidates());
-        var eligibleInputs = candidates.Value.Where(candidate => SpecialKeyProbeParser.IsInputCandidate(candidate)
-            && candidate.UsbParentProductName?.Contains("Blade", StringComparison.OrdinalIgnoreCase) == true).ToArray();
-        if (SpecialKeyProbeParser.IsSingleBladeRoot(eligibleInputs)) inputCandidates = eligibleInputs;
+        // Keep every selected-root interface consistent with exported inventory.
+        SelectSpecialKeyInputCandidates(candidates.Value);
         controlCandidates = candidates.Value.Where(BackendDiscovery.IsEligibleControlCandidate).ToArray();
         if (controlCandidates.Count is < 1 or > 8
             || controlCandidates.Select(c => c.UsbParentDeviceInstanceId).Distinct(StringComparer.OrdinalIgnoreCase).Count() != 1)
@@ -913,6 +912,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
         await StartCommand.CurrentExecution;
         await SaveCommand.CurrentExecution;
         await MarkCommand.CurrentExecution;
+        await specialKeyReviewTask;
         if (recording || observer is not null)
         {
             await GuardAsync(StopAsync);

@@ -24,6 +24,54 @@ public sealed class CollectionReviewWorkflowTests
     }
 
     [Fact]
+    public async Task ChangedInputInventoryExplainsUnavailableCheckAndExportsOneFailure()
+    {
+        var model = new CollectorViewModel(preview: false);
+        model.SetPreviewStage(1);
+        var candidate = new LocalHidCandidate("private-path", "hid-fresh", "Razer Blade", 0x1532, 0xFFFF,
+            null, 1, 0, new(16, 0, 0), CollectionState.Collected, null, null, null, null,
+            "private-root", "private-hardware", "Razer Blade");
+
+        model.SelectSpecialKeyInputCandidates([candidate]);
+        model.SelectSpecialKeyInputCandidates([candidate]);
+
+        Assert.Contains("input descriptors changed", model.SpecialKeyStatus);
+        Assert.Contains("reopen the collector", model.SpecialKeyStatus);
+        Assert.DoesNotContain("selected unambiguously", model.SpecialKeyStatus);
+        using var evidence = model.Evidence!;
+        Assert.Empty(evidence.SpecialKeyProbes);
+        var failure = Assert.Single(evidence.Markers, marker => marker.Label == "Key check unavailable: input inventory mismatch");
+        Assert.Equal(EvidenceMarkerKind.Failure, failure.Kind);
+        Assert.Contains(ContributionDraftBuilder.CreateAnnotationDraft(evidence).ContextMarkers,
+            marker => marker.Marker.Label == failure.Label);
+        await model.CloseAsync();
+    }
+
+    [Theory]
+    [InlineData(SpecialKeyProbeEndReason.Timeout)]
+    [InlineData(SpecialKeyProbeEndReason.FocusLost)]
+    public async Task StandaloneKeyCheckRefreshesVisibleReview(SpecialKeyProbeEndReason reason)
+    {
+        var model = new CollectorViewModel(preview: true);
+        await Run(model.CollectCommand);
+        Assert.Contains("No Synapse recording or key check yet", model.ReviewSummary);
+        typeof(CollectorViewModel).GetField("activeProbeLabel", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .SetValue(model, "probe-001");
+        var notifications = new List<string?>();
+        model.PropertyChanged += (_, item) => notifications.Add(item.PropertyName);
+
+        await model.CompleteSpecialKeyProbeAsync(new(SpecialKeyExpectedKey.Fn, SpecialKeyModeContext.Unknown,
+            reason, 0, 0, 0, string.Empty));
+
+        Assert.Contains("1 key check", model.ReviewSummary);
+        Assert.DoesNotContain("No Synapse recording or key check yet", model.ReviewSummary);
+        Assert.Contains(nameof(CollectorViewModel.ReviewSummary), notifications);
+        Assert.Contains(nameof(CollectorViewModel.ReviewNotes), notifications);
+        Assert.False(model.IsBusy);
+        await model.CloseAsync();
+    }
+
+    [Fact]
     public async Task EveryActionPhaseUsesFreshPowerAndStopRefreshesReview()
     {
         var model = new CollectorViewModel(preview: true);

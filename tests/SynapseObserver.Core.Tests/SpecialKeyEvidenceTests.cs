@@ -58,6 +58,46 @@ public sealed class SpecialKeyEvidenceTests
         Assert.Equal(EvidenceAddResult.Added, session.AddSpecialKeyObservation(Key(0x7C) with { ProbeLabel = "probe-002" }));
     }
 
+    [Theory]
+    [InlineData(CollectionState.Collected)]
+    [InlineData(CollectionState.Partial)]
+    public void UndefinedDesktopMetadataSurvivesExportWithKnownGeometry(CollectionState state)
+    {
+        var inventory = SyntheticPreview.CreateInventory();
+        var hid = inventory.RazerHidInterfaces.Value.Single() with
+        { UsagePage = 1, Usage = 0, ReportGeometry = new(16, 0, 0), DescriptorState = state };
+        using var session = new EvidenceSession(inventory with
+        { RazerHidInterfaces = SectionResult<IReadOnlyList<HidInterfaceEvidence>>.Collected([hid]) });
+        var item = new SpecialKeyObservation(1, SpecialKeyExpectedKey.Fn, SpecialKeyModeContext.Unknown,
+            hid.InterfaceLabel, SpecialKeyObservationOrigin.UnknownHidMetadata, SpecialKeyPhase.Unknown,
+            ReportLength: 16, ProbeEqualityLabel: "input-01", ChangedRanges: []);
+        Assert.Equal(EvidenceAddResult.Added, session.AddSpecialKeyObservation(item));
+        using var snapshot = session.Snapshot();
+        var exported = Assert.Single(ContributionDraftBuilder.CreateAnnotationDraft(snapshot).SpecialKeyObservations);
+        Assert.Equal(SpecialKeyObservationOrigin.UnknownHidMetadata, exported.Observation.Origin);
+        Assert.Null(exported.Observation.ReviewedSignal);
+        Assert.False(exported.Observation.IsFirmwareReadback);
+        Assert.False(SpecialKeyInputCollection.IsEligible(0x1532, state, 1, 0, null));
+        Assert.False(SpecialKeyInputCollection.IsEligible(0x1532, CollectionState.Unavailable, 1, 0, new(16, 0, 0)));
+        Assert.False(SpecialKeyInputCollection.IsEligible(0x1532, state, 1, 2, new(16, 0, 0)));
+    }
+
+    [Theory]
+    [InlineData(SpecialKeyProbeEndReason.Timeout, 0, "NoMatchingInput")]
+    [InlineData(SpecialKeyProbeEndReason.Timeout, 1, "RejectedInput")]
+    [InlineData(SpecialKeyProbeEndReason.Unavailable, 0, "InputUnavailable")]
+    [InlineData(SpecialKeyProbeEndReason.FocusLost, 0, "InputProbeInterrupted")]
+    [InlineData(SpecialKeyProbeEndReason.Cancelled, 0, "InputProbeInterrupted")]
+    public void ProbeQualityDistinguishesNoSignalFromCollectionFailure(SpecialKeyProbeEndReason reason, int rejected, string expectedGap)
+    {
+        using var session = CreateSession();
+        Assert.Equal(EvidenceAddResult.Added, session.AddSpecialKeyProbe(new(
+            SpecialKeyExpectedKey.Fn, SpecialKeyModeContext.Unknown, reason, 0, 0, rejected, "")));
+        using var snapshot = session.Snapshot();
+        var gaps = ContributionDraftBuilder.CreateQualityReceipt(snapshot).Gaps.Where(gap => gap.Area == "specialKeys.Fn");
+        Assert.Equal(expectedGap, Assert.Single(gaps).Code);
+    }
+
     private static EvidenceSession CreateSession()
     {
         var inventory = SyntheticPreview.CreateInventory();

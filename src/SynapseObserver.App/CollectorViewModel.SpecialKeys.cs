@@ -5,11 +5,15 @@ namespace SynapseObserver.App;
 internal sealed partial class CollectorViewModel
 {
     private SpecialKeyProbe? specialKeyProbe;
+    private Task specialKeyReviewTask = Task.CompletedTask;
+    private bool inputMismatchReported;
+    private string inputSelectionIssue = "The laptop's input interfaces could not be selected unambiguously. Save the inventory so the maintainer can investigate.";
     private Func<bool>? probeForeground;
     private bool probingSpecialKey;
     private int probeSequence;
     private string activeProbeLabel = string.Empty;
     private double probeOrigin;
+    private int rejectedProbeObservations;
     private SpecialKeyExpectedKey expectedSpecialKey = SpecialKeyExpectedKey.M1;
     private string specialKeyStatus = SpecialKeySelectionGuidance(SpecialKeyExpectedKey.M1);
     public sealed record SpecialKeyChoice(SpecialKeyExpectedKey Key, string Label);
@@ -24,7 +28,7 @@ internal sealed partial class CollectorViewModel
         && session.SpecialKeyObservationCount < EvidenceLimits.MaxSpecialKeyObservations;
     public bool CanChooseSpecialKey => !probingSpecialKey;
     public string SpecialKeyStatus => specialKeyStatus + (HasInventory && !preview && inputCandidates.Count == 0
-        ? " The laptop's input interfaces could not be selected unambiguously. Save the inventory so the maintainer can investigate." : string.Empty);
+        ? " " + inputSelectionIssue : string.Empty);
     public SpecialKeyExpectedKey ExpectedSpecialKey
     {
         get => expectedSpecialKey;
@@ -40,11 +44,38 @@ internal sealed partial class CollectorViewModel
     public AsyncCommand? ProbeSpecialKeyCommand { get; private set; }
     public AsyncCommand? CancelSpecialKeyProbeCommand { get; private set; }
 
+    internal void SelectSpecialKeyInputCandidates(IReadOnlyList<LocalHidCandidate> candidates)
+    {
+        inputCandidates = [];
+        inputSelectionIssue = "The laptop's input interfaces could not be selected unambiguously. Save the inventory so the maintainer can investigate.";
+        var eligible = candidates.Where(candidate => SpecialKeyProbeParser.IsInputCandidate(candidate)
+            && candidate.UsbParentProductName?.Contains("Blade", StringComparison.OrdinalIgnoreCase) == true).ToArray();
+        if (!SpecialKeyProbeParser.IsSingleBladeRoot(eligible) || session is null) return;
+        if (eligible.All(candidate => CanRetainSpecialKeyInput(candidate, session.Inventory.RazerHidInterfaces.Value)))
+        {
+            inputCandidates = eligible;
+            return;
+        }
+        inputSelectionIssue = "The laptop's input descriptors changed after device information was collected. Save this ZIP, then reopen the collector and collect device information again before checking a key.";
+        if (!inputMismatchReported)
+        {
+            inputMismatchReported = true;
+            Marker(EvidenceMarkerKind.Failure, "observer", "Key check unavailable: input inventory mismatch", EvidenceProvenance.Collector);
+        }
+    }
+
+    internal static bool CanRetainSpecialKeyInput(LocalHidCandidate candidate, IReadOnlyList<HidInterfaceEvidence> inventory) =>
+        SpecialKeyProbeParser.IsInputCandidate(candidate) && inventory.Any(item =>
+            item.InterfaceLabel == candidate.InterfaceLabel && item.VendorId == candidate.VendorId
+            && item.ProductId == candidate.ProductId && item.UsagePage == candidate.UsagePage && item.Usage == candidate.Usage
+            && item.ReportGeometry == candidate.ReportGeometry
+            && SpecialKeyInputCollection.IsEligible(item.VendorId, item.DescriptorState, item.UsagePage, item.Usage, item.ReportGeometry));
+
     internal void ConfigureSpecialKeyProbe(SpecialKeyProbe probe, Func<bool> isForeground)
     {
         specialKeyProbe = probe;
         probeForeground = isForeground;
-        probe.Completed += CompleteSpecialKeyProbe;
+        probe.Completed += summary => specialKeyReviewTask = CompleteSpecialKeyProbeAsync(summary);
         ProbeSpecialKeyCommand = new AsyncCommand(() => GuardAsync(ProbeSpecialKeyAsync), () => CanProbeSpecialKeys);
         CancelSpecialKeyProbeCommand = new AsyncCommand(() => { probe.Disarm(); return Task.CompletedTask; }, () => probingSpecialKey);
         RefreshSpecialKeyProbe();
@@ -56,6 +87,7 @@ internal sealed partial class CollectorViewModel
         if (!PrepareSpecialKeyProbe()) return Task.CompletedTask;
         activeProbeLabel = $"probe-{++probeSequence:D3}";
         probeOrigin = RelativeMilliseconds;
+        rejectedProbeObservations = 0;
         probingSpecialKey = true;
         specialKeyStatus = $"Press only {expectedSpecialKey} now. Keep this window active for five seconds. Ordinary typing is omitted.";
         if (!Marker(EvidenceMarkerKind.SpecialKeyProbeStarted, SpecialKeyActivity(expectedSpecialKey), "Special-key probe requested", EvidenceProvenance.UserReported))
@@ -69,15 +101,12 @@ internal sealed partial class CollectorViewModel
         {
             specialKeyProbe.Arm(expectedSpecialKey, inputCandidates, item =>
             {
-                var result = session.AddSpecialKeyObservation(item with
-                { RelativeMilliseconds = probeOrigin + item.RelativeMilliseconds, ProbeLabel = activeProbeLabel });
-                if (result == EvidenceAddResult.RejectedInvalid)
-                    specialKeyStatus = "Some input evidence was rejected by the privacy rules.";
+                var result = RecordSpecialKeyObservation(item);
                 if (result == EvidenceAddResult.RejectedLimit || session.SpecialKeyObservationCount >= EvidenceLimits.MaxSpecialKeyObservations)
                 {
+                    // Completion synchronously publishes counts, gaps and the
+                    // key-limit guidance. Preserve that complete result.
                     specialKeyProbe.EndAtCapacity();
-                    specialKeyStatus = "The optional key-check limit has been reached. Setting recordings can continue; all collected key evidence will be included in the ZIP.";
-                    RefreshSpecialKeyProbe();
                 }
             }, probeForeground, SpecialKeyModeContext.Unknown);
         }
@@ -113,9 +142,39 @@ internal sealed partial class CollectorViewModel
         return true;
     }
 
+    internal EvidenceAddResult RecordSpecialKeyObservation(SpecialKeyObservation item)
+    {
+        if (session is null) return EvidenceAddResult.RejectedInvalid;
+        var result = session.AddSpecialKeyObservation(item with
+        { RelativeMilliseconds = probeOrigin + item.RelativeMilliseconds, ProbeLabel = activeProbeLabel });
+        if (result is EvidenceAddResult.RejectedInvalid or EvidenceAddResult.RejectedLimit)
+        {
+            rejectedProbeObservations = Math.Min(rejectedProbeObservations + 1, SpecialKeyProbeParser.MaxObservations);
+            specialKeyStatus = "Some input evidence could not be retained. Save the collection gaps.";
+        }
+        return result;
+    }
+
+    internal async Task CompleteSpecialKeyProbeAsync(SpecialKeyProbeSummary summary)
+    {
+        CompleteSpecialKeyProbe(summary);
+        if (!recording)
+        {
+            await UpdateCollectionReviewAsync();
+            Changed(nameof(ReviewSummary));
+            Changed(nameof(ReviewNotes));
+        }
+    }
+
     internal void CompleteSpecialKeyProbe(SpecialKeyProbeSummary summary)
     {
         probingSpecialKey = false;
+        summary = summary with
+        {
+            ObservationCount = Math.Max(0, summary.ObservationCount - rejectedProbeObservations),
+            RejectedPacketCount = Math.Min(1000000, summary.RejectedPacketCount + rejectedProbeObservations),
+        };
+        rejectedProbeObservations = 0;
         if (session is not null)
         {
             var result = session.AddSpecialKeyProbe(summary with { ProbeLabel = activeProbeLabel, RelativeMilliseconds = probeOrigin });
@@ -147,6 +206,10 @@ internal sealed partial class CollectorViewModel
     {
         if (summary.EndReason == SpecialKeyProbeEndReason.Timeout)
         {
+            if (summary.RejectedPacketCount > 0)
+                return $"{summary.ExpectedKey}: {summary.ObservationCount} retained input observations. " +
+                    $"{summary.RejectedPacketCount} input packets or observations were rejected. " +
+                    "The check contains collection gaps; this does not show whether the physical key worked.";
             if (summary.ExpectedKey == SpecialKeyExpectedKey.Fn && summary.ObservationCount == 0)
                 return "Fn: no Windows input observations were captured in five seconds. The check finished normally. " +
                     "Fn alone may be handled without a Windows event, so report any visible behavior in the Fn key evidence item. " +
@@ -157,6 +220,7 @@ internal sealed partial class CollectorViewModel
         }
 
         return $"{summary.ExpectedKey}: {summary.ObservationCount} input observations. Probe ended: {summary.EndReason}. " +
+            (summary.RejectedPacketCount > 0 ? $"{summary.RejectedPacketCount} input packets or observations were rejected. " : "") +
             "No signal does not prove that the key is unavailable.";
     }
     private void RefreshSpecialKeyProbe()

@@ -25,6 +25,7 @@ public sealed class SpecialKeyProbe : IDisposable
     private Func<bool>? foreground;
     private TimeSpan duration;
     private bool disposed;
+    private int deliveredObservations;
 
     public SpecialKeyProbe(nint hwnd)
     {
@@ -56,11 +57,17 @@ public sealed class SpecialKeyProbe : IDisposable
         if (duration <= TimeSpan.Zero || duration > TimeSpan.FromSeconds(10))
             throw new ArgumentOutOfRangeException(nameof(timeout));
         parser = new SpecialKeyProbeParser(expectedKey, modeContext);
+        deliveredObservations = 0;
         callback = onObservation;
         foreground = isForeground;
-        if (!SpecialKeyProbeParser.IsSingleBladeRoot(inputCandidates) || !HasFocus())
+        if (!SpecialKeyProbeParser.IsSingleBladeRoot(inputCandidates))
         {
             End(SpecialKeyProbeEndReason.Unavailable);
+            return false;
+        }
+        if (!HasFocus())
+        {
+            End(SpecialKeyProbeEndReason.FocusLost);
             return false;
         }
         candidates = inputCandidates.Where(SpecialKeyProbeParser.IsInputCandidate)
@@ -70,10 +77,7 @@ public sealed class SpecialKeyProbe : IDisposable
         {
             candidates.TryAdd(aliasPath, candidate);
         }
-        registrations = candidates.Values.Select(c => new RawInputDevice
-        {
-            UsagePage = c.UsagePage!.Value, Usage = c.Usage!.Value, Target = hwnd,
-        }).DistinctBy(r => (r.UsagePage, r.Usage)).ToArray();
+        registrations = CreateRegistrations(candidates.Values, hwnd);
         if (registrations.Length == 0 || !RegisterRawInputDevices(registrations, (uint)registrations.Length, (uint)Marshal.SizeOf<RawInputDevice>()))
         {
             End(SpecialKeyProbeEndReason.Unavailable);
@@ -106,7 +110,7 @@ public sealed class SpecialKeyProbe : IDisposable
         {
             try { ReadInput(lParam); }
             catch (Exception exception) when (exception is ExternalException or ArgumentException or OverflowException)
-            { parser?.Reject(); }
+            { End(SpecialKeyProbeEndReason.Unavailable); }
         }
         return 0;
     }
@@ -119,12 +123,18 @@ public sealed class SpecialKeyProbe : IDisposable
         RawInputHeader header;
         try
         {
-            if (GetRawInputData(handle, RidHeader, headerBuffer, ref size, headerSize) != headerSize) { parser?.Reject(); return; }
+            if (GetRawInputData(handle, RidHeader, headerBuffer, ref size, headerSize) != headerSize)
+            { End(SpecialKeyProbeEndReason.Unavailable); return; }
             header = Marshal.PtrToStructure<RawInputHeader>(headerBuffer);
         }
         finally { ClearAndFree(headerBuffer, (int)headerSize); }
-        if (header.Type is not (1 or 2) || header.Size < headerSize || header.Size > MaxPacketBytes) { parser?.Reject(); return; }
+        // Ignore any queued mouse header defensively, even though the page
+        // registration excludes mice. Never read a mouse report body.
+        if (header.Type == 0) return;
         var candidate = ResolveCandidate(header.Device);
+        var disposition = ClassifyInputHeader(header.Type, header.Size, headerSize, candidate is not null);
+        if (disposition == InputHeaderDisposition.Ignore) return;
+        if (disposition == InputHeaderDisposition.Reject) { parser?.Reject(); return; }
         if (candidate is null || !CheckActive()) return;
         int length = (int)header.Size;
         nint buffer = Marshal.AllocHGlobal(length);
@@ -176,6 +186,10 @@ public sealed class SpecialKeyProbe : IDisposable
     private void Emit(SpecialKeyObservation? observation)
     {
         if (observation is null || !CheckActive()) return;
+        // End may run inside the callback when retained-input capacity is
+        // reached. Count delivery before that synchronous completion, while
+        // an expiry/focus failure above must not count an undelivered packet.
+        deliveredObservations++;
         callback?.Invoke(observation);
         if (parser?.ObservationCount >= SpecialKeyProbeParser.MaxObservations) End(SpecialKeyProbeEndReason.LimitReached);
     }
@@ -189,15 +203,15 @@ public sealed class SpecialKeyProbe : IDisposable
         bool removed = true;
         if (registrations.Length != 0)
         {
-            foreach (ref var registration in registrations.AsSpan()) { registration.Flags = 1; registration.Target = 0; }
-            removed = RegisterRawInputDevices(registrations, (uint)registrations.Length, (uint)Marshal.SizeOf<RawInputDevice>());
+            var removals = CreateRemovalRegistrations(registrations);
+            removed = RegisterRawInputDevices(removals, (uint)removals.Length, (uint)Marshal.SizeOf<RawInputDevice>());
         }
         if (removed) registrations = [];
         candidates.Clear();
         callback = null;
         foreground = null;
         if (current is null) return;
-        var summary = current.Summary(removed ? reason : SpecialKeyProbeEndReason.Unavailable);
+        var summary = current.Summary(removed ? reason : SpecialKeyProbeEndReason.Unavailable, deliveredObservations);
         if (!removed) summary = summary with { Gap = "Windows did not confirm removal of the input registration. Collection has stopped; close the collector before another probe. " + summary.Gap };
         current.Dispose();
         Completed?.Invoke(summary);
@@ -213,12 +227,47 @@ public sealed class SpecialKeyProbe : IDisposable
         disposed = true;
     }
 
+    internal static RawInputDevice[] CreateRegistrations(IEnumerable<LocalHidCandidate> inputCandidates, nint target)
+    {
+        var selected = inputCandidates.Where(SpecialKeyProbeParser.IsInputCandidate).ToArray();
+        // Undefined Generic Desktop TLCs carry additional input reports on
+        // Blade keyboards. Usage zero requires PAGEONLY, which also covers
+        // the selected keyboard TLC; do not add a redundant page-1 entry.
+        // This affects delivery only: ResolveCandidate still checks the exact
+        // selected device path before ReadInput copies any report body.
+        bool desktopPage = selected.Any(c => c.UsagePage == 1 && c.Usage == 0);
+        return selected.Select(c => new RawInputDevice
+        {
+            UsagePage = c.UsagePage!.Value,
+            Usage = desktopPage && c.UsagePage == 1 ? (ushort)0 : c.Usage!.Value,
+            Flags = desktopPage && c.UsagePage == 1 ? 0x20u : 0,
+            Target = target,
+        }).DistinctBy(r => (r.UsagePage, r.Usage)).Concat(desktopPage
+            ? [new RawInputDevice { UsagePage = 1, Usage = 2, Flags = 0x10u }]
+            : Array.Empty<RawInputDevice>()).ToArray();
+    }
+
+    internal enum InputHeaderDisposition { Ignore, Reject, Read }
+    internal static InputHeaderDisposition ClassifyInputHeader(uint type, uint bytes, uint headerBytes, bool selected)
+    {
+        if (!selected || type == 0) return InputHeaderDisposition.Ignore;
+        return type is 1 or 2 && bytes >= headerBytes && bytes <= MaxPacketBytes
+            ? InputHeaderDisposition.Read : InputHeaderDisposition.Reject;
+    }
+
+    internal static RawInputDevice[] CreateRemovalRegistrations(IEnumerable<RawInputDevice> active) =>
+        active.Select(r => new RawInputDevice
+        {
+            UsagePage = r.UsagePage, Usage = r.Usage,
+            Flags = 1u | (r.Flags & 0x20u), Target = 0,
+        }).ToArray();
+
     private static void ClearAndFree(nint buffer, int length)
     {
         for (int i = 0; i < length; i++) Marshal.WriteByte(buffer, i, 0);
         Marshal.FreeHGlobal(buffer);
     }
-    [StructLayout(LayoutKind.Sequential)] private struct RawInputDevice { public ushort UsagePage, Usage; public uint Flags; public nint Target; }
+    [StructLayout(LayoutKind.Sequential)] internal struct RawInputDevice { public ushort UsagePage, Usage; public uint Flags; public nint Target; }
     [StructLayout(LayoutKind.Sequential)] private struct RawInputHeader { public uint Type, Size; public nint Device, WParam; }
     [DllImport("user32.dll", SetLastError = true)] private static extern uint GetRawInputData(nint input, uint command, nint data, ref uint size, uint headerSize);
     [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)] private static extern uint GetRawInputDeviceInfo(nint device, uint command, nint data, ref uint size);
@@ -241,10 +290,8 @@ internal sealed class SpecialKeyProbeParser(SpecialKeyExpectedKey expected, Spec
     internal void Reject() => rejected = Math.Min(rejected + 1, 1000000);
 
     internal static bool IsInputCandidate(LocalHidCandidate candidate) =>
-        candidate.VendorId == 0x1532 && candidate.DescriptorState == CollectionState.Collected &&
-        candidate.ReportGeometry?.InputBytes is > 0 and <= 1024 &&
-        ((candidate.UsagePage == 1 && candidate.Usage == 6) || (candidate.UsagePage == 0x0C && candidate.Usage == 1) ||
-         (candidate.UsagePage is >= 0xFF00 && candidate.Usage is > 0));
+        SpecialKeyInputCollection.IsEligible(candidate.VendorId, candidate.DescriptorState,
+            candidate.UsagePage, candidate.Usage, candidate.ReportGeometry);
 
     internal static bool IsSingleBladeRoot(IReadOnlyList<LocalHidCandidate> candidates)
     {
@@ -337,7 +384,8 @@ internal sealed class SpecialKeyProbeParser(SpecialKeyExpectedKey expected, Spec
         return signal is not null;
     }
 
-    internal SpecialKeyProbeSummary Summary(SpecialKeyProbeEndReason reason) => new(expected, mode, reason, ObservationCount,
+    internal SpecialKeyProbeSummary Summary(SpecialKeyProbeEndReason reason, int? deliveredObservations = null) =>
+        new(expected, mode, reason, Math.Clamp(deliveredObservations ?? ObservationCount, 0, ObservationCount),
         ignoredTyping, rejected, "Input is not firmware readback. Expected key and mode are user-reported. Ordinary typing and macros are omitted; P is admitted only for the Fn+P prompt and does not prove Fn. Unknown HID bodies are redacted. No event does not prove that a key or capability is absent.");
 
     public void Dispose()

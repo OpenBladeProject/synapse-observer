@@ -1080,12 +1080,16 @@ public static class ContributionDraftBuilder
                 "One or more records were rejected by a documented validation, privacy, or size bound."));
         }
 
-        foreach (var probe in snapshot.SpecialKeyProbes.Where(static probe => probe.ObservationCount == 0 || probe.RejectedPacketCount > 0))
+        foreach (var probe in snapshot.SpecialKeyProbes)
         {
-            gaps.Add(new ContributionQualityGap(
-                $"specialKeys.{probe.ExpectedKey}",
-                probe.ObservationCount == 0 ? "NoMatchingInput" : "RejectedInput",
-                probe.Gap));
+            string area = $"specialKeys.{probe.ExpectedKey}";
+            if (probe.RejectedPacketCount > 0)
+                gaps.Add(new ContributionQualityGap(area, "RejectedInput", probe.Gap));
+            if (probe.EndReason != SpecialKeyProbeEndReason.Timeout)
+                gaps.Add(new ContributionQualityGap(area,
+                    probe.EndReason == SpecialKeyProbeEndReason.Unavailable ? "InputUnavailable" : "InputProbeInterrupted", probe.Gap));
+            else if (probe.ObservationCount == 0 && probe.RejectedPacketCount == 0)
+                gaps.Add(new ContributionQualityGap(area, "NoMatchingInput", probe.Gap));
         }
 
         gaps.Add(new ContributionQualityGap(

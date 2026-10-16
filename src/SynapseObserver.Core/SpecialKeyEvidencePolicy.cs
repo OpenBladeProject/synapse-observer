@@ -3,7 +3,15 @@ namespace SynapseObserver.Core;
 internal static class SpecialKeyEvidencePolicy
 {
     public static string Gap(SpecialKeyProbeEndReason reason) =>
-        (reason == SpecialKeyProbeEndReason.Unavailable ? "Input collection or registration removal was unavailable. " : "") +
+        (reason switch
+        {
+            SpecialKeyProbeEndReason.Unavailable => "Input collection or registration removal was unavailable. ",
+            SpecialKeyProbeEndReason.FocusLost => "The input check stopped when the collector lost focus. ",
+            SpecialKeyProbeEndReason.Cancelled => "The input check was cancelled. ",
+            SpecialKeyProbeEndReason.LimitReached => "The input check reached its observation limit. ",
+            SpecialKeyProbeEndReason.Disposed => "The input check stopped when the collector closed. ",
+            _ => "",
+        }) +
         "Expected key and mode are user-reported. Ordinary typing and macros are omitted. P is admitted only for Fn+P and does not prove Fn. Unknown input bodies are redacted. No event does not prove absence. This is not firmware readback or confirmed setting restoration.";
 
     public static bool IsValid(SpecialKeyObservation item, InventorySnapshot inventory)
@@ -12,10 +20,9 @@ internal static class SpecialKeyEvidencePolicy
             || !Enum.IsDefined(item.ExpectedKey) || !Enum.IsDefined(item.ModeContext)
             || !Enum.IsDefined(item.Origin) || !Enum.IsDefined(item.Phase)
             || !EvidenceText.IsToken(item.ProbeLabel) || !EvidenceText.IsToken(item.InterfaceLabel)
-            || !inventory.RazerHidInterfaces.Value.Any(h => h.VendorId == 0x1532 && h.InterfaceLabel == item.InterfaceLabel
-                && h.DescriptorState == CollectionState.Collected && h.ReportGeometry?.InputBytes > 0
-                && ((h.UsagePage == 1 && h.Usage == 6) || (h.UsagePage == 0x0C && h.Usage == 1)
-                    || h.UsagePage >= 0xFF00))) return false;
+            || !inventory.RazerHidInterfaces.Value.Any(h => h.InterfaceLabel == item.InterfaceLabel
+                && SpecialKeyInputCollection.IsEligible(h.VendorId, h.DescriptorState,
+                    h.UsagePage, h.Usage, h.ReportGeometry))) return false;
         if (item.Origin == SpecialKeyObservationOrigin.WindowsRawInput)
             return item.VirtualKey is ushort key && (key is >= 0x70 and <= 0x87 or 0x21 or 0x22 or >= 0xAD and <= 0xB3 or 0x2C or 0x5F
                 || item.ExpectedKey == SpecialKeyExpectedKey.FnP && key == 0x50)
