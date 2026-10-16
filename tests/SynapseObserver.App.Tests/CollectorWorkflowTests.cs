@@ -510,6 +510,52 @@ public sealed class CollectorWorkflowTests
     }
 
     [Theory]
+    [InlineData("special-key-m1", SpecialKeyExpectedKey.M1)]
+    [InlineData("special-key-m2", SpecialKeyExpectedKey.M2)]
+    [InlineData("special-key-m3", SpecialKeyExpectedKey.M3)]
+    [InlineData("special-key-m4", SpecialKeyExpectedKey.M4)]
+    [InlineData("special-key-m5", SpecialKeyExpectedKey.M5)]
+    [InlineData("special-key-fn", SpecialKeyExpectedKey.Fn)]
+    [InlineData("special-key-fn-p", SpecialKeyExpectedKey.FnP)]
+    public async Task SelectingSpecialKeyActivitySynchronizesKeyCheck(string activityId, SpecialKeyExpectedKey expected)
+    {
+        var model = new CollectorViewModel(true) { ExpectedSpecialKey = SpecialKeyExpectedKey.M5 };
+        await Run(model.CollectCommand);
+
+        model.SelectedActivityIndex = model.Activities.ToList().FindIndex(activity => activity.Id == activityId);
+
+        Assert.Equal(expected, model.ExpectedSpecialKey);
+    }
+
+    [Fact]
+    public async Task CompletingSpecialKeyActivitySynchronizesTheNextKeyCheck()
+    {
+        var model = new CollectorViewModel(true);
+        await Run(model.CollectCommand);
+        model.SelectedActivityIndex = model.Activities.ToList().FindIndex(activity => activity.Id == "special-key-m1");
+        model.StartingSetting = "Unassigned";
+
+        await Run(model.MarkCommand);
+
+        Assert.Equal("special-key-m2", model.Activities[model.SelectedActivityIndex].Id);
+        Assert.Equal(SpecialKeyExpectedKey.M2, model.ExpectedSpecialKey);
+    }
+
+    [Fact]
+    public async Task FnActivityPreservesExplicitChordChoiceAcrossOtherItems()
+    {
+        var model = new CollectorViewModel(true);
+        await Run(model.CollectCommand);
+        model.SelectedActivityIndex = model.Activities.ToList().FindIndex(activity => activity.Id == "special-key-fn");
+        model.ExpectedSpecialKey = SpecialKeyExpectedKey.FnF5;
+        model.SelectedActivityIndex = model.Activities.ToList().FindIndex(activity => activity.Id == "power-source");
+
+        model.SelectedActivityIndex = model.Activities.ToList().FindIndex(activity => activity.Id == "special-key-fn");
+
+        Assert.Equal(SpecialKeyExpectedKey.FnF5, model.ExpectedSpecialKey);
+    }
+
+    [Theory]
     [InlineData(SpecialKeyExpectedKey.FnF1, "Fn + F1", "function-key or media signal does not prove")]
     [InlineData(SpecialKeyExpectedKey.FnR, "Fn + R", "R signal does not prove")]
     [InlineData(SpecialKeyExpectedKey.FnP, "Fn + P", "P signal does not prove")]

@@ -251,6 +251,74 @@ public sealed class IncompleteReviewedResponseTests
         }
     }
 
+    [Theory]
+    [InlineData(0x88, 0x01)]
+    [InlineData(0x81, 0x00)]
+    public void CompleteReplyConsumesQueryBeforeLaterClippedReplyWithSameTransaction(byte command, byte selector)
+    {
+        using var session = SyntheticPreview.CreateSession();
+        AddCompleteMarkers(session);
+        session.AddObservation(Request(0x0D, command, [selector, 1, 0], 0x42));
+        session.AddObservation(CompleteResponse(command, [selector, 1, 0x20], 2.3));
+        session.AddObservation(Request(0x0D, command, [selector, 1, 0], 0x42) with
+        { OperationId = "op-second-query", RelativeMilliseconds = 2.6, CompletedRelativeMilliseconds = 2.7 });
+        session.AddObservation(IncompleteResponse(0x0D, command, [selector, 1, 0x26], transactionId: 0x42, time: 3));
+
+        using var snapshot = session.Snapshot();
+        var window = Assert.Single(ContributionDraftBuilder.CreateAnnotationDraft(snapshot).ActionWindows,
+            item => item.ActivityId == "fans");
+        var second = Assert.Single(window.Observations, item => item.OperationId == "op-second-query");
+        var clipped = Assert.Single(window.Observations, item => item.OperationId == "op-response");
+        Assert.Equal(second.ReferenceId, clipped.CorrelatedRequestReferenceId);
+    }
+
+    [Fact]
+    public void MissingReplyDoesNotPermitGuessingBetweenTwoPendingQueries()
+    {
+        using var session = SyntheticPreview.CreateSession();
+        AddCompleteMarkers(session);
+        session.AddObservation(Request(0x0D, 0x88, [1, 1, 0], 0x42));
+        session.AddObservation(Request(0x0D, 0x88, [1, 1, 0], 0x42) with
+        { OperationId = "op-second-query", RelativeMilliseconds = 2.6, CompletedRelativeMilliseconds = 2.7 });
+        session.AddObservation(IncompleteResponse(0x0D, 0x88, [1, 1, 0x26], transactionId: 0x42, time: 3));
+        using var snapshot = session.Snapshot();
+        var drafts = ContributionDraftBuilder.CreateDrafts(snapshot);
+        var clipped = Assert.Single(Assert.Single(drafts.Annotation.ActionWindows, window => window.ActivityId == "fans").Observations,
+            item => item.OperationId == "op-response");
+        Assert.Null(clipped.CorrelatedRequestReferenceId);
+        Assert.NotNull(clipped.SemanticResponse);
+        Assert.Equal(ContributionCoverageStatus.NotInvestigated,
+            drafts.Coverage.Coverage.Single(item => item.Capability == "fans.rpmQuery").Status);
+    }
+
+    [Fact]
+    public void StoredTargetQueryArgumentsAreReviewedRatherThanAnUninterpretedTarget()
+    {
+        var projection = FeaturePayloadPrivacy.Classify(Request(0x0D, 0x81, [0, 1, 0], 0x42));
+        Assert.NotNull(projection.PayloadHex);
+        Assert.False(projection.NumericMeaningUninterpreted);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(30)]
+    [InlineData(255)]
+    public void StoredTargetNumericMeaningFlagAgreesAcrossCompleteAndClippedReplies(byte target)
+    {
+        var complete = FeaturePayloadPrivacy.Classify(CompleteResponse(0x81, [0, 1, target], 3));
+        var clipped = FeaturePayloadPrivacy.Classify(IncompleteResponse(0x0D, 0x81, [0, 1, target], time: 3));
+        Assert.NotNull(complete.PayloadHex);
+        Assert.NotNull(clipped.SemanticResponse);
+        Assert.Equal(complete.NumericMeaningUninterpreted, clipped.NumericMeaningUninterpreted);
+    }
+
+    private static ControlObservation CompleteResponse(byte command, byte[] payload, double time) =>
+        new("op-complete-response", time, ObservationSource.ReturnedBuffer,
+            "DeviceIoControl.HID_GET_FEATURE", ObservationDirection.Output, ObservationStatus.Succeeded,
+            0, null, 0x1532, 0xFFFF, "hid-preview-01", 1, 2, 0,
+            FeatureReportTestData.Create(0x0D, command, payload, ObservationDirection.Output, transactionId: 0x42),
+            PayloadDisposition.ProvenFeatureControl, time + 0.1, 91, 91, 91);
+
     private static ControlObservation IncompleteResponse(
         byte commandClass,
         byte commandId,

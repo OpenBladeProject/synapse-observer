@@ -64,7 +64,8 @@ public static class FeaturePayloadPrivacy
             {
                 NumericMeaningUninterpreted = semanticResponse is
                     { Kind: ReviewedFeatureResponseKind.CustomPerformanceQueryResponse,
-                      CustomPerformanceLevel: null },
+                      CustomPerformanceLevel: null }
+                    || semanticResponse is { StoredFanTargetRpm: < 2000 or > 6000 },
                 ResponseStructureDiagnostics = structureDiagnostics,
                 SemanticResponse = semanticResponse,
             };
@@ -605,7 +606,9 @@ public static class FeaturePayloadPrivacy
     {
         FeaturePayloadProjectionKind.ReviewedThermalMode => !IsKnownThermalValue(payload),
         FeaturePayloadProjectionKind.ReviewedCustomPerformance => payload[2] > 2,
-        FeaturePayloadProjectionKind.ReviewedFanSpeed => payload[2] is < 0x14 or > 0x3C,
+        FeaturePayloadProjectionKind.ReviewedFanSpeed =>
+            !(commandId == 0x81 && direction == ObservationDirection.Input && payload[2] == 0)
+            && payload[2] is < 0x14 or > 0x3C,
         FeaturePayloadProjectionKind.ReviewedBatterySetting when commandId is 0x12 or 0x92 =>
             !(commandId == 0x92 && direction == ObservationDirection.Input && payload[0] == 0)
             && !IsBatteryValue(payload[0]),

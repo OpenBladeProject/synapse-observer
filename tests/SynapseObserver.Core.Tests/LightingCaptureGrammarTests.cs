@@ -97,7 +97,12 @@ public sealed class LightingCaptureGrammarTests
 
     [Theory]
     [InlineData(new byte[] { 3, 3 }, "keyboardLighting.effects.breathing.base")]
+    [InlineData(new byte[] { 3, 1, 255, 0, 42 }, "keyboardLighting.effects.breathing.singleColor")]
+    [InlineData(new byte[] { 3, 2, 255, 0, 42, 1, 2, 3 }, "keyboardLighting.effects.breathing.dualColor")]
+    [InlineData(new byte[] { 3, 3 }, "keyboardLighting.effects.breathing.randomColor")]
     [InlineData(new byte[] { 2, 3, 255, 0, 42 }, "keyboardLighting.effects.reactive.base")]
+    [InlineData(new byte[] { 2, 3, 255, 0, 42 }, "keyboardLighting.effects.reactive.colors")]
+    [InlineData(new byte[] { 2, 3, 255, 0, 42 }, "keyboardLighting.effects.reactive.durations")]
     [InlineData(new byte[] { 1, 2 }, "keyboardLighting.effects.wave.rightDirection")]
     public void ShortEffectsContributeCoverageOnlyInsideCompletedUserSequence(byte[] payload, string capability)
     {

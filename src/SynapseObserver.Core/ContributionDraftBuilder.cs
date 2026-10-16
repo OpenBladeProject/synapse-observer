@@ -863,9 +863,17 @@ public static class ContributionDraftBuilder
                 break;
             case 2:
                 yield return "keyboardLighting.effects.reactive.base";
+                yield return "keyboardLighting.effects.reactive.colors";
+                yield return "keyboardLighting.effects.reactive.durations";
                 break;
             case 3:
                 yield return "keyboardLighting.effects.breathing.base";
+                yield return payload[1] switch
+                {
+                    1 => "keyboardLighting.effects.breathing.singleColor",
+                    2 => "keyboardLighting.effects.breathing.dualColor",
+                    _ => "keyboardLighting.effects.breathing.randomColor",
+                };
                 break;
             case 6:
                 yield return "keyboardLighting.effects.static.base";
@@ -1348,6 +1356,21 @@ public static class ContributionDraftBuilder
                     CorrelationKey(item, semantic.TransactionId, responseSuffix),
                     item.RelativeMilliseconds, true, entry.Index, entry.Reference);
             }
+            else if (item.Source == ObservationSource.ReturnedBuffer
+                && item.Direction == ObservationDirection.Output
+                && item.Status == ObservationStatus.Succeeded
+                && item.Api is "HidD_GetFeature" or "DeviceIoControl.HID_GET_FEATURE"
+                && item.CompletePayloadRetained
+                && item.HeaderHints is { Status: 2 } responseHeader
+                && TryGetPayload(item) is { } responsePayload
+                && TryGetCommandCorrelationSuffix(responseHeader, responsePayload, response: true, out var completeSuffix))
+            {
+                // A complete reply consumes its query too. Otherwise a later
+                // clipped reply with the same transaction appears ambiguous.
+                yield return new CorrelationEvent(
+                    CorrelationKey(item, responseHeader.TransactionId, completeSuffix),
+                    item.RelativeMilliseconds, true, entry.Index, entry.Reference);
+            }
             if (item.Source != ObservationSource.UserModeCall
                 || item.Direction != ObservationDirection.Input
                 || item.Status != ObservationStatus.Succeeded
@@ -1356,8 +1379,10 @@ public static class ContributionDraftBuilder
                 continue;
             var payload = TryGetPayload(item);
             if (payload is null
-                || !TryGetSemanticRequestCorrelationSuffix(
-                    item.Api, header, payload, out var requestSuffix))
+                // High-bit getter envelopes travel through SET_FEATURE; the
+                // native GET_FEATURE input contains only its report-ID byte.
+                || item.Api is not ("HidD_SetFeature" or "DeviceIoControl.HID_SET_FEATURE")
+                || !TryGetCommandCorrelationSuffix(header, payload, response: false, out var requestSuffix))
                 continue;
             yield return new CorrelationEvent(
                 CorrelationKey(item, header.TransactionId, requestSuffix),
@@ -1394,54 +1419,51 @@ public static class ContributionDraftBuilder
         return suffix.Length > 0;
     }
 
-    private static bool TryGetSemanticRequestCorrelationSuffix(
-        string api,
+    private static bool TryGetCommandCorrelationSuffix(
         FeatureReportHeaderHints header,
         byte[] payload,
+        bool response,
         out string suffix)
     {
         suffix = string.Empty;
-        // The reviewed getter command is a high-bit envelope sent through SET_FEATURE;
-        // the native GET_FEATURE call carries only the report ID and cannot identify it.
-        var fullEnvelopeApi = api is "HidD_SetFeature" or "DeviceIoControl.HID_SET_FEATURE";
-        if (fullEnvelopeApi
-            && header.CommandClass == 0x0D && header.CommandId == 0x02
+        if (header.CommandClass == 0x0D && header.CommandId == 0x02
             && ReviewedThermalEncoding.TryDecode(payload, out var setterChannel, out var setterMode))
         {
             suffix = $"thermal-setter|{setterChannel}|{setterMode}";
         }
-        else if (fullEnvelopeApi && header.CommandClass == 0x0D && header.CommandId == 0x82
-            && payload is [0x01, 0x01 or 0x02, 0x00, 0x00])
+        else if (header.CommandClass == 0x0D && header.CommandId == 0x82
+            && payload is [0x01, 0x01 or 0x02, _, _]
+            && (response || payload[2] == 0 && payload[3] == 0))
         {
             suffix = $"thermal-query|{ToThermalChannel(payload[1])}";
         }
-        else if (fullEnvelopeApi && header.CommandClass == 0x0D && header.CommandId == 0x88
-            && payload is [0x01, 0x01 or 0x02, 0x00])
+        else if (header.CommandClass == 0x0D && header.CommandId == 0x88
+            && payload is [0x01, 0x01 or 0x02, _] && (response || payload[2] == 0))
         {
             suffix = $"fan-rpm-query|{ToFanChannel(payload[1])}";
         }
-        else if (fullEnvelopeApi && header.CommandClass == 0x0D && header.CommandId == 0x81
-            && payload is [0x00, 0x01 or 0x02, 0x00])
+        else if (header.CommandClass == 0x0D && header.CommandId == 0x81
+            && payload is [0x00, 0x01 or 0x02, _] && (response || payload[2] == 0))
         {
             suffix = $"fan-target-query|{ToFanChannel(payload[1])}";
         }
-        else if (fullEnvelopeApi && header.CommandClass == 0x0D && header.CommandId == 0x87
-            && payload is [0x01, 0x01 or 0x02, 0x00])
+        else if (header.CommandClass == 0x0D && header.CommandId == 0x87
+            && payload is [0x01, 0x01 or 0x02, _] && (response || payload[2] == 0))
         {
             suffix = $"custom-query|{ToCustomPerformanceDomain(payload[1])}";
         }
-        else if (fullEnvelopeApi && header.CommandClass == 0x03 && header.CommandId == 0x80
-            && payload is [0x00 or 0x01, 0x04, 0x00])
+        else if (header.CommandClass == 0x03 && header.CommandId == 0x80
+            && payload is [0x00 or 0x01, 0x04, _] && (response || payload[2] == 0))
         {
             suffix = $"logo-state-query|{ToLightingClass(payload[0])}";
         }
-        else if (fullEnvelopeApi && header.CommandClass == 0x03 && header.CommandId == 0x82
-            && payload is [0x00 or 0x01, 0x04, 0x00])
+        else if (header.CommandClass == 0x03 && header.CommandId == 0x82
+            && payload is [0x00 or 0x01, 0x04, _] && (response || payload[2] == 0))
         {
             suffix = $"logo-effect-query|{ToLightingClass(payload[0])}";
         }
-        else if (fullEnvelopeApi && header.CommandClass == 0x03 && header.CommandId == 0x83
-            && payload is [0x01, 0x05, 0x00])
+        else if (header.CommandClass == 0x03 && header.CommandId == 0x83
+            && payload is [0x01, 0x05, _] && (response || payload[2] == 0))
         {
             suffix = "keyboard-brightness-query";
         }

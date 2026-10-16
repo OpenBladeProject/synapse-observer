@@ -10,6 +10,7 @@ internal sealed partial class CollectorViewModel
     private string inputSelectionIssue = "The laptop's input interfaces could not be selected unambiguously. Save the inventory so the maintainer can investigate.";
     private Func<bool>? probeForeground;
     private bool probingSpecialKey;
+    private bool specialKeyExpanded;
     private int probeSequence;
     private string activeProbeLabel = string.Empty;
     private double probeOrigin;
@@ -34,6 +35,16 @@ internal sealed partial class CollectorViewModel
     public bool ShowSpecialKeyProbe => HasInventory;
     public bool IsSpecialKeyActivity => HasCurrentStep
         && CurrentActivity.Id.StartsWith("special-key-", StringComparison.Ordinal);
+    public bool IsSpecialKeyExpanded
+    {
+        get => specialKeyExpanded;
+        set
+        {
+            if (specialKeyExpanded == value) return;
+            specialKeyExpanded = value;
+            Changed();
+        }
+    }
     public bool CanProbeSpecialKeys => HasInventory && !capacityReached && !closing && !busy && !probingSpecialKey && !preview
         && specialKeyProbe is not null && stepPhase == 0 && SpecialKeyProbeParser.IsSingleBladeRoot(inputCandidates)
         && inputCandidates.Any(SpecialKeyProbeParser.IsInputCandidate)
@@ -210,6 +221,21 @@ internal sealed partial class CollectorViewModel
     }
 
     internal void CancelSpecialKeyProbe() => specialKeyProbe?.Disarm();
+    private void SynchronizeSpecialKeySelection()
+    {
+        IsSpecialKeyExpanded = IsSpecialKeyActivity;
+        if (!IsSpecialKeyActivity || SpecialKeyActivity(expectedSpecialKey) == CurrentActivity.Id) return;
+        ExpectedSpecialKey = CurrentActivity.Id switch
+        {
+            "special-key-m1" => SpecialKeyExpectedKey.M1,
+            "special-key-m2" => SpecialKeyExpectedKey.M2,
+            "special-key-m3" => SpecialKeyExpectedKey.M3,
+            "special-key-m4" => SpecialKeyExpectedKey.M4,
+            "special-key-m5" => SpecialKeyExpectedKey.M5,
+            "special-key-fn-p" => SpecialKeyExpectedKey.FnP,
+            _ => SpecialKeyExpectedKey.Fn,
+        };
+    }
     private static string SpecialKeyActivity(SpecialKeyExpectedKey key) => key switch
     {
         SpecialKeyExpectedKey.FnP => "special-key-fn-p",
