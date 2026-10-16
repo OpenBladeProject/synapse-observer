@@ -150,8 +150,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
         set
         {
             if (!CanSelectActivity || value < 0 || value >= Activities.Count || value == step) return;
-            step = value;
-            ResetEntries();
+            MoveToActivity(value);
             Refresh();
         }
     }
@@ -486,8 +485,14 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
     {
         var next = Enumerable.Range(1, Activities.Count).Select(offset => (step + offset) % Activities.Count)
             .FirstOrDefault(index => Activities[index].State == CoverageState.Pending, -1);
-        step = next;
+        MoveToActivity(next);
+    }
+
+    private void MoveToActivity(int activityIndex)
+    {
+        step = activityIndex;
         ResetEntries();
+        SynchronizeSpecialKeySelection();
     }
 
     private void SetCurrentCoverage(CoverageState state, CoverageReason reason)
@@ -995,6 +1000,17 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
             ReachCapacity("Local evidence storage could not continue. Check free disk space or choose another location.");
             ResetEntries();
             status = CapacityInstructions;
+        }
+        if (stage >= 5)
+        {
+            var activityId = stage switch
+            {
+                5 => "special-key-fn",
+                6 => "lighting-frames",
+                7 => "logo-lighting",
+                _ => "fans",
+            };
+            MoveToActivity(Activities.ToList().FindIndex(activity => activity.Id == activityId));
         }
         Refresh();
     }

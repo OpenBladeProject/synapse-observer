@@ -264,7 +264,6 @@ public sealed class BareFeatureResponseTests
     [Theory]
     [InlineData("returned-count-missing")]
     [InlineData("returned-count-mismatch")]
-    [InlineData("query-command")]
     [InlineData("unknown-mode")]
     [InlineData("reserved")]
     [InlineData("checksum")]
@@ -281,7 +280,6 @@ public sealed class BareFeatureResponseTests
         {
             case "returned-count-missing": returnedBytes = null; break;
             case "returned-count-mismatch": returnedBytes = 89; break;
-            case "query-command": bytes[8] = 0x82; RecalculateShiftedChecksum(bytes); break;
             case "unknown-mode": bytes[11] = 0x66; RecalculateShiftedChecksum(bytes); break;
             case "reserved": bytes[3] = 1; RecalculateShiftedChecksum(bytes); break;
             case "checksum": bytes[89] ^= 1; break;

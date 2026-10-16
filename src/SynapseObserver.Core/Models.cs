@@ -222,6 +222,7 @@ public enum FeaturePayloadProjectionKind
     ReviewedKeyboardBehavior,
     ReviewedCustomPerformance,
     ReviewedAdapterPower,
+    ReviewedPowerModeControl,
 }
 
 public sealed record FeatureReportHeaderHints(

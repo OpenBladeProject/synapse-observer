@@ -27,6 +27,10 @@ public static class FeaturePayloadPrivacy
         "https://github.com/OpenBladeProject/openblade-core/blob/806b0fdceaa2aa8645bcad6213bf73954939e8b2/src/OpenBlade.Protocol/AdapterPowerProtocol.cs",
         "https://github.com/OpenBladeProject/openblade-core/blob/806b0fdceaa2aa8645bcad6213bf73954939e8b2/src/OpenBlade.Protocol/BatteryValidationFactory.cs",
         "https://github.com/OpenBladeProject/openblade-core/blob/806b0fdceaa2aa8645bcad6213bf73954939e8b2/src/OpenBlade.Protocol/LightingCaptureReportDecoder.cs",
+        "https://github.com/OpenBladeProject/openblade-core/blob/4912d467898462441f67dc2d42c57453df4b4c7f/src/OpenBlade.Protocol/ExperimentalBladeLightingFrame.cs",
+        "https://github.com/OpenBladeProject/openblade-core/blob/4912d467898462441f67dc2d42c57453df4b4c7f/src/OpenBlade.Protocol/ExperimentalBladePort.Fans.cs",
+        "https://github.com/OpenBladeProject/openblade-core/blob/4912d467898462441f67dc2d42c57453df4b4c7f/src/OpenBlade.Protocol/ExperimentalBladePort.Custom.cs",
+        "https://apps.razer.com/synapse/products/672/mw/rzDevice25.85ce8530211c29f3c304.js",
     ];
 
     public static FeaturePayloadProjection Classify(ControlObservation observation)
@@ -50,14 +54,18 @@ public static class FeaturePayloadPrivacy
             return ClassifyMatrixFrame(observation);
         }
 
-        if (TryProjectIncompleteThermalAcknowledgement(
-                observation, structureDiagnostics, out var semanticResponse))
+        if (TryProjectIncompleteReviewedResponse(
+                observation, structureDiagnostics, out var semanticKind, out var semanticResponse))
         {
             return new FeaturePayloadProjection(
-                FeaturePayloadProjectionKind.ReviewedThermalMode,
+                semanticKind,
                 null,
                 null)
             {
+                NumericMeaningUninterpreted = semanticResponse is
+                    { Kind: ReviewedFeatureResponseKind.CustomPerformanceQueryResponse,
+                      CustomPerformanceLevel: null }
+                    || semanticResponse is { StoredFanTargetRpm: < 2000 or > 6000 },
                 ResponseStructureDiagnostics = structureDiagnostics,
                 SemanticResponse = semanticResponse,
             };
@@ -220,48 +228,205 @@ public static class FeaturePayloadPrivacy
         && double.IsFinite(completed)
         && completed >= observation.RelativeMilliseconds;
 
-    private static bool TryProjectIncompleteThermalAcknowledgement(
+    private static bool TryProjectIncompleteReviewedResponse(
         ControlObservation observation,
         FeatureResponseStructureDiagnostics? diagnostics,
+        out FeaturePayloadProjectionKind projectionKind,
         out ReviewedFeatureResponseProjection? projection)
     {
+        projectionKind = FeaturePayloadProjectionKind.MetadataOnly;
         projection = null;
+        if (!TryGetIncompleteReviewedResponseReport(observation, diagnostics, out var report))
+        {
+            return false;
+        }
+
+        var payload = report.Slice(8, report[5]);
+        if (report[6] == 0x0D && report[7] == 0x02
+            && ReviewedThermalEncoding.TryDecode(payload, out var setterChannel, out var setterMode))
+        {
+            projectionKind = FeaturePayloadProjectionKind.ReviewedThermalMode;
+            projection = CreateIncompleteSemantic(
+                ReviewedFeatureResponseKind.ThermalSetterAcknowledgement, report[1]) with
+            {
+                ThermalChannel = setterChannel,
+                ThermalMode = setterMode,
+            };
+            return true;
+        }
+
+        if (report[6] == 0x0D && report[7] == 0x82
+            && ReviewedThermalEncoding.TryDecode(payload, out var queryChannel, out var queryMode))
+        {
+            projectionKind = FeaturePayloadProjectionKind.ReviewedThermalMode;
+            projection = CreateIncompleteSemantic(
+                ReviewedFeatureResponseKind.ThermalModeQueryResponse, report[1]) with
+            {
+                ThermalChannel = queryChannel,
+                ThermalMode = queryMode,
+            };
+            return true;
+        }
+
+        if (report[6] == 0x0D && report[7] == 0x88
+            && payload is [0x01, 0x01 or 0x02, _])
+        {
+            projectionKind = FeaturePayloadProjectionKind.ReviewedFanRpm;
+            projection = CreateIncompleteSemantic(
+                ReviewedFeatureResponseKind.FanRpmQueryResponse, report[1]) with
+            {
+                FanChannel = payload[1] == 1 ? ReviewedFanChannel.First : ReviewedFanChannel.Second,
+                FanRpm = payload[2] * 100,
+            };
+            return true;
+        }
+
+        if (report[6] == 0x0D && report[7] == 0x81
+            && payload is [0x00, 0x01 or 0x02, _])
+        {
+            projectionKind = FeaturePayloadProjectionKind.ReviewedFanSpeed;
+            projection = CreateIncompleteSemantic(
+                ReviewedFeatureResponseKind.StoredFanTargetQueryResponse, report[1]) with
+            {
+                FanChannel = payload[1] == 1 ? ReviewedFanChannel.First : ReviewedFanChannel.Second,
+                StoredFanTargetRpm = payload[2] * 100,
+            };
+            return true;
+        }
+
+        if (report[6] == 0x0D && report[7] == 0x87
+            && TryDecodeCustomPerformance(payload, out var domain, out var rawLevel, out var level))
+        {
+            projectionKind = FeaturePayloadProjectionKind.ReviewedCustomPerformance;
+            projection = CreateIncompleteSemantic(
+                ReviewedFeatureResponseKind.CustomPerformanceQueryResponse, report[1]) with
+            {
+                CustomPerformanceDomain = domain,
+                CustomPerformanceLevel = level,
+                CustomPerformanceRawLevel = rawLevel,
+            };
+            return true;
+        }
+
+        if (report[6] == 0x03 && report[7] == 0x80
+            && payload is [0x00 or 0x01, 0x04, 0x00 or 0x01])
+        {
+            projectionKind = FeaturePayloadProjectionKind.ReviewedLogoState;
+            projection = CreateIncompleteSemantic(
+                ReviewedFeatureResponseKind.LogoStateQueryResponse, report[1]) with
+            {
+                LightingClass = payload[0] == 0 ? ReviewedLightingClass.Zero : ReviewedLightingClass.One,
+                LogoState = payload[2] == 0 ? ReviewedLogoState.Off : ReviewedLogoState.On,
+            };
+            return true;
+        }
+
+        if (report[6] == 0x03 && report[7] == 0x82
+            && payload is [0x00 or 0x01, 0x04, 0x00 or 0x02])
+        {
+            projectionKind = FeaturePayloadProjectionKind.ReviewedLogoEffect;
+            projection = CreateIncompleteSemantic(
+                ReviewedFeatureResponseKind.LogoEffectQueryResponse, report[1]) with
+            {
+                LightingClass = payload[0] == 0 ? ReviewedLightingClass.Zero : ReviewedLightingClass.One,
+                LogoEffect = payload[2] == 0 ? ReviewedLogoEffect.Static : ReviewedLogoEffect.Breathing,
+            };
+            return true;
+        }
+
+        if (report[6] == 0x03 && report[7] == 0x83
+            && payload is [0x01, 0x05, _])
+        {
+            projectionKind = FeaturePayloadProjectionKind.ReviewedKeyboardBrightness;
+            projection = CreateIncompleteSemantic(
+                ReviewedFeatureResponseKind.KeyboardBrightnessQueryResponse, report[1]) with
+            {
+                LightingClass = ReviewedLightingClass.One,
+                KeyboardBrightness = payload[2],
+            };
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool TryGetIncompleteReviewedResponseReport(
+        ControlObservation observation,
+        FeatureResponseStructureDiagnostics? diagnostics,
+        out ReadOnlySpan<byte> report)
+    {
+        report = default;
         if (observation.ReturnedLengthUnknown
             || observation.ReturnedBytes != 90
-            || diagnostics?.ReportIdPrefixedPacket is not
-            {
-                Completeness: FeatureResponseCompleteness.MissingFinalPadding,
-                MatchesAvailableBytes: false,
-                Failures.Count: 1,
-            } shifted
-            || shifted.Failures[0] != FeatureResponseInvariantFailure.UnexpectedReportId)
+            || observation.RequestedBytes is uint requested && requested != 91
+            || observation.ProductId == 0
+            || observation.UsagePage != 1
+            || observation.Usage != 2
+            || string.IsNullOrWhiteSpace(observation.InterfaceLabel)
+            || diagnostics?.BareLogicalPacket.MatchesAvailableBytes != false
+            || diagnostics.ReportIdPrefixedPacket is not
+                { Completeness: FeatureResponseCompleteness.MissingFinalPadding } shifted
+            || !shifted.MatchesAvailableBytes
+                && (shifted.Failures.Count != 1
+                    || shifted.Failures[0] != FeatureResponseInvariantFailure.UnexpectedReportId))
         {
             return false;
         }
 
-        // The leading byte is neither interpreted nor retained. Bytes 1..89
-        // independently contain the logical report through its checksum, but
-        // the final logical padding byte was not returned by the API.
-        var report = observation.Buffer.Span[1..];
+        // The leading byte is excluded whether it is zero or opaque. Bytes
+        // 1..89 independently contain the logical report through its checksum,
+        // while the final logical padding byte was not returned by the API.
+        report = observation.Buffer.Span[1..];
+        var dataSize = report[5];
         if (report[0] != 0x02
             || report[2] != 0 || report[3] != 0 || report[4] != 0
-            || report[5] != 4
-            || report[6] != 0x0D || report[7] != 0x02
-            || !ReviewedThermalEncoding.TryDecode(report.Slice(8, 4), out var channel, out var mode)
-            || report[12..88].IndexOfAnyExcept((byte)0) >= 0
+            || dataSize > 80
+            || report[(8 + dataSize)..88].IndexOfAnyExcept((byte)0) >= 0
             || report[88] != CalculateChecksum(report))
+        {
+            report = default;
+            return false;
+        }
+
+        return true;
+    }
+
+    private static ReviewedFeatureResponseProjection CreateIncompleteSemantic(
+        ReviewedFeatureResponseKind kind,
+        byte transactionId) =>
+        new(
+            kind,
+            ReviewedFeatureResponseStatus.Successful,
+            transactionId,
+            FeatureResponseCompleteness.MissingFinalPadding,
+            OpaquePrefixDisposition.Excluded);
+
+    private static bool TryDecodeCustomPerformance(
+        ReadOnlySpan<byte> payload,
+        out ReviewedCustomPerformanceDomain domain,
+        out byte rawLevel,
+        out ReviewedCustomPerformanceLevel? level)
+    {
+        domain = default;
+        rawLevel = default;
+        level = default;
+        if (payload is not [0x01, 0x01 or 0x02, _])
         {
             return false;
         }
 
-        projection = new ReviewedFeatureResponseProjection(
-            ReviewedFeatureResponseKind.ThermalSetterAcknowledgement,
-            ReviewedFeatureResponseStatus.Successful,
-            report[1],
-            channel,
-            mode,
-            FeatureResponseCompleteness.MissingFinalPadding,
-            OpaquePrefixDisposition.Excluded);
+        rawLevel = payload[2];
+        domain = payload[1] == 1
+            ? ReviewedCustomPerformanceDomain.Cpu
+            : ReviewedCustomPerformanceDomain.Gpu;
+        level = payload[2] switch
+        {
+            0 => ReviewedCustomPerformanceLevel.Low,
+            1 => ReviewedCustomPerformanceLevel.Medium,
+            2 => ReviewedCustomPerformanceLevel.High,
+            3 when domain == ReviewedCustomPerformanceDomain.Cpu => ReviewedCustomPerformanceLevel.Boost,
+            _ => null,
+        };
         return true;
     }
 
@@ -273,19 +438,17 @@ public static class FeaturePayloadPrivacy
     {
         // RGB values occupy the entire reviewed payload; no layout mask is
         // imposed on another model. Recognition is privacy-only, not support.
-        if (commandClass == 0x03 && commandId == 0x0B && payload.Length == 55
-            && payload[0] == 0xFF && payload[1] <= 5 && payload[2] == 0 && payload[3] == 16)
+        if (commandClass == 0x03 && commandId == 0x0B && payload.Length is 52 or 55
+            && payload[0] == 0xFF && payload[1] <= 5 && payload[2] == 0
+            && payload[3] == (payload.Length - 4) / 3 - 1)
         {
             return FeaturePayloadProjectionKind.ReviewedMatrixRow;
         }
 
-        // Full 80-byte reference hardware-effect envelope: only the reviewed
-        // Off, Wave, Spectrum and Static selectors, numeric direction/RGB and
-        // zero padding. This is a privacy grammar, never a model support claim.
-        if (commandClass == 0x03 && commandId == 0x0A && payload.Length == 80
-            && ((payload[0] is 0 or 4 && payload[1..].IndexOfAnyExcept((byte)0) < 0)
-                || (payload[0] == 1 && payload[1] is 1 or 2 && payload[2..].IndexOfAnyExcept((byte)0) < 0)
-                || (payload[0] == 6 && payload[4..].IndexOfAnyExcept((byte)0) < 0)))
+        // Vendor setLedMatrixRGBEffect sends the used length, while older
+        // callers send all 80 bytes. Accept only reviewed numeric/RGB shapes
+        // with zero unused bytes; no opaque effect data or model admission.
+        if (commandClass == 0x03 && commandId == 0x0A && IsReviewedLightingEffect(payload))
         {
             return FeaturePayloadProjectionKind.ReviewedHardwareLightingEffect;
         }
@@ -350,10 +513,11 @@ public static class FeaturePayloadPrivacy
         }
 
         if (commandClass == 7 && commandId is 0x0F or 0x8F && payload.Length == 1
-            && payload[0] is 0 or 4
             && (commandId == 0x0F || direction == ObservationDirection.Output || payload[0] == 0))
         {
-            return FeaturePayloadProjectionKind.ReviewedBatterySetting;
+            // Shared numeric bitmask: not a full-charge-only enum. Retain the
+            // byte without inferring a feature from zero or unfamiliar bits.
+            return FeaturePayloadProjectionKind.ReviewedPowerModeControl;
         }
 
         if (commandClass == 7 && commandId == 0x8C && payload.Length == 2
@@ -374,6 +538,15 @@ public static class FeaturePayloadPrivacy
             return FeaturePayloadProjectionKind.ReviewedFanSpeed;
         }
 
+        if (commandClass == 0x0D && commandId == 0x81
+            && payload.Length == 3
+            && payload[0] == 0x00
+            && payload[1] is 0x01 or 0x02
+            && (direction == ObservationDirection.Output || payload[2] == 0x00))
+        {
+            return FeaturePayloadProjectionKind.ReviewedFanSpeed;
+        }
+
         if (commandClass == 0x0D && commandId == 0x88 && IsFanRpm(payload, direction))
         {
             return FeaturePayloadProjectionKind.ReviewedFanRpm;
@@ -388,6 +561,24 @@ public static class FeaturePayloadPrivacy
         }
 
         return FeaturePayloadProjectionKind.MetadataOnly;
+    }
+
+    private static bool IsReviewedLightingEffect(ReadOnlySpan<byte> payload)
+    {
+        if (payload.IsEmpty) return false;
+        var used = payload[0] switch
+        {
+            0 or 4 => 1,
+            1 when payload.Length >= 2 && payload[1] is 1 or 2 => 2,
+            2 when payload.Length >= 5 => 5, // duration and RGB
+            3 when payload.Length >= 2 && payload[1] == 1 => 5,
+            3 when payload.Length >= 2 && payload[1] == 2 => 8,
+            3 when payload.Length >= 2 && payload[1] == 3 => 2,
+            6 => 4,
+            _ => 0,
+        };
+        return used > 0 && (payload.Length == used || payload.Length == 80)
+            && payload.Length >= used && payload[used..].IndexOfAnyExcept((byte)0) < 0;
     }
 
     private static bool IsThermalFamily(ReadOnlySpan<byte> payload) =>
@@ -415,7 +606,9 @@ public static class FeaturePayloadPrivacy
     {
         FeaturePayloadProjectionKind.ReviewedThermalMode => !IsKnownThermalValue(payload),
         FeaturePayloadProjectionKind.ReviewedCustomPerformance => payload[2] > 2,
-        FeaturePayloadProjectionKind.ReviewedFanSpeed => payload[2] is < 0x14 or > 0x3C,
+        FeaturePayloadProjectionKind.ReviewedFanSpeed =>
+            !(commandId == 0x81 && direction == ObservationDirection.Input && payload[2] == 0)
+            && payload[2] is < 0x14 or > 0x3C,
         FeaturePayloadProjectionKind.ReviewedBatterySetting when commandId is 0x12 or 0x92 =>
             !(commandId == 0x92 && direction == ObservationDirection.Input && payload[0] == 0)
             && !IsBatteryValue(payload[0]),

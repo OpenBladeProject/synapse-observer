@@ -47,6 +47,7 @@ check lasts five seconds. Fn alone may produce no input that this check can
 observe. You can still report its visible behavior in the Fn key evidence item.
 
 See [what the ZIP contains](docs/capture-contents.md).
+For a focused follow-up, see [lighting, Fn keys and fan replies](docs/control-capture-follow-up.md).
 
 ### Submit the ZIP
 

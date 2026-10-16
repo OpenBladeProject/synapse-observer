@@ -85,7 +85,7 @@ public sealed class ExpandedPayloadEvidenceTests
     [InlineData(2, 6, new byte[] { 0, 1 }, FeaturePayloadProjectionKind.ReviewedKeyboardBehavior)]
     [InlineData(15, 24, new byte[] { 0, 1 }, FeaturePayloadProjectionKind.ReviewedKeyboardBehavior)]
     [InlineData(13, 7, new byte[] { 1, 2, 2 }, FeaturePayloadProjectionKind.ReviewedCustomPerformance)]
-    [InlineData(7, 15, new byte[] { 4 }, FeaturePayloadProjectionKind.ReviewedBatterySetting)]
+    [InlineData(7, 15, new byte[] { 4 }, FeaturePayloadProjectionKind.ReviewedPowerModeControl)]
     public void ReviewedNumericSettings_RetainOriginalEnvelope(byte commandClass, byte commandId,
         byte[] payload, FeaturePayloadProjectionKind kind)
     {

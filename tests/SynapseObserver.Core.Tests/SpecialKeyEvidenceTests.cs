@@ -23,6 +23,43 @@ public sealed class SpecialKeyEvidenceTests
     }
 
     [Fact]
+    public void FnRExceptionRequiresExplicitPromptAndDoesNotProveFn()
+    {
+        using var session = CreateSession();
+        Assert.Equal(EvidenceAddResult.RejectedInvalid, session.AddSpecialKeyObservation(Key(0x52)));
+        Assert.Equal(EvidenceAddResult.Added, session.AddSpecialKeyObservation(Key(0x52) with { ExpectedKey = SpecialKeyExpectedKey.FnR }));
+        var item = Assert.Single(session.Snapshot().SpecialKeyObservations);
+        Assert.False(item.IsFirmwareReadback);
+        Assert.Equal(EvidenceProvenance.UserReported, item.ContextProvenance);
+        Assert.Equal(EvidenceAddResult.Added, session.AddSpecialKeyProbe(new(
+            SpecialKeyExpectedKey.FnR, SpecialKeyModeContext.Unknown,
+            SpecialKeyProbeEndReason.Timeout, 1, 0, 0, string.Empty)));
+        var coverage = ContributionDraftBuilder.CreateCoverageDraft(session.Snapshot());
+        Assert.Equal(ContributionCoverageStatus.Captured,
+            Assert.Single(coverage.Coverage, entry => entry.Capability == "specialKeys.fn.inputEvidence").Status);
+    }
+
+    [Fact]
+    public void PromptedFunctionKeySignalStaysUserReportedAndMapsToGenericFnEvidence()
+    {
+        using var session = CreateSession();
+        var observation = Key(0x70) with { ExpectedKey = SpecialKeyExpectedKey.FnF1 };
+        Assert.Equal(EvidenceAddResult.Added, session.AddSpecialKeyObservation(observation));
+        Assert.Equal(EvidenceAddResult.Added, session.AddSpecialKeyProbe(new(
+            SpecialKeyExpectedKey.FnF1, SpecialKeyModeContext.Unknown,
+            SpecialKeyProbeEndReason.Timeout, 1, 0, 0, string.Empty)));
+
+        var retained = Assert.Single(session.Snapshot().SpecialKeyObservations);
+        Assert.False(retained.IsFirmwareReadback);
+        Assert.Equal(EvidenceProvenance.UserReported, retained.ContextProvenance);
+        var coverage = ContributionDraftBuilder.CreateCoverageDraft(session.Snapshot());
+        Assert.Equal(ContributionCoverageStatus.Captured,
+            Assert.Single(coverage.Coverage, item => item.Capability == "specialKeys.fn.inputEvidence").Status);
+        Assert.Equal(ContributionCoverageStatus.NotInvestigated,
+            Assert.Single(coverage.Coverage, item => item.Capability == "specialKeys.functionLayerReports").Status);
+    }
+
+    [Fact]
     public void UnknownMetadataHasBoundedGeometryAndCopiesRanges()
     {
         using var session = CreateSession();

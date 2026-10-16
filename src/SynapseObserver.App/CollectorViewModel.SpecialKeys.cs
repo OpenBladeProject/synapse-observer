@@ -10,17 +10,41 @@ internal sealed partial class CollectorViewModel
     private string inputSelectionIssue = "The laptop's input interfaces could not be selected unambiguously. Save the inventory so the maintainer can investigate.";
     private Func<bool>? probeForeground;
     private bool probingSpecialKey;
+    private bool specialKeyExpanded;
     private int probeSequence;
     private string activeProbeLabel = string.Empty;
     private double probeOrigin;
     private int rejectedProbeObservations;
-    private SpecialKeyExpectedKey expectedSpecialKey = SpecialKeyExpectedKey.M1;
-    private string specialKeyStatus = SpecialKeySelectionGuidance(SpecialKeyExpectedKey.M1);
+    private SpecialKeyExpectedKey expectedSpecialKey = SpecialKeyExpectedKey.Fn;
+    private string specialKeyStatus = SpecialKeySelectionGuidance(SpecialKeyExpectedKey.Fn);
     public sealed record SpecialKeyChoice(SpecialKeyExpectedKey Key, string Label);
-    public IReadOnlyList<SpecialKeyChoice> SpecialKeyChoices { get; } = Enum.GetValues<SpecialKeyExpectedKey>()
-        .Select(key => new SpecialKeyChoice(key, key == SpecialKeyExpectedKey.FnP ? "Fn + P" : key.ToString())).ToArray();
+    public IReadOnlyList<SpecialKeyChoice> SpecialKeyChoices { get; } =
+    [
+        new(SpecialKeyExpectedKey.Fn, SpecialKeyLabel(SpecialKeyExpectedKey.Fn)),
+        .. Enumerable.Range(1, 12).Select(number =>
+            new SpecialKeyChoice((SpecialKeyExpectedKey)((int)SpecialKeyExpectedKey.FnF1 + number - 1), $"Fn + F{number}")),
+        new(SpecialKeyExpectedKey.FnR, SpecialKeyLabel(SpecialKeyExpectedKey.FnR)),
+        new(SpecialKeyExpectedKey.FnP, SpecialKeyLabel(SpecialKeyExpectedKey.FnP)),
+        new(SpecialKeyExpectedKey.M1, SpecialKeyLabel(SpecialKeyExpectedKey.M1)),
+        new(SpecialKeyExpectedKey.M2, SpecialKeyLabel(SpecialKeyExpectedKey.M2)),
+        new(SpecialKeyExpectedKey.M3, SpecialKeyLabel(SpecialKeyExpectedKey.M3)),
+        new(SpecialKeyExpectedKey.M4, SpecialKeyLabel(SpecialKeyExpectedKey.M4)),
+        new(SpecialKeyExpectedKey.M5, SpecialKeyLabel(SpecialKeyExpectedKey.M5)),
+    ];
     public bool IsProbingSpecialKey => probingSpecialKey;
     public bool ShowSpecialKeyProbe => HasInventory;
+    public bool IsSpecialKeyActivity => HasCurrentStep
+        && CurrentActivity.Id.StartsWith("special-key-", StringComparison.Ordinal);
+    public bool IsSpecialKeyExpanded
+    {
+        get => specialKeyExpanded;
+        set
+        {
+            if (specialKeyExpanded == value) return;
+            specialKeyExpanded = value;
+            Changed();
+        }
+    }
     public bool CanProbeSpecialKeys => HasInventory && !capacityReached && !closing && !busy && !probingSpecialKey && !preview
         && specialKeyProbe is not null && stepPhase == 0 && SpecialKeyProbeParser.IsSingleBladeRoot(inputCandidates)
         && inputCandidates.Any(SpecialKeyProbeParser.IsInputCandidate)
@@ -89,7 +113,7 @@ internal sealed partial class CollectorViewModel
         probeOrigin = RelativeMilliseconds;
         rejectedProbeObservations = 0;
         probingSpecialKey = true;
-        specialKeyStatus = $"Press only {expectedSpecialKey} now. Keep this window active for five seconds. Ordinary typing is omitted.";
+        specialKeyStatus = $"Press only {SpecialKeyLabel(expectedSpecialKey)} now. Keep this window active for five seconds. Ordinary typing is omitted.";
         if (!Marker(EvidenceMarkerKind.SpecialKeyProbeStarted, SpecialKeyActivity(expectedSpecialKey), "Special-key probe requested", EvidenceProvenance.UserReported))
         {
             probingSpecialKey = false;
@@ -197,17 +221,52 @@ internal sealed partial class CollectorViewModel
     }
 
     internal void CancelSpecialKeyProbe() => specialKeyProbe?.Disarm();
+    private void SynchronizeSpecialKeySelection()
+    {
+        IsSpecialKeyExpanded = IsSpecialKeyActivity;
+        if (!IsSpecialKeyActivity || SpecialKeyActivity(expectedSpecialKey) == CurrentActivity.Id) return;
+        ExpectedSpecialKey = CurrentActivity.Id switch
+        {
+            "special-key-m1" => SpecialKeyExpectedKey.M1,
+            "special-key-m2" => SpecialKeyExpectedKey.M2,
+            "special-key-m3" => SpecialKeyExpectedKey.M3,
+            "special-key-m4" => SpecialKeyExpectedKey.M4,
+            "special-key-m5" => SpecialKeyExpectedKey.M5,
+            "special-key-fn-p" => SpecialKeyExpectedKey.FnP,
+            _ => SpecialKeyExpectedKey.Fn,
+        };
+    }
     private static string SpecialKeyActivity(SpecialKeyExpectedKey key) => key switch
-    { SpecialKeyExpectedKey.Fn => "special-key-fn", SpecialKeyExpectedKey.FnP => "special-key-fn-p", _ => "special-key-" + key.ToString().ToLowerInvariant() };
-    private static string SpecialKeySelectionGuidance(SpecialKeyExpectedKey key) => key == SpecialKeyExpectedKey.Fn
-        ? "Fn alone may not produce a Windows input event. Click Check key for 5 seconds, keep this collector window in front, and press only Fn during the check. Then report any visible Fn behavior in the Fn key evidence item. If your laptop has an Fn + P shortcut, you can probe it separately; it may change a setting."
-        : "Optional: identify one M or Fn key. Click Check key for 5 seconds, keep this collector window in front, and press only the selected key during the check.";
+    {
+        SpecialKeyExpectedKey.FnP => "special-key-fn-p",
+        SpecialKeyExpectedKey.M1 or SpecialKeyExpectedKey.M2 or SpecialKeyExpectedKey.M3
+            or SpecialKeyExpectedKey.M4 or SpecialKeyExpectedKey.M5 => "special-key-" + key.ToString().ToLowerInvariant(),
+        _ => "special-key-fn",
+    };
+    private static string SpecialKeyLabel(SpecialKeyExpectedKey key) => key switch
+    {
+        SpecialKeyExpectedKey.Fn => "Fn alone",
+        SpecialKeyExpectedKey.FnP => "Fn + P",
+        SpecialKeyExpectedKey.FnR => "Fn + R",
+        _ when IsFnFunctionKey(key) => $"Fn + F{(int)key - (int)SpecialKeyExpectedKey.FnF1 + 1}",
+        _ => key.ToString(),
+    };
+    private static string SpecialKeySelectionGuidance(SpecialKeyExpectedKey key) => key switch
+    {
+        SpecialKeyExpectedKey.Fn => "Fn alone may not produce a Windows input event. Click Check key for 5 seconds, keep this collector window in front, and press only Fn during the check. Then report any visible Fn behavior in the Fn key evidence item. You can also select a specific Fn chord that is printed on or offered by your laptop.",
+        SpecialKeyExpectedKey.FnP => "Optional: check only Fn + P while this collector window is in front. It may change a setting. A P signal does not prove that Fn was detected or what the shortcut did.",
+        SpecialKeyExpectedKey.FnR => "Optional: check only Fn + R while this collector window is in front. An R signal does not prove that Fn was detected or what the shortcut did.",
+        _ when IsFnFunctionKey(key) => $"Optional: check only {SpecialKeyLabel(key)} while this collector window is in front. A function-key or media signal does not prove that Fn was detected or what the shortcut did; report visible behavior separately in the Fn key evidence item.",
+        _ => "Optional: identify one M key. Click Check key for 5 seconds, keep this collector window in front, and press only the selected key during the check.",
+    };
+    private static bool IsFnFunctionKey(SpecialKeyExpectedKey key) =>
+        (int)key is >= (int)SpecialKeyExpectedKey.FnF1 and <= (int)SpecialKeyExpectedKey.FnF12;
     private static string SpecialKeyCompletionStatus(SpecialKeyProbeSummary summary)
     {
         if (summary.EndReason == SpecialKeyProbeEndReason.Timeout)
         {
             if (summary.RejectedPacketCount > 0)
-                return $"{summary.ExpectedKey}: {summary.ObservationCount} retained input observations. " +
+                return $"{SpecialKeyLabel(summary.ExpectedKey)}: {summary.ObservationCount} retained input observations. " +
                     $"{summary.RejectedPacketCount} input packets or observations were rejected. " +
                     "The check contains collection gaps; this does not show whether the physical key worked.";
             if (summary.ExpectedKey == SpecialKeyExpectedKey.Fn && summary.ObservationCount == 0)
@@ -215,18 +274,18 @@ internal sealed partial class CollectorViewModel
                     "Fn alone may be handled without a Windows event, so report any visible behavior in the Fn key evidence item. " +
                     "This result does not show whether the physical key worked.";
 
-            return $"{summary.ExpectedKey}: {summary.ObservationCount} input observations in five seconds. " +
+            return $"{SpecialKeyLabel(summary.ExpectedKey)}: {summary.ObservationCount} input observations in five seconds. " +
                 "The check finished normally. No signal does not prove that the key is unavailable.";
         }
 
-        return $"{summary.ExpectedKey}: {summary.ObservationCount} input observations. Probe ended: {summary.EndReason}. " +
+        return $"{SpecialKeyLabel(summary.ExpectedKey)}: {summary.ObservationCount} input observations. Probe ended: {summary.EndReason}. " +
             (summary.RejectedPacketCount > 0 ? $"{summary.RejectedPacketCount} input packets or observations were rejected. " : "") +
             "No signal does not prove that the key is unavailable.";
     }
     private void RefreshSpecialKeyProbe()
     {
         Changed(nameof(ProbeSpecialKeyCommand)); Changed(nameof(CancelSpecialKeyProbeCommand));
-        Changed(nameof(IsProbingSpecialKey)); Changed(nameof(ShowSpecialKeyProbe)); Changed(nameof(CanProbeSpecialKeys));
+        Changed(nameof(IsProbingSpecialKey)); Changed(nameof(ShowSpecialKeyProbe)); Changed(nameof(IsSpecialKeyActivity)); Changed(nameof(CanProbeSpecialKeys));
         Changed(nameof(CapacitySummary));
         Changed(nameof(CanChooseSpecialKey)); Changed(nameof(SpecialKeyStatus));
         ProbeSpecialKeyCommand?.Refresh(); CancelSpecialKeyProbeCommand?.Refresh();

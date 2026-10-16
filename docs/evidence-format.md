@@ -49,6 +49,7 @@ adapter-power, and bounded numeric or RGB lighting envelopes that pass
 command-specific bounds,
 checksum, reserved-byte, and padding checks may export their bytes. The lighting
 grammar covers exact 91-byte row, latch, brightness, logo, and effect reports,
+including 52-byte and 55-byte RGB row payloads and reviewed used-length effects,
 plus the reviewed 375-byte matrix frame shape. Recognizing one value or frame is
 a privacy decision; it does not establish a model's full range, layout, or
 support. Completed HID_GET_FEATURE IOCTL responses may contain a bare
@@ -129,15 +130,23 @@ Completed 90-byte feature responses with capacity for 91 bytes may carry
 and report-ID-prefixed interpretations of the available bytes. A prefixed
 candidate explicitly lacks final padding. The diagnostics contain no opaque
 bytes or header values. A narrower `semanticResponse` is emitted only when the
-shifted logical bytes pass every available invariant, the sole layout failure
-is a nonzero opaque leading byte, and the body is a reviewed successful thermal
-setter acknowledgement with a known channel and mode. It retains the
-transaction and closed semantic fields while excluding the leading byte, the
-body, and the unavailable final padding. `completePayloadRetained` remains
-false and `headerHints` remains null. The annotation draft links this receipt
-to a setter request only when interface, transaction, command, semantic value,
-and ordering identify one unique unmatched request. This is acknowledgement
-evidence, not firmware readback or a complete HID envelope.
+shifted logical bytes pass every available invariant and the leading byte is
+excluded. The complete bare interpretation must not also match. Reviewed
+summaries cover thermal acknowledgements, thermal getters, actual fan RPM,
+stored fan targets, Custom levels, logo state/effect and keyboard brightness.
+They retain the transaction and typed fields while excluding the leading byte,
+body and unavailable final padding. `completePayloadRetained` remains false
+and `headerHints` remains null. An acknowledgement is distinct from a getter;
+RPM is distinct from a saved target. The annotation draft links a thermal
+acknowledgement to a setter only when scope, transaction, value and ordering
+identify one unique unmatched request. All summaries remain user-mode returned
+buffers, not independent firmware confirmation or complete HID envelopes.
+See [focused capture steps and provenance](control-capture-follow-up.md).
+
+The shared `07/0F` and `07/8F` numeric power-mode byte uses
+`reviewedPowerModeControl`, not the battery-setting projection. Its generic
+`power.modeControlReports` coverage does not infer full charge or Maximum Fans
+from a zero value or unrelated bit.
 
 The app and README.txt share a collection review showing retained bodies,
 unfinished actions, omitted response contents, and remaining evidence items.

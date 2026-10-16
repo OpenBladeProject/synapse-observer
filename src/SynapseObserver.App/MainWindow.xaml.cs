@@ -72,9 +72,25 @@ public partial class MainWindow : Window
         viewModel.SetPreviewStage(stage);
         Show();
         UpdateLayout();
+        // Let the real theme's expansion animation finish before taking the
+        // disconnected snapshot; an immediate render can show empty content.
+        var frame = new System.Windows.Threading.DispatcherFrame();
+        var settle = new System.Windows.Threading.DispatcherTimer
+        {
+            Interval = TimeSpan.FromMilliseconds(350),
+        };
+        settle.Tick += (_, _) => { settle.Stop(); frame.Continue = false; };
+        settle.Start();
+        System.Windows.Threading.Dispatcher.PushFrame(frame);
+        UpdateLayout();
         if (stage == 4)
         {
             ExportCard.BringIntoView();
+            UpdateLayout();
+        }
+        if (stage == 5)
+        {
+            SpecialKeyCard.BringIntoView();
             UpdateLayout();
         }
         // The preview uses a real maximized window; record dimensions to catch

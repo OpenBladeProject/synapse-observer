@@ -72,10 +72,10 @@
             <Button Content="Check recording availability" Command="{Binding CollectCommand}" HorizontalAlignment="Left" Margin="0,12,0,0" Visibility="{Binding ShowAttach, Converter={StaticResource VisibleWhenTrue}}" />
           </StackPanel>
         </Border>
-        <Border Style="{StaticResource Card}" Visibility="{Binding ShowSpecialKeyProbe, Converter={StaticResource VisibleWhenTrue}}">
-          <Expander Header="Optional M / Fn key check">
+        <Border x:Name="SpecialKeyCard" Style="{StaticResource Card}" Visibility="{Binding ShowSpecialKeyProbe, Converter={StaticResource VisibleWhenTrue}}">
+          <Expander Header="Optional M / Fn key check" IsExpanded="{Binding IsSpecialKeyExpanded, Mode=TwoWay}">
             <StackPanel Margin="0,10,0,0">
-              <TextBlock Text="Note the current setting before checking a key. Keep this window active for five seconds. If the key changes a setting, restore it afterward. Ordinary typing is omitted." Foreground="{StaticResource MutedTextBrush}" FontSize="12" />
+              <TextBlock Text="Choose Fn alone or the exact Fn chord you want to check. Note the current setting first. Keep this window active for five seconds, then restore any changed setting. Ordinary typing is omitted." Foreground="{StaticResource MutedTextBrush}" FontSize="12" />
               <WrapPanel Margin="0,10,0,0" IsEnabled="{Binding CanChooseSpecialKey}">
                 <StackPanel Margin="0,0,12,8"><Label Content="Key to press" Padding="0,0,0,5" Target="{Binding ElementName=SpecialKeyPicker}" /><ComboBox x:Name="SpecialKeyPicker" ItemsSource="{Binding SpecialKeyChoices}" DisplayMemberPath="Label" SelectedValuePath="Key" SelectedValue="{Binding ExpectedSpecialKey}" Width="125" MinHeight="34" AutomationProperties.Name="Key to press" /></StackPanel>
               </WrapPanel>

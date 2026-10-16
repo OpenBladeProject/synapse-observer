@@ -469,15 +469,104 @@ public sealed class CollectorWorkflowTests
         var notifications = new List<string?>();
         model.PropertyChanged += (_, item) => notifications.Add(item.PropertyName);
 
+        model.ExpectedSpecialKey = SpecialKeyExpectedKey.FnP;
         model.ExpectedSpecialKey = SpecialKeyExpectedKey.Fn;
 
         Assert.Contains(nameof(CollectorViewModel.SpecialKeyStatus), notifications);
         Assert.Contains("may not produce a Windows input event", model.SpecialKeyStatus);
         Assert.Contains("Click Check key for 5 seconds", model.SpecialKeyStatus);
         Assert.Contains("keep this collector window in front", model.SpecialKeyStatus);
-        Assert.Contains("If your laptop has an Fn + P shortcut", model.SpecialKeyStatus);
-        Assert.Contains("may change a setting", model.SpecialKeyStatus);
+        Assert.Contains("select a specific Fn chord", model.SpecialKeyStatus);
         Assert.DoesNotContain("not detected", model.SpecialKeyStatus, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void KeyCheckDefaultsToFnAndOffersExplicitDiscoverableChords()
+    {
+        var model = new CollectorViewModel(true);
+
+        Assert.Equal(SpecialKeyExpectedKey.Fn, model.ExpectedSpecialKey);
+        Assert.Equal("Fn alone", model.SpecialKeyChoices[0].Label);
+        Assert.Contains(model.SpecialKeyChoices, item => item.Key == SpecialKeyExpectedKey.FnF1 && item.Label == "Fn + F1");
+        Assert.Contains(model.SpecialKeyChoices, item => item.Key == SpecialKeyExpectedKey.FnF12 && item.Label == "Fn + F12");
+        Assert.Contains(model.SpecialKeyChoices, item => item.Key == SpecialKeyExpectedKey.FnR && item.Label == "Fn + R");
+        Assert.Contains(model.SpecialKeyChoices, item => item.Key == SpecialKeyExpectedKey.FnP && item.Label == "Fn + P");
+        Assert.Equal(Enum.GetValues<SpecialKeyExpectedKey>().Length, model.SpecialKeyChoices.Count);
+    }
+
+    [Fact]
+    public async Task SelectedSpecialKeyActivityRequestsExpandedKeyCheck()
+    {
+        var model = new CollectorViewModel(true);
+        await Run(model.CollectCommand);
+        model.SelectedActivityIndex = model.Activities.ToList().FindIndex(activity => activity.Id == "special-key-fn");
+        Assert.True(model.IsSpecialKeyActivity);
+
+        model.SelectedActivityIndex = model.Activities.ToList().FindIndex(activity => activity.Id == "special-key-fn-p");
+        Assert.True(model.IsSpecialKeyActivity);
+
+        model.SelectedActivityIndex = model.Activities.ToList().FindIndex(activity => activity.Id == "performance");
+        Assert.False(model.IsSpecialKeyActivity);
+    }
+
+    [Theory]
+    [InlineData("special-key-m1", SpecialKeyExpectedKey.M1)]
+    [InlineData("special-key-m2", SpecialKeyExpectedKey.M2)]
+    [InlineData("special-key-m3", SpecialKeyExpectedKey.M3)]
+    [InlineData("special-key-m4", SpecialKeyExpectedKey.M4)]
+    [InlineData("special-key-m5", SpecialKeyExpectedKey.M5)]
+    [InlineData("special-key-fn", SpecialKeyExpectedKey.Fn)]
+    [InlineData("special-key-fn-p", SpecialKeyExpectedKey.FnP)]
+    public async Task SelectingSpecialKeyActivitySynchronizesKeyCheck(string activityId, SpecialKeyExpectedKey expected)
+    {
+        var model = new CollectorViewModel(true) { ExpectedSpecialKey = SpecialKeyExpectedKey.M5 };
+        await Run(model.CollectCommand);
+
+        model.SelectedActivityIndex = model.Activities.ToList().FindIndex(activity => activity.Id == activityId);
+
+        Assert.Equal(expected, model.ExpectedSpecialKey);
+    }
+
+    [Fact]
+    public async Task CompletingSpecialKeyActivitySynchronizesTheNextKeyCheck()
+    {
+        var model = new CollectorViewModel(true);
+        await Run(model.CollectCommand);
+        model.SelectedActivityIndex = model.Activities.ToList().FindIndex(activity => activity.Id == "special-key-m1");
+        model.StartingSetting = "Unassigned";
+
+        await Run(model.MarkCommand);
+
+        Assert.Equal("special-key-m2", model.Activities[model.SelectedActivityIndex].Id);
+        Assert.Equal(SpecialKeyExpectedKey.M2, model.ExpectedSpecialKey);
+    }
+
+    [Fact]
+    public async Task FnActivityPreservesExplicitChordChoiceAcrossOtherItems()
+    {
+        var model = new CollectorViewModel(true);
+        await Run(model.CollectCommand);
+        model.SelectedActivityIndex = model.Activities.ToList().FindIndex(activity => activity.Id == "special-key-fn");
+        model.ExpectedSpecialKey = SpecialKeyExpectedKey.FnF5;
+        model.SelectedActivityIndex = model.Activities.ToList().FindIndex(activity => activity.Id == "power-source");
+
+        model.SelectedActivityIndex = model.Activities.ToList().FindIndex(activity => activity.Id == "special-key-fn");
+
+        Assert.Equal(SpecialKeyExpectedKey.FnF5, model.ExpectedSpecialKey);
+    }
+
+    [Theory]
+    [InlineData(SpecialKeyExpectedKey.FnF1, "Fn + F1", "function-key or media signal does not prove")]
+    [InlineData(SpecialKeyExpectedKey.FnR, "Fn + R", "R signal does not prove")]
+    [InlineData(SpecialKeyExpectedKey.FnP, "Fn + P", "P signal does not prove")]
+    public void ExplicitChordGuidanceNamesPromptAndPreservesEvidenceLimit(
+        SpecialKeyExpectedKey key, string label, string evidenceLimit)
+    {
+        var model = new CollectorViewModel(true) { ExpectedSpecialKey = key };
+
+        Assert.Contains(label, model.SpecialKeyStatus);
+        Assert.Contains("collector window is in front", model.SpecialKeyStatus);
+        Assert.Contains(evidenceLimit, model.SpecialKeyStatus);
     }
 
     [Fact]

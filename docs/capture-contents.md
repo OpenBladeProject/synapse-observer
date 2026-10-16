@@ -31,10 +31,12 @@ Windows inventory, feature call, or prompted key observation.
 captured or that a query, setter, restore path, lifecycle path, or production
 admission passed. A setter acknowledgement read through GET_FEATURE does not
 create getter coverage; command identity distinguishes it from a query response.
-For a narrowly reviewed incomplete thermal acknowledgement, the draft may retain
-closed semantic fields and a unique preceding setter reference while the opaque
-leading byte and report body remain excluded. This still does not create getter
-or firmware-readback coverage.
+Reviewed incomplete replies may retain typed numeric summaries while the opaque
+leading byte and report body remain excluded. A thermal acknowledgement needs
+a unique preceding setter reference and does not create getter coverage.
+A reviewed getter summary needs a unique preceding query before contributing
+getter coverage. Actual fan RPM and a stored speed target have separate leaves.
+Neither establishes firmware application or restoration.
 
 ## `annotation-draft.json`
 
