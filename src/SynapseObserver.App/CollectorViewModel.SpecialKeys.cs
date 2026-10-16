@@ -6,6 +6,8 @@ internal sealed partial class CollectorViewModel
 {
     private SpecialKeyProbe? specialKeyProbe;
     private Task specialKeyReviewTask = Task.CompletedTask;
+    private bool inputMismatchReported;
+    private string inputSelectionIssue = "The laptop's input interfaces could not be selected unambiguously. Save the inventory so the maintainer can investigate.";
     private Func<bool>? probeForeground;
     private bool probingSpecialKey;
     private int probeSequence;
@@ -26,7 +28,7 @@ internal sealed partial class CollectorViewModel
         && session.SpecialKeyObservationCount < EvidenceLimits.MaxSpecialKeyObservations;
     public bool CanChooseSpecialKey => !probingSpecialKey;
     public string SpecialKeyStatus => specialKeyStatus + (HasInventory && !preview && inputCandidates.Count == 0
-        ? " The laptop's input interfaces could not be selected unambiguously. Save the inventory so the maintainer can investigate." : string.Empty);
+        ? " " + inputSelectionIssue : string.Empty);
     public SpecialKeyExpectedKey ExpectedSpecialKey
     {
         get => expectedSpecialKey;
@@ -41,6 +43,26 @@ internal sealed partial class CollectorViewModel
     }
     public AsyncCommand? ProbeSpecialKeyCommand { get; private set; }
     public AsyncCommand? CancelSpecialKeyProbeCommand { get; private set; }
+
+    internal void SelectSpecialKeyInputCandidates(IReadOnlyList<LocalHidCandidate> candidates)
+    {
+        inputCandidates = [];
+        inputSelectionIssue = "The laptop's input interfaces could not be selected unambiguously. Save the inventory so the maintainer can investigate.";
+        var eligible = candidates.Where(candidate => SpecialKeyProbeParser.IsInputCandidate(candidate)
+            && candidate.UsbParentProductName?.Contains("Blade", StringComparison.OrdinalIgnoreCase) == true).ToArray();
+        if (!SpecialKeyProbeParser.IsSingleBladeRoot(eligible) || session is null) return;
+        if (eligible.All(candidate => CanRetainSpecialKeyInput(candidate, session.Inventory.RazerHidInterfaces.Value)))
+        {
+            inputCandidates = eligible;
+            return;
+        }
+        inputSelectionIssue = "The laptop's input descriptors changed after device information was collected. Save this ZIP, then reopen the collector and collect device information again before checking a key.";
+        if (!inputMismatchReported)
+        {
+            inputMismatchReported = true;
+            Marker(EvidenceMarkerKind.Failure, "observer", "Key check unavailable: input inventory mismatch", EvidenceProvenance.Collector);
+        }
+    }
 
     internal static bool CanRetainSpecialKeyInput(LocalHidCandidate candidate, IReadOnlyList<HidInterfaceEvidence> inventory) =>
         SpecialKeyProbeParser.IsInputCandidate(candidate) && inventory.Any(item =>

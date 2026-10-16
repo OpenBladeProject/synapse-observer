@@ -266,14 +266,8 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
 
         recorderStatus = "Checking the native observer's availability.";
         var candidates = await Task.Run(() => inventorySource.DiscoverLocalControlCandidates());
-        var eligibleInputs = candidates.Value.Where(candidate => SpecialKeyProbeParser.IsInputCandidate(candidate)
-            && candidate.UsbParentProductName?.Contains("Blade", StringComparison.OrdinalIgnoreCase) == true).ToArray();
-        // A second descriptor scan must not arm reports that the exported
-        // inventory cannot admit. Keep the whole selected root unavailable
-        // on disagreement rather than report a misleading clean no-input check.
-        if (SpecialKeyProbeParser.IsSingleBladeRoot(eligibleInputs)
-            && session is not null && eligibleInputs.All(candidate => CanRetainSpecialKeyInput(candidate, session.Inventory.RazerHidInterfaces.Value)))
-            inputCandidates = eligibleInputs;
+        // Keep every selected-root interface consistent with exported inventory.
+        SelectSpecialKeyInputCandidates(candidates.Value);
         controlCandidates = candidates.Value.Where(BackendDiscovery.IsEligibleControlCandidate).ToArray();
         if (controlCandidates.Count is < 1 or > 8
             || controlCandidates.Select(c => c.UsbParentDeviceInstanceId).Distinct(StringComparer.OrdinalIgnoreCase).Count() != 1)
