@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Fixed
+
+- Retain 16-column Chroma RGB rows and shorter reviewed effect reports, and
+  preserve logo and brightness values from reviewed incomplete replies
+  ([#17](https://github.com/OpenBladeProject/synapse-observer/pull/17)).
+- Preserve fan RPM and stored-target replies separately, correlate them with
+  Synapse's SET_FEATURE query / GET_FEATURE response sequence, and avoid
+  classifying the shared power-mode byte as full-charge-only evidence
+  ([#17](https://github.com/OpenBladeProject/synapse-observer/pull/17)).
+- Offer explicit Fn chords in the focused key check, open that check from
+  special-key checklist items, and clarify the lighting and fan capture steps
+  ([#17](https://github.com/OpenBladeProject/synapse-observer/pull/17)).
+
 ## [0.2.10] - 2026-10-16
 
 ### Fixed
