@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Fixed
+
+- Include the selected Blade's undefined-usage input collections in prompted
+  key checks, and retain their redacted evidence in the ZIP. Preserve usable
+  input geometry when optional descriptor details are incomplete, and distinguish
+  rejected, interrupted, or unavailable checks from a completed check with no
+  input ([#15](https://github.com/OpenBladeProject/synapse-observer/pull/15)).
+
 ## [0.2.9] - 2026-10-16
 
 ### Fixed
