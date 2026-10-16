@@ -28,6 +28,7 @@
 引导流程涵盖性能、风扇、键盘灯效和布局、发光徽标、特殊按键、电池设置及显示控制。可选的 M 键/Fn 检查需要在采集器窗口处于前台时按下提示的按键。每次检查持续五秒。单独按 Fn 可能不会产生此检查能够观测到的输入。你仍可在 Fn key 证据项中报告它的可见行为。
 
 请参阅 [ZIP 的内容](docs/zh-CN/capture-contents.md)。
+如需进行针对性的补充采集，请参阅[灯效、Fn 键和风扇响应](docs/control-capture-follow-up.md)。
 
 <a id="submit-the-zip"></a>
 ### 提交 ZIP

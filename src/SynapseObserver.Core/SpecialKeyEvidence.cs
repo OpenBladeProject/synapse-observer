@@ -1,6 +1,28 @@
 namespace SynapseObserver.Core;
 
-public enum SpecialKeyExpectedKey { M1, M2, M3, M4, M5, Fn, FnP }
+public enum SpecialKeyExpectedKey
+{
+    M1,
+    M2,
+    M3,
+    M4,
+    M5,
+    Fn,
+    FnP,
+    FnF1,
+    FnF2,
+    FnF3,
+    FnF4,
+    FnF5,
+    FnF6,
+    FnF7,
+    FnF8,
+    FnF9,
+    FnF10,
+    FnF11,
+    FnF12,
+    FnR,
+}
 public enum SpecialKeyModeContext { Unknown, Normal, Driver }
 public enum SpecialKeyObservationOrigin { WindowsRawInput, ReviewedHidSpecialKey, UnknownHidMetadata }
 public enum SpecialKeyPhase { Unknown, KeyDown, KeyUp, Repeat }

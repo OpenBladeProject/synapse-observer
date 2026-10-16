@@ -307,7 +307,8 @@ internal sealed class SpecialKeyProbeParser(SpecialKeyExpectedKey expected, Spec
         if (disposed || ObservationCount >= MaxObservations) return null;
         if (candidate.UsagePage != 1 || candidate.Usage != 6 || (flags & ~7) != 0) { Reject(); return null; }
         bool admitted = virtualKey is >= 0x70 and <= 0x87 or 0x21 or 0x22 or >= 0xAD and <= 0xB3 or 0x2C or 0x5F ||
-            (expected == SpecialKeyExpectedKey.FnP && virtualKey == 0x50);
+            (expected == SpecialKeyExpectedKey.FnP && virtualKey == 0x50) ||
+            (expected == SpecialKeyExpectedKey.FnR && virtualKey == 0x52);
         if (!admitted) { ignoredTyping = Math.Min(ignoredTyping + 1, 1000000); return null; }
         var key = (candidate.InterfaceLabel, virtualKey);
         bool up = (flags & 1) != 0;
@@ -386,7 +387,7 @@ internal sealed class SpecialKeyProbeParser(SpecialKeyExpectedKey expected, Spec
 
     internal SpecialKeyProbeSummary Summary(SpecialKeyProbeEndReason reason, int? deliveredObservations = null) =>
         new(expected, mode, reason, Math.Clamp(deliveredObservations ?? ObservationCount, 0, ObservationCount),
-        ignoredTyping, rejected, "Input is not firmware readback. Expected key and mode are user-reported. Ordinary typing and macros are omitted; P is admitted only for the Fn+P prompt and does not prove Fn. Unknown HID bodies are redacted. No event does not prove that a key or capability is absent.");
+        ignoredTyping, rejected, "Input is not firmware readback. Expected key and mode are user-reported. Ordinary typing and macros are omitted; P and R are admitted only for their explicit Fn chord prompts. A letter or function-key signal does not prove Fn. Unknown HID bodies are redacted. No event does not prove that a key or capability is absent.");
 
     public void Dispose()
     {

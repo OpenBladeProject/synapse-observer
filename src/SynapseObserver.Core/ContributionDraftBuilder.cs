@@ -46,6 +46,7 @@ public static class ContributionDraftBuilder
         "fans.manualCurveWrites",
         "fans.manualCurveReadback",
         "fans.rpmQuery",
+        "fans.fixedSpeedQuery",
         "fans.fixedSpeedReports",
         "sensors.cpuTemperature",
         "sensors.gpuTemperature",
@@ -161,6 +162,7 @@ public static class ContributionDraftBuilder
         "power.usbCToBattery",
         "power.batteryToUsbC",
         "power.adapterPowerQuery",
+        "power.modeControlReports",
         "conflicts.vendorControllerPresent",
         "conflicts.externalChangeDetection",
         "conflicts.defaultZeroWritePolicy",
@@ -632,19 +634,33 @@ public static class ContributionDraftBuilder
         Dictionary<string, CoverageReferences> evidence,
         bool retainReferences)
     {
+        using var correlations = CorrelateReviewedSemanticResponses(
+            snapshot.Observations.Select(static (item, index) =>
+                new IndexedObservation(item, ObservationReference(item, index), index)));
+        using var correlation = correlations.GetEnumerator();
+        var hasCorrelation = correlation.MoveNext();
         var index = 0;
         foreach (var source in snapshot.Observations)
         {
-            var reference = ObservationReference(source, index++);
+            var observationIndex = index++;
+            while (hasCorrelation && correlation.Current.Index < observationIndex)
+                hasCorrelation = correlation.MoveNext();
+            var semanticRequestMatched = hasCorrelation
+                && correlation.Current.Index == observationIndex
+                && source.SemanticResponse is { } semantic
+                && IsReviewedQueryResponse(semantic.Kind);
+            var reference = ObservationReference(source, observationIndex);
             if (source.PayloadProjectionKind == FeaturePayloadProjectionKind.MetadataOnly
-                || !source.CompletePayloadRetained) continue;
+                || !source.CompletePayloadRetained && !semanticRequestMatched) continue;
             // Only capability paths for this one record are deduplicated. The
             // complete capture and its reference set never enter a RAM collection.
             var referencedPaths = new HashSet<string>(StringComparer.Ordinal);
             foreach (var window in windows)
             {
                 if (!window.CompleteUserReportedSequence || !WithinWindow(source, window)) continue;
-                var summary = $"Reviewed {source.PayloadProjectionKind} report inside action {window.ActivityId}.";
+                var summary = source.CompletePayloadRetained
+                    ? $"Reviewed {source.PayloadProjectionKind} report inside action {window.ActivityId}."
+                    : $"Reviewed semantic {source.PayloadProjectionKind} response inside action {window.ActivityId}.";
                 foreach (var path in MapFeatureCapability(source, window.PowerSourceAtAction))
                 {
                     if (referencedPaths.Add(path) && (retainReferences || evidence[path].Count == 0))
@@ -652,6 +668,9 @@ public static class ContributionDraftBuilder
                             reference, summary, deduplicate: false);
                 }
             }
+
+            if (semanticRequestMatched)
+                hasCorrelation = correlation.MoveNext();
         }
     }
 
@@ -663,6 +682,13 @@ public static class ContributionDraftBuilder
         SanitizedControlObservation observation,
         PowerSourceKind powerSource)
     {
+        if (observation.SemanticResponse is { } semantic)
+        {
+            foreach (var path in MapSemanticResponseCapability(semantic, powerSource))
+                yield return path;
+            yield break;
+        }
+
         // GET_FEATURE transports both setter ACKs and query responses.
         var query = observation.HeaderHints is { CommandId: var commandId } && (commandId & 0x80) != 0;
         if (observation.HeaderHints is null)
@@ -693,6 +719,10 @@ public static class ContributionDraftBuilder
             case FeaturePayloadProjectionKind.ReviewedThermalMode when powerPrefix is not null && (!query || queryResponse):
                 yield return queryResponse ? $"{powerPrefix}.readback" : $"{powerPrefix}.presets";
                 break;
+            case FeaturePayloadProjectionKind.ReviewedFanSpeed
+                when observation.HeaderHints?.CommandId == 0x81 && queryResponse:
+                yield return "fans.fixedSpeedQuery";
+                break;
             case FeaturePayloadProjectionKind.ReviewedFanSpeed when !query || queryResponse:
                 yield return "fans.fixedSpeedReports";
                 break;
@@ -707,7 +737,7 @@ public static class ContributionDraftBuilder
             case FeaturePayloadProjectionKind.ReviewedMatrixLatch:
                 yield return "keyboardLighting.effects.customMatrix.setupCommand";
                 break;
-            case FeaturePayloadProjectionKind.ReviewedHardwareLightingEffect when payload is { Length: 80 }:
+            case FeaturePayloadProjectionKind.ReviewedHardwareLightingEffect when payload is { Length: > 0 }:
                 foreach (var path in MapHardwareLightingEffect(payload))
                 {
                     yield return path;
@@ -759,14 +789,7 @@ public static class ContributionDraftBuilder
                     : $"{powerPrefix}.customGpuLevels";
                 break;
             case FeaturePayloadProjectionKind.ReviewedBatterySetting:
-                if (observation.HeaderHints?.CommandId is 0x0F or 0x8F)
-                {
-                    if (!query || queryResponse)
-                    {
-                        yield return queryResponse ? "battery.temporaryFullChargeQuery" : "battery.temporaryFullCharge";
-                    }
-                }
-                else if (observation.HeaderHints?.CommandId is 0x12 or 0x92)
+                if (observation.HeaderHints?.CommandId is 0x12 or 0x92)
                 {
                     if (!query || queryResponse)
                     {
@@ -775,8 +798,49 @@ public static class ContributionDraftBuilder
                 }
 
                 break;
+            case FeaturePayloadProjectionKind.ReviewedPowerModeControl when !query || queryResponse:
+                yield return "power.modeControlReports";
+                break;
             case FeaturePayloadProjectionKind.ReviewedAdapterPower when queryResponse:
                 yield return "power.adapterPowerQuery";
+                break;
+        }
+    }
+
+    private static IEnumerable<string> MapSemanticResponseCapability(
+        ReviewedFeatureResponseProjection response,
+        PowerSourceKind powerSource)
+    {
+        var powerPrefix = powerSource switch
+        {
+            PowerSourceKind.Ac => "performance.externalPower",
+            PowerSourceKind.Battery => "performance.battery",
+            _ => null,
+        };
+        switch (response.Kind)
+        {
+            case ReviewedFeatureResponseKind.ThermalModeQueryResponse when powerPrefix is not null:
+                yield return $"{powerPrefix}.readback";
+                break;
+            case ReviewedFeatureResponseKind.FanRpmQueryResponse:
+                yield return "fans.rpmQuery";
+                yield return "sensors.fanRpm";
+                break;
+            case ReviewedFeatureResponseKind.StoredFanTargetQueryResponse:
+                yield return "fans.fixedSpeedQuery";
+                break;
+            case ReviewedFeatureResponseKind.CustomPerformanceQueryResponse
+                when powerPrefix is not null:
+                yield return response.CustomPerformanceDomain == ReviewedCustomPerformanceDomain.Cpu
+                    ? $"{powerPrefix}.customCpuLevels"
+                    : $"{powerPrefix}.customGpuLevels";
+                break;
+            case ReviewedFeatureResponseKind.LogoStateQueryResponse:
+            case ReviewedFeatureResponseKind.LogoEffectQueryResponse:
+                yield return "logoLighting.getter";
+                break;
+            case ReviewedFeatureResponseKind.KeyboardBrightnessQueryResponse:
+                yield return "keyboardLighting.brightnessQuery";
                 break;
         }
     }
@@ -796,6 +860,12 @@ public static class ContributionDraftBuilder
                 break;
             case 4:
                 yield return "keyboardLighting.effects.spectrum.base";
+                break;
+            case 2:
+                yield return "keyboardLighting.effects.reactive.base";
+                break;
+            case 3:
+                yield return "keyboardLighting.effects.breathing.base";
                 break;
             case 6:
                 yield return "keyboardLighting.effects.static.base";
@@ -893,6 +963,11 @@ public static class ContributionDraftBuilder
                 SpecialKeyExpectedKey.M5 => "specialKeys.m5.inputEvidence",
                 SpecialKeyExpectedKey.Fn => "specialKeys.fn.inputEvidence",
                 SpecialKeyExpectedKey.FnP => "specialKeys.fnP.inputEvidence",
+                SpecialKeyExpectedKey.FnF1 or SpecialKeyExpectedKey.FnF2 or SpecialKeyExpectedKey.FnF3
+                    or SpecialKeyExpectedKey.FnF4 or SpecialKeyExpectedKey.FnF5 or SpecialKeyExpectedKey.FnF6
+                    or SpecialKeyExpectedKey.FnF7 or SpecialKeyExpectedKey.FnF8 or SpecialKeyExpectedKey.FnF9
+                    or SpecialKeyExpectedKey.FnF10 or SpecialKeyExpectedKey.FnF11 or SpecialKeyExpectedKey.FnF12
+                    or SpecialKeyExpectedKey.FnR => "specialKeys.fn.inputEvidence",
                 _ => throw new ArgumentOutOfRangeException(),
             };
             Add(evidence, genericPath, ContributionObservationLayer.WindowsRawInput, reference,
@@ -1145,6 +1220,12 @@ public static class ContributionDraftBuilder
             return ContributionObservationRole.FeatureSetResponse;
         }
 
+        if (observation.SemanticResponse is { } semantic
+            && IsReviewedQueryResponse(semantic.Kind))
+        {
+            return ContributionObservationRole.FeatureQueryResponse;
+        }
+
         // GET_FEATURE transports both setter ACKs and query responses.
         var query = observation.HeaderHints is { CommandId: var commandId } && (commandId & 0x80) != 0;
         if (observation.HeaderHints is null)
@@ -1161,6 +1242,15 @@ public static class ContributionDraftBuilder
             ? query ? ContributionObservationRole.FeatureQueryResponse : ContributionObservationRole.FeatureSetResponse
             : ContributionObservationRole.UnclassifiedFeatureCall;
     }
+
+    private static bool IsReviewedQueryResponse(ReviewedFeatureResponseKind kind) => kind is
+        ReviewedFeatureResponseKind.ThermalModeQueryResponse
+        or ReviewedFeatureResponseKind.FanRpmQueryResponse
+        or ReviewedFeatureResponseKind.StoredFanTargetQueryResponse
+        or ReviewedFeatureResponseKind.CustomPerformanceQueryResponse
+        or ReviewedFeatureResponseKind.LogoStateQueryResponse
+        or ReviewedFeatureResponseKind.LogoEffectQueryResponse
+        or ReviewedFeatureResponseKind.KeyboardBrightnessQueryResponse;
 
     private sealed record IndexedObservation(SanitizedControlObservation Item, string Reference, int Index);
 
@@ -1251,29 +1341,130 @@ public static class ContributionDraftBuilder
         foreach (var entry in observations)
         {
             var item = entry.Item;
-            if (item.SemanticResponse is { Kind: ReviewedFeatureResponseKind.ThermalSetterAcknowledgement } semantic)
+            if (item.SemanticResponse is { } semantic
+                && TryGetSemanticResponseCorrelationSuffix(semantic, out var responseSuffix))
             {
-                yield return new CorrelationEvent(CorrelationKey(item, semantic.TransactionId,
-                    semantic.ThermalChannel, semantic.ThermalMode), item.RelativeMilliseconds, true, entry.Index, entry.Reference);
+                yield return new CorrelationEvent(
+                    CorrelationKey(item, semantic.TransactionId, responseSuffix),
+                    item.RelativeMilliseconds, true, entry.Index, entry.Reference);
             }
             if (item.Source != ObservationSource.UserModeCall
                 || item.Direction != ObservationDirection.Input
                 || item.Status != ObservationStatus.Succeeded
                 || !item.CompletePayloadRetained
-                || item.PayloadProjectionKind != FeaturePayloadProjectionKind.ReviewedThermalMode
-                || item.HeaderHints is not { Status: 0, CommandClass: 0x0D, CommandId: 0x02 } header)
+                || item.HeaderHints is not { Status: 0 } header)
                 continue;
             var payload = TryGetPayload(item);
-            if (payload is not { Length: 4 }
-                || !ReviewedThermalEncoding.TryDecode(payload, out var channel, out var mode)) continue;
-            yield return new CorrelationEvent(CorrelationKey(item, header.TransactionId, channel, mode),
-                Math.Max(item.CompletedRelativeMilliseconds ?? item.RelativeMilliseconds, item.RelativeMilliseconds), false, entry.Index, entry.Reference);
+            if (payload is null
+                || !TryGetSemanticRequestCorrelationSuffix(
+                    item.Api, header, payload, out var requestSuffix))
+                continue;
+            yield return new CorrelationEvent(
+                CorrelationKey(item, header.TransactionId, requestSuffix),
+                Math.Max(item.CompletedRelativeMilliseconds ?? item.RelativeMilliseconds, item.RelativeMilliseconds),
+                false, entry.Index, entry.Reference);
         }
     }
 
-    private static string CorrelationKey(SanitizedControlObservation item, byte transaction,
-        ReviewedThermalChannel channel, ReviewedThermalMode mode) =>
-        $"{item.VendorId}|{item.ProductId}|{item.InterfaceLabel}|{item.UsagePage}|{item.Usage}|{transaction}|{channel}|{mode}";
+    private static bool TryGetSemanticResponseCorrelationSuffix(
+        ReviewedFeatureResponseProjection response,
+        out string suffix)
+    {
+        suffix = response switch
+        {
+            { Kind: ReviewedFeatureResponseKind.ThermalSetterAcknowledgement,
+                ThermalChannel: { } channel, ThermalMode: { } mode } =>
+                $"thermal-setter|{channel}|{mode}",
+            { Kind: ReviewedFeatureResponseKind.ThermalModeQueryResponse,
+                ThermalChannel: { } channel } => $"thermal-query|{channel}",
+            { Kind: ReviewedFeatureResponseKind.FanRpmQueryResponse,
+                FanChannel: { } channel } => $"fan-rpm-query|{channel}",
+            { Kind: ReviewedFeatureResponseKind.StoredFanTargetQueryResponse,
+                FanChannel: { } channel } => $"fan-target-query|{channel}",
+            { Kind: ReviewedFeatureResponseKind.CustomPerformanceQueryResponse,
+                CustomPerformanceDomain: { } domain } => $"custom-query|{domain}",
+            { Kind: ReviewedFeatureResponseKind.LogoStateQueryResponse,
+                LightingClass: { } lightingClass } => $"logo-state-query|{lightingClass}",
+            { Kind: ReviewedFeatureResponseKind.LogoEffectQueryResponse,
+                LightingClass: { } lightingClass } => $"logo-effect-query|{lightingClass}",
+            { Kind: ReviewedFeatureResponseKind.KeyboardBrightnessQueryResponse } =>
+                "keyboard-brightness-query",
+            _ => string.Empty,
+        };
+        return suffix.Length > 0;
+    }
+
+    private static bool TryGetSemanticRequestCorrelationSuffix(
+        string api,
+        FeatureReportHeaderHints header,
+        byte[] payload,
+        out string suffix)
+    {
+        suffix = string.Empty;
+        // The reviewed getter command is a high-bit envelope sent through SET_FEATURE;
+        // the native GET_FEATURE call carries only the report ID and cannot identify it.
+        var fullEnvelopeApi = api is "HidD_SetFeature" or "DeviceIoControl.HID_SET_FEATURE";
+        if (fullEnvelopeApi
+            && header.CommandClass == 0x0D && header.CommandId == 0x02
+            && ReviewedThermalEncoding.TryDecode(payload, out var setterChannel, out var setterMode))
+        {
+            suffix = $"thermal-setter|{setterChannel}|{setterMode}";
+        }
+        else if (fullEnvelopeApi && header.CommandClass == 0x0D && header.CommandId == 0x82
+            && payload is [0x01, 0x01 or 0x02, 0x00, 0x00])
+        {
+            suffix = $"thermal-query|{ToThermalChannel(payload[1])}";
+        }
+        else if (fullEnvelopeApi && header.CommandClass == 0x0D && header.CommandId == 0x88
+            && payload is [0x01, 0x01 or 0x02, 0x00])
+        {
+            suffix = $"fan-rpm-query|{ToFanChannel(payload[1])}";
+        }
+        else if (fullEnvelopeApi && header.CommandClass == 0x0D && header.CommandId == 0x81
+            && payload is [0x00, 0x01 or 0x02, 0x00])
+        {
+            suffix = $"fan-target-query|{ToFanChannel(payload[1])}";
+        }
+        else if (fullEnvelopeApi && header.CommandClass == 0x0D && header.CommandId == 0x87
+            && payload is [0x01, 0x01 or 0x02, 0x00])
+        {
+            suffix = $"custom-query|{ToCustomPerformanceDomain(payload[1])}";
+        }
+        else if (fullEnvelopeApi && header.CommandClass == 0x03 && header.CommandId == 0x80
+            && payload is [0x00 or 0x01, 0x04, 0x00])
+        {
+            suffix = $"logo-state-query|{ToLightingClass(payload[0])}";
+        }
+        else if (fullEnvelopeApi && header.CommandClass == 0x03 && header.CommandId == 0x82
+            && payload is [0x00 or 0x01, 0x04, 0x00])
+        {
+            suffix = $"logo-effect-query|{ToLightingClass(payload[0])}";
+        }
+        else if (fullEnvelopeApi && header.CommandClass == 0x03 && header.CommandId == 0x83
+            && payload is [0x01, 0x05, 0x00])
+        {
+            suffix = "keyboard-brightness-query";
+        }
+        return suffix.Length > 0;
+    }
+
+    private static ReviewedThermalChannel ToThermalChannel(byte value) =>
+        value == 1 ? ReviewedThermalChannel.First : ReviewedThermalChannel.Second;
+
+    private static ReviewedFanChannel ToFanChannel(byte value) =>
+        value == 1 ? ReviewedFanChannel.First : ReviewedFanChannel.Second;
+
+    private static ReviewedCustomPerformanceDomain ToCustomPerformanceDomain(byte value) =>
+        value == 1 ? ReviewedCustomPerformanceDomain.Cpu : ReviewedCustomPerformanceDomain.Gpu;
+
+    private static ReviewedLightingClass ToLightingClass(byte value) =>
+        value == 0 ? ReviewedLightingClass.Zero : ReviewedLightingClass.One;
+
+    private static string CorrelationKey(
+        SanitizedControlObservation item,
+        byte transaction,
+        string suffix) =>
+        $"{item.VendorId}|{item.ProductId}|{item.InterfaceLabel}|{item.UsagePage}|{item.Usage}|{transaction}|{suffix}";
 
     private static IReadOnlyList<string> DistinctValues(IEnumerable<string?> values) =>
         values.OfType<string>()

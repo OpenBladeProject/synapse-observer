@@ -12,7 +12,7 @@ internal static class SpecialKeyEvidencePolicy
             SpecialKeyProbeEndReason.Disposed => "The input check stopped when the collector closed. ",
             _ => "",
         }) +
-        "Expected key and mode are user-reported. Ordinary typing and macros are omitted. P is admitted only for Fn+P and does not prove Fn. Unknown input bodies are redacted. No event does not prove absence. This is not firmware readback or confirmed setting restoration.";
+        "Expected key and mode are user-reported. Ordinary typing and macros are omitted. P and R are admitted only for their explicit Fn chord prompts. A letter or function-key signal does not prove Fn. Unknown input bodies are redacted. No event does not prove absence. This is not firmware readback or confirmed setting restoration.";
 
     public static bool IsValid(SpecialKeyObservation item, InventorySnapshot inventory)
     {
@@ -25,7 +25,8 @@ internal static class SpecialKeyEvidencePolicy
                     h.UsagePage, h.Usage, h.ReportGeometry))) return false;
         if (item.Origin == SpecialKeyObservationOrigin.WindowsRawInput)
             return item.VirtualKey is ushort key && (key is >= 0x70 and <= 0x87 or 0x21 or 0x22 or >= 0xAD and <= 0xB3 or 0x2C or 0x5F
-                || item.ExpectedKey == SpecialKeyExpectedKey.FnP && key == 0x50)
+                || item.ExpectedKey == SpecialKeyExpectedKey.FnP && key == 0x50
+                || item.ExpectedKey == SpecialKeyExpectedKey.FnR && key == 0x52)
                 && item.ScanCode is null or <= 0xFF && item.ReviewedSignal is null && item.ProbeEqualityLabel is null
                 && item.ChangedRanges is null && item.ReportLength is null;
         if (item.VirtualKey is not null || item.ScanCode is not null || item.IsExtendedKey is not null

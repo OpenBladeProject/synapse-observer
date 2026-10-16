@@ -51,6 +51,34 @@ public sealed class SpecialKeyProbeTests
     }
 
     [Fact]
+    public void RIsAllowedOnlyForExplicitFnRPromptAndIsNotProofOfFn()
+    {
+        using var ordinary = new SpecialKeyProbeParser(SpecialKeyExpectedKey.Fn, SpecialKeyModeContext.Unknown);
+        Assert.Null(ordinary.Keyboard(Candidate(), 0x52, 0, 1));
+
+        using var chord = new SpecialKeyProbeParser(SpecialKeyExpectedKey.FnR, SpecialKeyModeContext.Unknown);
+        var observation = Assert.IsType<SpecialKeyObservation>(chord.Keyboard(Candidate(), 0x52, 0, 1));
+        Assert.Equal((ushort)0x52, observation.VirtualKey);
+        Assert.False(observation.IsFirmwareReadback);
+        Assert.Equal(EvidenceProvenance.UserReported, observation.ContextProvenance);
+        Assert.Contains("does not prove Fn", chord.Summary(SpecialKeyProbeEndReason.Timeout).Gap);
+    }
+
+    [Fact]
+    public void ExplicitFnFunctionPromptDoesNotTurnOrdinaryFunctionSignalIntoFnProof()
+    {
+        using var parser = new SpecialKeyProbeParser(SpecialKeyExpectedKey.FnF1, SpecialKeyModeContext.Unknown);
+        var observation = Assert.IsType<SpecialKeyObservation>(parser.Keyboard(Candidate(), 0x70, 0, 1));
+
+        Assert.Equal(SpecialKeyExpectedKey.FnF1, observation.ExpectedKey);
+        Assert.Equal(SpecialKeyObservationOrigin.WindowsRawInput, observation.Origin);
+        Assert.Null(observation.ReviewedSignal);
+        Assert.False(observation.IsFirmwareReadback);
+        Assert.Equal(EvidenceProvenance.UserReported, observation.ContextProvenance);
+        Assert.Contains("function-key signal does not prove Fn", parser.Summary(SpecialKeyProbeEndReason.Timeout).Gap);
+    }
+
+    [Fact]
     public void KeyboardStateTracksDownRepeatAndUpWithoutScanCodesOrText()
     {
         using var parser = new SpecialKeyProbeParser(SpecialKeyExpectedKey.M1, SpecialKeyModeContext.Driver);

@@ -996,6 +996,19 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
             ResetEntries();
             status = CapacityInstructions;
         }
+        if (stage >= 5)
+        {
+            var activityId = stage switch
+            {
+                5 => "special-key-fn",
+                6 => "lighting-frames",
+                7 => "logo-lighting",
+                _ => "fans",
+            };
+            step = Activities.ToList().FindIndex(activity => activity.Id == activityId);
+            ResetEntries();
+            if (stage == 5) ExpectedSpecialKey = SpecialKeyExpectedKey.Fn;
+        }
         Refresh();
     }
 

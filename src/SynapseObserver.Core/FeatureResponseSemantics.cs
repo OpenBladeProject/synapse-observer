@@ -3,6 +3,13 @@ namespace SynapseObserver.Core;
 public enum ReviewedFeatureResponseKind
 {
     ThermalSetterAcknowledgement,
+    ThermalModeQueryResponse,
+    FanRpmQueryResponse,
+    StoredFanTargetQueryResponse,
+    CustomPerformanceQueryResponse,
+    LogoStateQueryResponse,
+    LogoEffectQueryResponse,
+    KeyboardBrightnessQueryResponse,
 }
 
 public enum ReviewedFeatureResponseStatus
@@ -21,6 +28,44 @@ public enum ReviewedThermalChannel
     Second,
 }
 
+public enum ReviewedFanChannel
+{
+    First,
+    Second,
+}
+
+public enum ReviewedCustomPerformanceDomain
+{
+    Cpu,
+    Gpu,
+}
+
+public enum ReviewedCustomPerformanceLevel
+{
+    Low,
+    Medium,
+    High,
+    Boost,
+}
+
+public enum ReviewedLogoState
+{
+    Off,
+    On,
+}
+
+public enum ReviewedLogoEffect
+{
+    Static,
+    Breathing,
+}
+
+public enum ReviewedLightingClass
+{
+    Zero,
+    One,
+}
+
 public enum ReviewedThermalMode
 {
     BalancedAutomatic,
@@ -35,17 +80,42 @@ public enum ReviewedThermalMode
 }
 
 /// <summary>
-/// Closed semantic fields from a reviewed thermal setter acknowledgement whose
-/// opaque leading byte and unavailable final padding byte are never exported.
+/// Closed semantic fields from a reviewed incomplete feature response whose
+/// leading byte and unavailable final padding byte are never exported. A
+/// successful API return and status byte do not independently establish that
+/// the response belongs to a request or confirms a firmware transition.
 /// </summary>
 public sealed record ReviewedFeatureResponseProjection(
     ReviewedFeatureResponseKind Kind,
     ReviewedFeatureResponseStatus Status,
     byte TransactionId,
-    ReviewedThermalChannel ThermalChannel,
-    ReviewedThermalMode ThermalMode,
     FeatureResponseCompleteness Completeness,
-    OpaquePrefixDisposition OpaquePrefixDisposition);
+    OpaquePrefixDisposition OpaquePrefixDisposition)
+{
+    public ReviewedThermalChannel? ThermalChannel { get; init; }
+
+    public ReviewedThermalMode? ThermalMode { get; init; }
+
+    public ReviewedFanChannel? FanChannel { get; init; }
+
+    public int? FanRpm { get; init; }
+
+    public int? StoredFanTargetRpm { get; init; }
+
+    public ReviewedCustomPerformanceDomain? CustomPerformanceDomain { get; init; }
+
+    public ReviewedCustomPerformanceLevel? CustomPerformanceLevel { get; init; }
+
+    public byte? CustomPerformanceRawLevel { get; init; }
+
+    public ReviewedLogoState? LogoState { get; init; }
+
+    public ReviewedLogoEffect? LogoEffect { get; init; }
+
+    public ReviewedLightingClass? LightingClass { get; init; }
+
+    public byte? KeyboardBrightness { get; init; }
+}
 
 internal static class ReviewedThermalEncoding
 {
