@@ -1,5 +1,3 @@
-using System.Runtime.ExceptionServices;
-using System.Threading;
 using System.Windows;
 using System.Windows.Automation.Peers;
 using System.Windows.Automation.Provider;
@@ -12,21 +10,20 @@ using SynapseObserver.App;
 
 namespace SynapseObserver.App.Tests;
 
-public sealed class SpecialKeyExpanderTests
+[Collection("WPF application")]
+public sealed class SpecialKeyExpanderTests(WpfApplicationFixture fixture)
 {
     [Fact]
     public void ManualCollapseKeepsBindingAndLaterKeySelectionReexpands()
     {
-        Exception? failure = null;
-        var thread = new Thread(() =>
+        fixture.Run(() =>
         {
             Window? window = null;
             try
             {
                 var model = new CollectorViewModel(true);
                 model.SetPreviewStage(5);
-                // Pin the stock WPF template: hosted runners may have no usable desktop
-                // theme, and another test can shut down Application's theme resources.
+                // Pin the stock WPF template independently of the runner's desktop theme.
                 // Keep the real header toggle and its two-way templated-parent binding.
                 var theme = new ResourceDictionary
                 {
@@ -71,17 +68,8 @@ public sealed class SpecialKeyExpanderTests
                 Assert.True(BindingOperations.IsDataBound(expander, Expander.IsExpandedProperty));
 
             }
-            catch (Exception ex)
-            {
-                failure = ex;
-            }
             finally { window?.Close(); }
-        }) { IsBackground = true };
-
-        thread.SetApartmentState(ApartmentState.STA);
-        thread.Start();
-        Assert.True(thread.Join(TimeSpan.FromSeconds(20)), "The disconnected WPF check did not finish.");
-        if (failure is not null) ExceptionDispatchInfo.Capture(failure).Throw();
+        });
     }
 
     private static void DrainBindingsAndLayout(FrameworkElement root)
