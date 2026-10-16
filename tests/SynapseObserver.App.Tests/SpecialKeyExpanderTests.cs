@@ -1,5 +1,3 @@
-using System.Runtime.ExceptionServices;
-using System.Threading;
 using System.Windows;
 using System.Windows.Automation.Peers;
 using System.Windows.Automation.Provider;
@@ -12,20 +10,33 @@ using SynapseObserver.App;
 
 namespace SynapseObserver.App.Tests;
 
-public sealed class SpecialKeyExpanderTests
+[Collection("WPF application")]
+public sealed class SpecialKeyExpanderTests(WpfApplicationFixture fixture)
 {
     [Fact]
     public void ManualCollapseKeepsBindingAndLaterKeySelectionReexpands()
     {
-        Exception? failure = null;
-        var thread = new Thread(() =>
+        fixture.Run(() =>
         {
             Window? window = null;
             try
             {
                 var model = new CollectorViewModel(true);
                 model.SetPreviewStage(5);
-                var expander = new Expander { Header = "Optional M / Fn key check", DataContext = model };
+                // Pin the stock WPF template independently of the runner's desktop theme.
+                // Keep the real header toggle and its two-way templated-parent binding.
+                var theme = new ResourceDictionary
+                {
+                    Source = new Uri("/PresentationFramework.Aero2;component/themes/aero2.normalcolor.xaml", UriKind.Relative),
+                };
+                var expander = new Expander
+                {
+                    Header = "Optional M / Fn key check",
+                    DataContext = model,
+                    OverridesDefaultStyle = true,
+                    Style = (Style)theme[typeof(Expander)],
+                };
+                expander.Resources.MergedDictionaries.Add(theme);
                 expander.SetBinding(Expander.IsExpandedProperty, new Binding(nameof(CollectorViewModel.IsSpecialKeyExpanded))
                 {
                     Mode = BindingMode.TwoWay,
@@ -57,17 +68,8 @@ public sealed class SpecialKeyExpanderTests
                 Assert.True(BindingOperations.IsDataBound(expander, Expander.IsExpandedProperty));
 
             }
-            catch (Exception ex)
-            {
-                failure = ex;
-            }
             finally { window?.Close(); }
-        }) { IsBackground = true };
-
-        thread.SetApartmentState(ApartmentState.STA);
-        thread.Start();
-        Assert.True(thread.Join(TimeSpan.FromSeconds(20)), "The disconnected WPF check did not finish.");
-        if (failure is not null) ExceptionDispatchInfo.Capture(failure).Throw();
+        });
     }
 
     private static void DrainBindingsAndLayout(FrameworkElement root)
