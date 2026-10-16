@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## [0.2.10] - 2026-10-16
+
 ### Fixed
 
 - Include the selected Blade's undefined-usage input collections in prompted
@@ -9,6 +11,9 @@
   input geometry when optional descriptor details are incomplete, and distinguish
   rejected, interrupted, or unavailable checks from a completed check with no
   input ([#15](https://github.com/OpenBladeProject/synapse-observer/pull/15)).
+- Refresh the collection review after a key check and explain when changed
+  device information prevents a check from starting
+  ([#15](https://github.com/OpenBladeProject/synapse-observer/pull/15)).
 
 ## [0.2.9] - 2026-10-16
 
@@ -117,3 +122,5 @@
 [0.2.7]: https://github.com/OpenBladeProject/synapse-observer/releases/tag/v0.2.7
 
 [0.2.8]: https://github.com/OpenBladeProject/synapse-observer/compare/v0.2.7...v0.2.8
+
+[0.2.10]: https://github.com/OpenBladeProject/synapse-observer/compare/v0.2.9...v0.2.10
