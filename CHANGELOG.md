@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Documentation
+
+- Document the verified Chroma Studio recording path and how to restore Studio
+  settings and the original Quick Effects selection
+  ([#19](https://github.com/OpenBladeProject/synapse-observer/pull/19)).
+
 ## [0.2.11] - 2026-10-16
 
 ### Fixed

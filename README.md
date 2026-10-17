@@ -69,8 +69,8 @@ For a focused follow-up, see [lighting, Fn keys and fan replies](docs/control-ca
 
 ## Recording notes
 
-You make and restore settings in Synapse. The collector observes its activity
-and records your action markers. Recordings last up to ten minutes. Keep this
+You make and restore settings in Synapse or Chroma Studio. The collector records
+the activity and your action markers. Recordings last up to ten minutes. Keep this
 window open to record more settings after stopping. If cleanup cannot be
 confirmed, the app asks you to restart Synapse before another recording.
 
@@ -80,13 +80,24 @@ Wait for **Syncing Profiles** to finish before changing or restoring another
 setting. If Synapse stays stuck, stop recording and save the partial ZIP. Restore
 any unfinished setting when Synapse responds. A partial ZIP is still useful.
 
+For lighting, you can use **Chroma Studio** while keeping Synapse and Observer
+open. Choose **Chroma effects and frame streaming** in Observer and begin the
+step before editing and saving an effect in Studio. Let it run for five seconds,
+then mark the change. Restore and save the original Studio effect and settings.
+If you started with Quick Effects, select it again after saving. Wait five
+seconds and mark restoration.
+[Studio capture was verified on one Blade 16](VALIDATION.md#chroma-studio-live-retry-2026-10-17).
+Using Studio is not a verified fix for profile syncing. If Studio reports
+no compatible devices, skip the step and save the available evidence.
+
 Nothing is uploaded automatically. Review the ZIP before sharing it. Ordinary
 typing, macros, mouse input, device paths, and serial-number inventory fields
 are excluded. Unfamiliar or potentially identifying command contents are omitted;
 reviewed numeric and lighting reports can include their bytes.
 
-This is an unsigned development build. Live trials have recorded performance
-changes on one Blade 16; other laptops and Synapse backends still need testing.
+This is an unsigned development build. Live trials have recorded performance and
+lighting changes on one Blade 16; other laptops and Synapse backends still need
+testing.
 Keep security protections enabled. Maintainers review the evidence and test
 support separately; a recording does not confirm that a setting reached the
 laptop's firmware.
