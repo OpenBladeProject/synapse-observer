@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## [0.2.12] - 2026-10-18
+
 ### Added
 
 - Import a JSON test plan to show only requested evidence items and M/Fn key checks,
@@ -163,3 +165,5 @@
 [0.2.8]: https://github.com/OpenBladeProject/synapse-observer/compare/v0.2.7...v0.2.8
 
 [0.2.10]: https://github.com/OpenBladeProject/synapse-observer/compare/v0.2.9...v0.2.10
+
+[0.2.12]: https://github.com/OpenBladeProject/synapse-observer/compare/v0.2.11...v0.2.12
