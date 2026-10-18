@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Added
+
+- Import a JSON test plan to show only requested evidence items and M/Fn key checks,
+  keep the plan fixed during testing, and include its selected IDs in the evidence ZIP.
+  Cache filtered choices and keep unrequested items out of unfinished-check notes
+  ([#23](https://github.com/OpenBladeProject/synapse-observer/pull/23)).
+
 ## [0.2.11] - 2026-10-16
 
 ### Fixed
