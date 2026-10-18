@@ -106,7 +106,7 @@ remaining owner checks, maintainer research, and work already covered. Its
 Version 2 preserves activityIds and specialKeys, and adds:
 
 - targetModel: optional model family such as RZ09-0484. OpenBlade reports are
-  blocked when collected product information does not match it.
+  blocked when identity collection is incomplete or any product row disagrees.
 - checks: at most 24 entries. Each has a unique id, kind (openblade or research),
   title, one to six steps, expected, and requiresRestoration. A required
   restoration also needs restore.
