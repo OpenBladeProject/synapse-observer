@@ -678,3 +678,64 @@ retention with explicit gaps; duration constants agree; exact DLL path/hash
 checks preserve pairing with the unchanged protocol layout. Countdown UX and
 future constant generation are possible follow-ups, not verified regressions.
 Historical five-minute validation above refers to the earlier runtime.
+
+## Chroma Studio live retry, 2026-10-17
+
+The released v0.2.11 portable package, source
+`eb765c6fe47d995f12563baf172ab3d666644d74`, was tested on Blade 16 RZ09-0581,
+HID `1532:02E0`, BIOS 4.01. Its executable SHA-256 matched the build manifest:
+`C962622B4A1C0D04A75B3E6C303F8B6F4794987FCDEDE7710453DBE003368C80`.
+
+The earlier attempt captured lighting traffic after selecting Advanced Effects,
+but Studio reported no compatible devices. The laptop froze, and restoration
+and observer cleanup were not confirmed. The cause of that freeze remains
+unidentified; the successful retry does not establish a fix.
+
+After Windows restarted, Synapse confirmed the original Quick Static green,
+brightness 5%, logo Off. Studio detected the Blade without Observer attached.
+During the new recording, Chroma Effect 1's Spectrum Cycling layer was edited:
+the Duration slider changed from 1 to 2 and was saved, then restored to 1 and
+saved again. These are the slider's reported values, not measured seconds.
+Saving in Studio selected Advanced Effects. Synapse was then returned to Quick
+Static green, brightness 5%, logo Off. The UI confirmed both restorations; the
+final outgoing frame body also matched the initial frame body.
+
+The recording lasted 83.196 seconds and stopped normally. Its five-entry ZIP
+contains 855 successful `HidD_SetFeature` input observations, all with complete,
+reviewed 375-byte `03/0B` matrix frames, including 789 distinct frame bodies.
+There were no failed calls, rejected records, storage failures, dropped-event
+markers or cleanup-failure markers. The apps remained responsive during the
+retry. The private ZIP is 129,378 bytes, with SHA-256
+`5858665895FD6834F2E69E9E397A0CBA8A0B8D2D816B38101A15ABE4722BEC90`.
+
+No guided action windows were added: all 855 observations retain their
+OutsideActionWindow diagnostic. The edit/save and restoration sequence was
+observed separately in the UI; start and stop markers are in the ZIP. This
+confirms capture of Chroma Studio lighting changes through the Razer engine on
+this laptop. It does not establish another model or backend, physical lighting
+output, firmware readback, a remedy for profile syncing, or the earlier freeze's
+cause. The contributor instructions still require all three guided action
+markers so future recordings carry their own effect names and restoration
+context.
+
+## Fixed Windows PDH temperature inventory, 2026-10-18
+
+The collector now samples the two fixed EC TZRZ `High Precision Temperature`
+counters separately from WMI thermal-zone inventory. Synthetic native tests
+cover the exact path allowlist, per-operation errors, both valid PDH statuses,
+invalid values, cancellation between native calls, query cleanup, partial
+success, missing native APIs, sanitization, and ZIP quality-gap preservation.
+The complete Release suite passed 433 Core, 89 Backend, and 173 App tests.
+Both owned native fixtures passed; existing MinHook compiler warnings remain.
+The WPF application built and its disconnected inventory-stage preview was
+rendered and inspected with the new separate WMI/PDH status line.
+
+At exact source `e959e6a28c062f06758f0c6cfc94c7917cf1b897`, a standalone helper
+invoked the committed Windows PDH collector on the maintainer laptop without
+loading a vendor component. The PC00/LPCB TZRZ counter returned raw 3182
+tenths-Kelvin (45.05 Celsius), with API and counter status 0; the PCI0/SBRG
+alias independently reported CollectQuery failure `0x800007D5`. Query cleanup
+reported no error. This verifies native Windows collection and partial-evidence
+handling on that laptop, not temperature availability on Blade 18. No Synapse
+attachment, software installation, HID command, vendor process recording, or
+hardware write was performed.

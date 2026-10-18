@@ -11,6 +11,18 @@
   Cache filtered choices and keep unrequested items out of unfinished-check notes
   ([#23](https://github.com/OpenBladeProject/synapse-observer/pull/23)).
 
+### Fixed
+
+- Collect the two fixed Windows PDH EC temperature counters separately from WMI,
+  retaining per-counter values, failures, units, and provenance in the evidence ZIP
+  ([#21](https://github.com/OpenBladeProject/synapse-observer/pull/21)).
+
+### Documentation
+
+- Document the verified Chroma Studio recording path and how to restore Studio
+  settings and the original Quick Effects selection
+  ([#19](https://github.com/OpenBladeProject/synapse-observer/pull/19)).
+
 ## [0.2.11] - 2026-10-16
 
 ### Fixed

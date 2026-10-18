@@ -12,6 +12,8 @@ public sealed class CollectionReviewWorkflowTests
         var model = new CollectorViewModel(preview: true);
         await Run(model.CollectCommand);
         Assert.Contains("No Synapse recording", model.ReviewSummary);
+        Assert.Contains("WMI thermal zones: Absent", model.DeviceSummary);
+        Assert.Contains("Windows PDH temperatures: Skipped", model.DeviceSummary);
         model.SelectedActivityIndex = model.Activities.Select((activity, index) => (activity, index))
             .Single(item => item.activity.Id == "keyboard-layout").index;
         model.StartingSetting = "ANSI US";

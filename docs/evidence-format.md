@@ -212,6 +212,38 @@ feature-call observations. An empty unchanged sequence retains both diagnoses.
 A completed restoration of an unchanged value is not presented as an unfinished
 restoration; it still does not establish a setting change.
 
+### Windows temperature inventory
+
+`support.thermalZones` contains WMI `MSAcpi_ThermalZoneTemperature` evidence.
+The additive `support.pdhTemperatures` section independently reads two fixed
+Windows PDH `Thermal Zone Information` / `High Precision Temperature` counters:
+
+| Exported alias | Fixed ACPI instance |
+| --- | --- |
+| `razerEcPci0SbrgTzrz` | `\_SB.PCI0.SBRG.EC0.TZRZ` |
+| `razerEcPc00LpcbTzrz` | `\_SB.PC00.LPCB.EC0.TZRZ` |
+
+These are the Razer EC TZRZ paths used by OpenBlade's Windows temperature
+source. The collector uses `PdhAddEnglishCounterW`, so counter names do not
+depend on the Windows display language. It opens at most two queries, performs
+one collection and formatted read per path, and closes each query and its
+counter. Cancellation is checked between synchronous native calls; an in-flight
+PDH call cannot be interrupted. There is no polling or arbitrary counter search.
+
+Each record retains a fixed alias, provenance, collection state, failure stage,
+numeric API/counter status, raw tenths-Kelvin value, and Celsius conversion.
+Conversion uses `raw / 10 - 273.15`; values outside 0–115 Celsius are marked
+invalid, matching OpenBlade's accepted range. Finite invalid raw values remain
+available for diagnosis, while non-finite values and values with invalid counter
+status are omitted. Query cleanup failures are explicit. Export contains fixed
+aliases and reviewed metadata, never raw instance paths or native exception text.
+
+WMI failure does not suppress PDH results. A failed alias remains visible even
+when the other succeeds. Missing counters mean unavailable evidence, not missing
+hardware support. Windows thermal-zone observations alone do not establish CPU
+package temperature or firmware readback. This collection calls Windows PDH only;
+it does not load Synapse DLLs or call vendor services, drivers, or HID endpoints.
+
 ## Requested test plan
 
 A focused session adds test-plan.json and lists it in manifest.json entries.

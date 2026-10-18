@@ -61,6 +61,36 @@ HID 描述符还包含输入、输出和 feature 报告中数量受限且经过�
 
 质量回执中的 `completeActionWindows` 计数和推导的能力提升使用同一条有效性规则。原始引导覆盖情况和标记保持不变，作为来源依据。注释窗口的单个 `gap` 概括其主要问题；窗口观测仍会单独提供。质量回执记录彼此独立的事实：`UnchangedReportedValues` 或 `IncompleteActionMarkers`，以及窗口中没有 feature 调用观测时的 `NoMatchingObservation`。未变化的空序列会同时保留这两项诊断。恢复到未变化值且已完成的操作不会显示为恢复未完成，但它仍不能证明发生了设置更改。
 
+<a id="windows-temperature-inventory"></a>
+### Windows 温度清单
+
+`support.thermalZones` 包含 WMI `MSAcpi_ThermalZoneTemperature` 证据。
+新增的 `support.pdhTemperatures` 节会独立读取两个固定的 Windows PDH
+`Thermal Zone Information` / `High Precision Temperature` 计数器：
+
+| 导出别名 | 固定 ACPI 实例 |
+| --- | --- |
+| `razerEcPci0SbrgTzrz` | `\_SB.PCI0.SBRG.EC0.TZRZ` |
+| `razerEcPc00LpcbTzrz` | `\_SB.PC00.LPCB.EC0.TZRZ` |
+
+这些是 OpenBlade 的 Windows 温度源所使用的 Razer EC TZRZ 路径。采集器使用
+`PdhAddEnglishCounterW`，因此计数器名称不依赖 Windows 显示语言。它最多打开
+两个查询，对每条路径各执行一次采集和格式化读取，并关闭每个查询及其计数器。
+同步原生调用之间会检查取消状态；正在执行的 PDH 调用无法中断。它不会轮询，
+也不会任意搜索计数器。
+
+每条记录保留固定别名、来源、采集状态、失败阶段、数字 API/计数器状态、
+以十分之一开尔文为单位的原始值，以及转换后的摄氏值。转换公式为
+`raw / 10 - 273.15`；与 OpenBlade 接受的范围一致，超出 0–115 摄氏度的值会
+标记为无效。有限但无效的原始值仍会保留以供诊断；非有限值以及计数器状态
+无效的值会被省略。查询清理失败会明确记录。导出只包含固定别名和审核过的
+元数据，不包含原始实例路径或原生异常文本。
+
+WMI 失败不会抑制 PDH 结果。即使另一个别名读取成功，失败的别名仍会显示。
+计数器缺失表示证据不可用，并不表示硬件不支持。仅有 Windows 热区观测无法
+确定 CPU 封装温度，也不构成固件回读。此采集只调用 Windows PDH；它不会加载
+Synapse DLL，也不会调用厂商服务、驱动程序或 HID 端点。
+
 <a id="requested-test-plan"></a>
 ## 请求的测试计划
 

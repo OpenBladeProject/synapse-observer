@@ -102,7 +102,8 @@ with the JSON files when attaching the ZIP to a support request.
   modules per process. Support inventory accepts 32 HID descriptors, 24 device
   drivers, 8 files and 16 filters per driver, 64 executable modules, 8 graphics
   adapters, 16 displays with 512 modes each, 16 brightness entries with 101
-  levels each, 16 thermal zones, 8 processors, and 32 explicit gaps. It accepts
+  levels each, 16 WMI thermal zones, two fixed Windows PDH EC temperature counters,
+  8 processors, and 32 explicit gaps. It accepts
   16 LampArrays with 4,096 lamps, 256 key mappings, and 512 lamp indices per key
   for each array. HID capability summaries are limited to 128 shapes per interface;
   color-profile lists retain up to 32 associations plus the two default-profile
