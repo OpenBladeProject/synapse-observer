@@ -6,6 +6,9 @@ Help add support for your Razer Blade to [OpenBlade](https://github.com/OpenBlad
 by collecting information about your laptop and recording setting changes in
 Synapse. You can save and send the results without a terminal or repository checkout.
 
+Use Synapse Observer for new evidence collection. It replaces the former
+`openblade-captures` toolkit, which is now private.
+
 [Download the latest release](https://github.com/OpenBladeProject/synapse-observer/releases/latest),
 extract the ZIP, and open `SynapseObserver.exe` normally.
 

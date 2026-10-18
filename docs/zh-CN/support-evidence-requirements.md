@@ -51,6 +51,6 @@ Feature 项目需要通过隐私审核的报告，而且报告必须位于完整
 
 提交或回读有歧义时，停止验证并转为只读。维护者不得重放结果不明的写入，也不得以用户报告的恢复代替确认。
 
-源检查表使用格式版本 2，即 [`device-coverage.template.json`](https://github.com/OpenBladeProject/openblade-captures/blob/main/templates/device-coverage.template.json)，各阶段所需的完整证据见抓包仓库的 [`CAPTURE_GUIDE.md`](https://github.com/OpenBladeProject/openblade-captures/blob/main/CAPTURE_GUIDE.md)。
+覆盖草稿保留了私有旧仓库 `openblade-captures` 中格式版本 2 的检查表。上述能力类别和维护者检查说明了相关要求。导出草稿的格式见[证据格式](evidence-format.md)。
 
 数值范围不是本采集器的生产准入规则。在经过精确审核的散热、Custom CPU/GPU、固定风扇和充电上限命令族内，不熟悉的数值会保留，并标记 `numericMeaningUninterpreted: true`。报告族、控制标签、通道、长度、校验和、填充、来源和状态检查仍然适用。查询输入参数必须符合已审核的全零结构。这样可以保留新机型的数值供研究，但不代表已理解其含义或已支持这些值。

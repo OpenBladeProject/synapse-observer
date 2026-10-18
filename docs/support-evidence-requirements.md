@@ -101,10 +101,10 @@ If submission or readback is ambiguous, validation stops and continues
 read-only. A maintainer does not replay the uncertain write or substitute a
 user-reported restoration.
 
-The source checklist is the schema-2
-[`device-coverage.template.json`](https://github.com/OpenBladeProject/openblade-captures/blob/main/templates/device-coverage.template.json)
-and the full evidence ladder is in the capture repository's
-[`CAPTURE_GUIDE.md`](https://github.com/OpenBladeProject/openblade-captures/blob/main/CAPTURE_GUIDE.md).
+The coverage draft preserves the schema-2 checklist from the private legacy
+`openblade-captures` repository. The capability families and maintainer checks
+above describe the requirements here. See the [evidence format](evidence-format.md)
+for the exported draft schemas.
 
 Numeric value ranges are not production admission rules in this collector.
 Within the exact reviewed thermal, Custom CPU/GPU, fixed-fan, and charge-limit
