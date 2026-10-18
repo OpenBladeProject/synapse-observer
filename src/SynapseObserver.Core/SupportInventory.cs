@@ -197,7 +197,10 @@ public sealed record BrightnessEvidence(
 
 public sealed record ThermalZoneEvidence(
     string ZoneLabel,
-    uint? CurrentTemperatureTenthsKelvin);
+    uint? CurrentTemperatureTenthsKelvin)
+{
+    public string Provenance => "WindowsWmiMSAcpiThermalZoneTemperature";
+}
 
 public sealed record LampPositionEvidence(
     int Index,
@@ -272,6 +275,9 @@ public sealed record SupportInventorySnapshot(
     public SectionResult<SystemPlatformEvidence?> SystemPlatform { get; init; } =
         SectionResult<SystemPlatformEvidence?>.Absent(null);
 
+    public SectionResult<IReadOnlyList<PdhTemperatureEvidence>> PdhTemperatures { get; init; } =
+        new(CollectionState.Skipped, [], "Fixed Windows PDH counters were not collected.");
+
     public static SupportInventorySnapshot Empty { get; } = new(
         SectionResult<IReadOnlyList<HidDescriptorSupportEvidence>>.Absent([]),
         SectionResult<IReadOnlyList<DeviceDriverEvidence>>.Absent([]),
@@ -318,6 +324,7 @@ public sealed record SupportInventorySnapshot(
             [new SupportCoverageGap("SupportInventory", state, state.ToString())])
         {
             SystemPlatform = new SectionResult<SystemPlatformEvidence?>(state, null, issue),
+            PdhTemperatures = List<PdhTemperatureEvidence>(state, issue),
         };
     }
 }
@@ -495,6 +502,7 @@ internal static class SupportInventorySanitizer
                     Token(gap.Reason) ?? "Unavailable"))
                 .ToArray())
         {
+            PdhTemperatures = PdhTemperatureCollector.Sanitize(snapshot.PdhTemperatures),
             SystemPlatform = SanitizeSection(
                 snapshot.SystemPlatform,
                 snapshot.SystemPlatform.Value is { } platform

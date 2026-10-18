@@ -231,7 +231,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
             sessionOriginTicks = Stopwatch.GetTimestamp();
             var identities = inventory.MachineIdentity.Value;
             var identity = identities.FirstOrDefault();
-            deviceSummary = $"{identity?.ProductName ?? "Laptop identity unavailable"} · BIOS {identity?.BiosVersion ?? "unavailable"}\n{inventory.RazerHidInterfaces.Value.Count} Razer HID interfaces · {inventory.SynapseProcesses.Value.Count} related software processes";
+            deviceSummary = $"{identity?.ProductName ?? "Laptop identity unavailable"} · BIOS {identity?.BiosVersion ?? "unavailable"}\n{inventory.RazerHidInterfaces.Value.Count} Razer HID interfaces · {inventory.SynapseProcesses.Value.Count} related software processes\n{TemperatureSummary(inventory.Support)}";
             Marker(EvidenceMarkerKind.SessionStarted, "session", "Device information collected", EvidenceProvenance.Collector);
             foreach (var activity in Activities)
             {
@@ -972,7 +972,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
 
         session?.Dispose();
         session = new EvidenceSession(PreviewInventory());
-        deviceSummary = "Razer Blade · example device\nBIOS 1.00 · 3 Razer HID interfaces · Synapse detected";
+        deviceSummary = $"Razer Blade · example device\nBIOS 1.00 · 3 Razer HID interfaces · Synapse detected\n{TemperatureSummary(PreviewInventory().Support)}";
         recorderStatus = "Synapse is ready. Start a short recording when you are ready to change settings.";
         status = "Device information collected. You can save it now or add a recording.";
         if (stage >= 2)
@@ -1014,6 +1014,9 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
         }
         Refresh();
     }
+
+    private static string TemperatureSummary(SupportInventorySnapshot support) =>
+        $"WMI thermal zones: {support.ThermalZones.State} · Windows PDH temperatures: {support.PdhTemperatures.State}";
 
     private static InventorySnapshot PreviewInventory() => new(
         InventorySnapshot.CurrentSchemaVersion,

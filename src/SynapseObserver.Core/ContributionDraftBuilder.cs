@@ -1022,6 +1022,7 @@ public static class ContributionDraftBuilder
         AddSectionGap(gaps, "support.displays", snapshot.Inventory.Support.Displays.State);
         AddSectionGap(gaps, "support.brightness", snapshot.Inventory.Support.Brightness.State);
         AddSectionGap(gaps, "support.thermalZones", snapshot.Inventory.Support.ThermalZones.State);
+        AddSectionGap(gaps, "support.pdhTemperatures", snapshot.Inventory.Support.PdhTemperatures.State);
         AddSectionGap(gaps, "support.lampArrays", snapshot.Inventory.Support.LampArrays.State);
         AddSectionGap(gaps, "support.embeddedController", snapshot.Inventory.Support.EmbeddedController.State);
         AddSectionGap(gaps, "support.systemPlatform", snapshot.Inventory.Support.SystemPlatform.State);

@@ -717,3 +717,25 @@ output, firmware readback, a remedy for profile syncing, or the earlier freeze's
 cause. The contributor instructions still require all three guided action
 markers so future recordings carry their own effect names and restoration
 context.
+
+## Fixed Windows PDH temperature inventory, 2026-10-18
+
+The collector now samples the two fixed EC TZRZ `High Precision Temperature`
+counters separately from WMI thermal-zone inventory. Synthetic native tests
+cover the exact path allowlist, per-operation errors, both valid PDH statuses,
+invalid values, cancellation between native calls, query cleanup, partial
+success, missing native APIs, sanitization, and ZIP quality-gap preservation.
+The complete Release suite passed 433 Core, 89 Backend, and 173 App tests.
+Both owned native fixtures passed; existing MinHook compiler warnings remain.
+The WPF application built and its disconnected inventory-stage preview was
+rendered and inspected with the new separate WMI/PDH status line.
+
+At exact source `e959e6a28c062f06758f0c6cfc94c7917cf1b897`, a standalone helper
+invoked the committed Windows PDH collector on the maintainer laptop without
+loading a vendor component. The PC00/LPCB TZRZ counter returned raw 3182
+tenths-Kelvin (45.05 Celsius), with API and counter status 0; the PCI0/SBRG
+alias independently reported CollectQuery failure `0x800007D5`. Query cleanup
+reported no error. This verifies native Windows collection and partial-evidence
+handling on that laptop, not temperature availability on Blade 18. No Synapse
+attachment, software installation, HID command, vendor process recording, or
+hardware write was performed.

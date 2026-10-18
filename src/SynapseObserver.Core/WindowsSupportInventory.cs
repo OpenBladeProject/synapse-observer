@@ -80,6 +80,7 @@ public sealed partial class WindowsInventorySource
             Array.Empty<ThermalZoneEvidence>(),
             "Windows thermal-zone metadata was unavailable.",
             cancellationToken);
+        var pdhTemperatures = PdhTemperatureCollector.Collect(new WindowsPdhTemperatureNative(), cancellationToken);
         var bladeCandidates = localHid.Value
             .Where(static candidate =>
                 IsBladeName(candidate.ProductName)
@@ -113,6 +114,7 @@ public sealed partial class WindowsInventorySource
         AddSectionGap(gaps, "Displays", displays.State);
         AddSectionGap(gaps, "Brightness", brightness.State);
         AddSectionGap(gaps, "ThermalZones", thermal.State);
+        AddSectionGap(gaps, "PdhTemperatures", pdhTemperatures.State);
         AddSectionGap(gaps, "LampArrayLayout", lamps.State);
         if (lamps.Value.Any(static lamp => lamp.PhysicalDeviceLabel is null))
         {
@@ -144,6 +146,7 @@ public sealed partial class WindowsInventorySource
             gaps)
         {
             SystemPlatform = systemPlatform,
+            PdhTemperatures = pdhTemperatures,
         };
     }
 
