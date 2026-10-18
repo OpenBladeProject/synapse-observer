@@ -4,6 +4,8 @@
 
 收集笔记本信息并记录 Synapse 中的设置变化，帮助 [OpenBlade](https://github.com/OpenBladeProject/openblade-core) 支持你的 Razer Blade。保存和提交结果无需使用终端，也无需下载仓库源码。
 
+新证据请使用 Synapse Observer 采集。它取代了原来的 `openblade-captures` 工具包，后者的仓库现已设为私有。
+
 [下载最新版本](https://github.com/OpenBladeProject/synapse-observer/releases/latest)，解压 ZIP，然后正常打开 `SynapseObserver.exe`。
 
 <a id="what-you-need"></a>

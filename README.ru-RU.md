@@ -4,6 +4,8 @@
 
 Помогите добавить поддержку вашего Razer Blade в [OpenBlade](https://github.com/OpenBladeProject/openblade-core): соберите сведения о ноутбуке и запишите изменения настроек в Synapse. Сохранить и отправить результаты можно без терминала и локальной копии репозитория.
 
+Для нового сбора данных используйте Synapse Observer. Он заменяет прежний набор инструментов `openblade-captures`, репозиторий которого теперь закрыт.
+
 [Скачайте последний выпуск](https://github.com/OpenBladeProject/synapse-observer/releases/latest), распакуйте ZIP и запустите `SynapseObserver.exe` обычным способом.
 
 <a id="what-you-need"></a>
