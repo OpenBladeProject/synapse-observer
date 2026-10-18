@@ -132,15 +132,46 @@ public sealed class CaptureTestPlanTests
     }
 
     [Fact]
-    public void MatchesTarget_UsesAnyReportedProductNameAndAllowsUnscopedPlans()
+    public void MatchesTarget_RequiresEveryProductNameAndAllowsUnscopedPlans()
     {
         var scoped = Parse("{\"schemaVersion\":2,\"targetModel\":\"RZ09-0581\",\"activityIds\":[\"fans\"]}");
         var unscoped = Parse("{\"schemaVersion\":2,\"activityIds\":[\"fans\"]}");
 
         Assert.True(scoped.MatchesTarget(Inventory("Razer Blade 16 RZ09-0581")));
         Assert.True(scoped.MatchesTarget(Inventory("razer blade 16 rz09-0581")));
+        Assert.True(scoped.MatchesTarget(Inventory("Razer Blade 16 RZ09-0581 SKU variant")));
         Assert.False(scoped.MatchesTarget(Inventory("Razer Blade 16 RZ09-0528")));
         Assert.True(unscoped.MatchesTarget(Inventory("Razer Blade 16 RZ09-0528")));
+        Assert.True(unscoped.MatchesTarget(Inventory(CollectionState.Partial)));
+    }
+
+    [Fact]
+    public void MatchesTarget_RejectsMixedOrBlankProductNames()
+    {
+        var scoped = Parse("{\"schemaVersion\":2,\"targetModel\":\"RZ09-0581\",\"activityIds\":[\"fans\"]}");
+
+        Assert.False(scoped.MatchesTarget(Inventory(
+            CollectionState.Collected,
+            "Razer Blade 16 RZ09-0581",
+            "Razer Blade 16 RZ09-0528")));
+        Assert.False(scoped.MatchesTarget(Inventory(
+            CollectionState.Collected,
+            "Razer Blade 16 RZ09-0581",
+            " ")));
+        Assert.False(scoped.MatchesTarget(Inventory(
+            CollectionState.Collected,
+            "Razer Blade 16 RZ09-0581",
+            null)));
+    }
+
+    [Fact]
+    public void MatchesTarget_RejectsPartialOrMissingIdentityRecords()
+    {
+        var scoped = Parse("{\"schemaVersion\":2,\"targetModel\":\"RZ09-0581\",\"activityIds\":[\"fans\"]}");
+
+        Assert.False(scoped.MatchesTarget(Inventory(CollectionState.Partial, "Razer Blade 16 RZ09-0581")));
+        Assert.False(scoped.MatchesTarget(Inventory(CollectionState.Collected)));
+        Assert.False(scoped.MatchesTarget(Inventory(CollectionState.Unavailable)));
     }
 
     [Fact]
@@ -390,11 +421,17 @@ public sealed class CaptureTestPlanTests
         {"schemaVersion":2,"checks":[{"id":"{{id}}","kind":"openblade","title":"{{title}}","steps":["{{step}}"],"expected":"{{expected}}","requiresRestoration":false}]}
         """;
 
-    private static InventorySnapshot Inventory(string productName) => new(
+    private static InventorySnapshot Inventory(string productName) =>
+        Inventory(CollectionState.Collected, productName);
+
+    private static InventorySnapshot Inventory(CollectionState state, params string?[] productNames) => new(
         InventorySnapshot.CurrentSchemaVersion,
         DateTimeOffset.UnixEpoch,
-        SectionResult<IReadOnlyList<MachineIdentity>>.Collected(
-            [new MachineIdentity("Registry64", "Razer", productName, null, null, null)]),
+        new SectionResult<IReadOnlyList<MachineIdentity>>(
+            state,
+            productNames.Select((productName, index) =>
+                new MachineIdentity($"Registry{index}", "Razer", productName, null, null, null)).ToArray(),
+            state == CollectionState.Collected ? null : "Identity collection did not complete."),
         SectionResult<PowerSourceEvidence?>.Absent(null),
         SectionResult<IReadOnlyList<HidInterfaceEvidence>>.Absent([]),
         SectionResult<IReadOnlyList<SynapseProcessEvidence>>.Absent([]));

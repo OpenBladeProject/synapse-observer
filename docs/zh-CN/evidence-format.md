@@ -60,3 +60,13 @@ HID 描述符还包含输入、输出和 feature 报告中数量受限且经过�
 注释窗口的 `completeUserReportedSequence` 要求初始、目标、操作和恢复标记按顺序出现，并排除已知相同的初始值和目标值。`unchangedReportedValues` 标识这类排除情况。比较时会去除首尾空白、合并空白分隔符，并使用序号不区分大小写比较；标点及实质性细节保持不变。null 或空白值不会被归为未变化：除此以外顺序正确的序列仍可计为完整并形成能力证据，但其实际值以及设备是否发生变化仍未得到证明。GUI 要求值非空，但底层标记格式允许空值。
 
 质量回执中的 `completeActionWindows` 计数和推导的能力提升使用同一条有效性规则。原始引导覆盖情况和标记保持不变，作为来源依据。注释窗口的单个 `gap` 概括其主要问题；窗口观测仍会单独提供。质量回执记录彼此独立的事实：`UnchangedReportedValues` 或 `IncompleteActionMarkers`，以及窗口中没有 feature 调用观测时的 `NoMatchingObservation`。未变化的空序列会同时保留这两项诊断。恢复到未变化值且已完成的操作不会显示为恢复未完成，但它仍不能证明发生了设置更改。
+
+<a id="requested-test-plan"></a>
+## 请求的测试计划
+
+聚焦会话会添加 test-plan.json，并将其列入 manifest.json 的 entries。其 schemaVersion 为 1，activityIds 是内置检查表 ID，specialKeys 是提示按键的准确名称。两个数组都保留请求顺序。导入路径和文件名会被省略。这个可选文件不会改变包 v2 或会话 v2 的结构。未请求的检查表项目仍作为清单覆盖信息保留，但不会产生请求项目缺口或检查表未完成提示。
+
+<a id="follow-up-owner-reports"></a>
+## 后续所有者报告
+
+版本 2 测试计划在 test-plan.json 中分别保留 OpenBlade 检查、维护者研究和已覆盖工作。所有者开始 OpenBlade 检查后，openblade-checks.json 会包含架构版本 1 的仅追加报告，其中记录相对时间、检查 ID、结果、已保存的初始设置、可选备注和恢复状态。文件和每条记录都会标明 user-reported 来源以及 isFirmwareReadback: false。这些记录不会提升被动覆盖状态、确认硬件已应用设置或声明生产支持。未完成的开始记录或未确认的恢复仍会显示在采集检查中。

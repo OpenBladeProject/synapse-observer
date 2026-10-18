@@ -44,10 +44,20 @@ public sealed class CaptureTestPlan
     public IReadOnlyList<TestPlanCheck> Checks { get; }
     public IReadOnlyList<TestPlanCoveredItem> Covered { get; }
 
-    public bool MatchesTarget(InventorySnapshot inventory) =>
-        TargetModel is null
-        || inventory.MachineIdentity.Value.Any(identity =>
-            identity.ProductName?.Contains(TargetModel, StringComparison.OrdinalIgnoreCase) == true);
+    public bool MatchesTarget(InventorySnapshot inventory)
+    {
+        if (TargetModel is null)
+        {
+            return true;
+        }
+
+        var identity = inventory.MachineIdentity;
+        return identity.State == CollectionState.Collected
+            && identity.Value.Count > 0
+            && identity.Value.All(item =>
+                !string.IsNullOrWhiteSpace(item.ProductName)
+                && item.ProductName.Contains(TargetModel, StringComparison.OrdinalIgnoreCase));
+    }
 
     public static CaptureTestPlan Parse(
         ReadOnlyMemory<byte> utf8,
