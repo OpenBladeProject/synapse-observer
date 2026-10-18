@@ -34,7 +34,7 @@ public partial class App : Application
             var output = Path.GetFullPath(e.Args[renderIndex + 1]);
             Directory.CreateDirectory(output);
             ShutdownMode = ShutdownMode.OnExplicitShutdown;
-            for (int stage = 0; stage < 12; stage++)
+            for (int stage = 0; stage < 15; stage++)
             {
                 new MainWindow(true).RenderPreview(Path.Combine(output, $"collector-stage-{stage}.png"), stage);
             }
@@ -42,6 +42,7 @@ public partial class App : Application
             new MainWindow(true) { Width = 560 }.RenderPreview(Path.Combine(output, "collector-narrow-custom.png"), 3);
             new MainWindow(true) { WindowState = WindowState.Maximized }.RenderPreview(Path.Combine(output, "collector-maximized.png"), 1);
             new MainWindow(true) { Width = 560 }.RenderPreview(Path.Combine(output, "collector-plan-narrow.png"), 9);
+            new MainWindow(true) { Width = 560 }.RenderPreview(Path.Combine(output, "collector-manual-narrow.png"), 12);
             new MainWindow(true) { WindowState = WindowState.Maximized }.RenderPreview(Path.Combine(output, "collector-plan-maximized.png"), 9);
             Shutdown();
             return;

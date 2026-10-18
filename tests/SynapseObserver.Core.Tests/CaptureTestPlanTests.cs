@@ -16,6 +16,10 @@ public sealed class CaptureTestPlanTests
 
         Assert.Equal(["fans", "inventory", "performance"], plan.ActivityIds);
         Assert.Empty(plan.SpecialKeys);
+        Assert.Equal(1, plan.FormatVersion);
+        Assert.Null(plan.TargetModel);
+        Assert.Empty(plan.Checks);
+        Assert.Empty(plan.Covered);
     }
 
     [Fact]
@@ -43,11 +47,115 @@ public sealed class CaptureTestPlanTests
     }
 
     [Fact]
+    public void Parse_VersionTwo_PreservesAllBoundedFields()
+    {
+        var plan = Parse("""
+            {
+              "schemaVersion": 2,
+              "targetModel": "RZ09-0581",
+              "activityIds": ["fans"],
+              "specialKeys": ["FnP"],
+              "checks": [
+                {
+                  "id": "manual-fan-round-trip",
+                  "kind": "openblade",
+                  "title": "Confirm manual fan control",
+                  "steps": ["Save the current setting", "Apply one fan value"],
+                  "expected": "OpenBlade reports the selected value",
+                  "requiresRestoration": true,
+                  "restore": "Restore the saved fan setting"
+                },
+                {
+                  "id": "research-vendor-definition",
+                  "kind": "research",
+                  "title": "Review the vendor definition",
+                  "steps": ["Compare the exact model definition"],
+                  "expected": "The command shape is documented",
+                  "requiresRestoration": false,
+                  "restore": null
+                }
+              ],
+              "covered": [
+                {"id": "covered-inventory", "summary": "Inventory evidence already reviewed"}
+              ]
+            }
+            """);
+
+        Assert.Equal(2, plan.FormatVersion);
+        Assert.Equal("RZ09-0581", plan.TargetModel);
+        Assert.Equal(["fans"], plan.ActivityIds);
+        Assert.Equal([SpecialKeyExpectedKey.FnP], plan.SpecialKeys);
+        Assert.Collection(
+            plan.Checks,
+            check =>
+            {
+                Assert.Equal("manual-fan-round-trip", check.Id);
+                Assert.Equal(PlanCheckKind.OpenBlade, check.Kind);
+                Assert.Equal("Confirm manual fan control", check.Title);
+                Assert.Equal(["Save the current setting", "Apply one fan value"], check.Steps);
+                Assert.Equal("OpenBlade reports the selected value", check.Expected);
+                Assert.True(check.RequiresRestoration);
+                Assert.Equal("Restore the saved fan setting", check.Restore);
+            },
+            check =>
+            {
+                Assert.Equal("research-vendor-definition", check.Id);
+                Assert.Equal(PlanCheckKind.Research, check.Kind);
+                Assert.False(check.RequiresRestoration);
+                Assert.Null(check.Restore);
+            });
+        var covered = Assert.Single(plan.Covered);
+        Assert.Equal("covered-inventory", covered.Id);
+        Assert.Equal("Inventory evidence already reviewed", covered.Summary);
+    }
+
+    [Fact]
+    public void Parse_VersionTwo_AcceptsResearchOnlyPlanAndNullTargetModel()
+    {
+        var plan = Parse("""
+            {
+              "schemaVersion": 2,
+              "targetModel": null,
+              "checks": [{
+                "id": "research-source",
+                "kind": "research",
+                "title": "Review source",
+                "steps": ["Read the exact model definition"],
+                "expected": "The finding is documented",
+                "requiresRestoration": false
+              }]
+            }
+            """);
+
+        Assert.Null(plan.TargetModel);
+        Assert.Equal(PlanCheckKind.Research, Assert.Single(plan.Checks).Kind);
+    }
+
+    [Fact]
+    public void MatchesTarget_UsesAnyReportedProductNameAndAllowsUnscopedPlans()
+    {
+        var scoped = Parse("{\"schemaVersion\":2,\"targetModel\":\"RZ09-0581\",\"activityIds\":[\"fans\"]}");
+        var unscoped = Parse("{\"schemaVersion\":2,\"activityIds\":[\"fans\"]}");
+
+        Assert.True(scoped.MatchesTarget(Inventory("Razer Blade 16 RZ09-0581")));
+        Assert.True(scoped.MatchesTarget(Inventory("razer blade 16 rz09-0581")));
+        Assert.False(scoped.MatchesTarget(Inventory("Razer Blade 16 RZ09-0528")));
+        Assert.True(unscoped.MatchesTarget(Inventory("Razer Blade 16 RZ09-0528")));
+    }
+
+    [Fact]
     public void Type_CanOnlyBeCreatedByParserAndHasGetOnlyProperties()
     {
         Assert.Empty(typeof(CaptureTestPlan).GetConstructors());
+        Assert.Empty(typeof(TestPlanCheck).GetConstructors());
+        Assert.Empty(typeof(TestPlanCoveredItem).GetConstructors());
+        Assert.Null(typeof(CaptureTestPlan).GetProperty(nameof(CaptureTestPlan.FormatVersion))!.SetMethod);
+        Assert.Null(typeof(CaptureTestPlan).GetProperty(nameof(CaptureTestPlan.TargetModel))!.SetMethod);
         Assert.Null(typeof(CaptureTestPlan).GetProperty(nameof(CaptureTestPlan.ActivityIds))!.SetMethod);
         Assert.Null(typeof(CaptureTestPlan).GetProperty(nameof(CaptureTestPlan.SpecialKeys))!.SetMethod);
+        Assert.Null(typeof(CaptureTestPlan).GetProperty(nameof(CaptureTestPlan.Checks))!.SetMethod);
+        Assert.Null(typeof(CaptureTestPlan).GetProperty(nameof(CaptureTestPlan.Covered))!.SetMethod);
+        Assert.Null(typeof(TestPlanCheck).GetProperty(nameof(TestPlanCheck.Steps))!.SetMethod);
     }
 
     [Fact]
@@ -65,11 +173,40 @@ public sealed class CaptureTestPlanTests
         Assert.Throws<NotSupportedException>(() => specialKeys[0] = SpecialKeyExpectedKey.M1);
     }
 
+    [Fact]
+    public void Parse_VersionTwo_ReturnsImmutableCollections()
+    {
+        var plan = Parse("""
+            {
+              "schemaVersion": 2,
+              "checks": [{
+                "id": "manual-check",
+                "kind": "openblade",
+                "title": "Run one check",
+                "steps": ["Apply the selected value"],
+                "expected": "The selected value is reported",
+                "requiresRestoration": false
+              }],
+              "covered": [{"id": "covered-check", "summary": "Previous evidence is reviewed"}]
+            }
+            """);
+
+        var checks = Assert.IsAssignableFrom<IList<TestPlanCheck>>(plan.Checks);
+        var covered = Assert.IsAssignableFrom<IList<TestPlanCoveredItem>>(plan.Covered);
+        var steps = Assert.IsAssignableFrom<IList<string>>(checks[0].Steps);
+        Assert.True(checks.IsReadOnly);
+        Assert.True(covered.IsReadOnly);
+        Assert.True(steps.IsReadOnly);
+        Assert.Throws<NotSupportedException>(() => checks[0] = checks[0]);
+        Assert.Throws<NotSupportedException>(() => covered[0] = covered[0]);
+        Assert.Throws<NotSupportedException>(() => steps[0] = "Changed");
+    }
+
     [Theory]
     [InlineData("[]")]
     [InlineData("{}")]
     [InlineData("{\"schemaVersion\":1}")]
-    [InlineData("{\"schemaVersion\":2,\"activityIds\":[\"fans\"]}")]
+    [InlineData("{\"schemaVersion\":3,\"activityIds\":[\"fans\"]}")]
     [InlineData("{\"schemaVersion\":\"1\",\"activityIds\":[\"fans\"]}")]
     [InlineData("{\"schemaVersion\":1.0,\"activityIds\":[\"fans\"]}")]
     [InlineData("{\"schemaVersion\":1,\"schemaVersion\":1,\"activityIds\":[\"fans\"]}")]
@@ -90,6 +227,69 @@ public sealed class CaptureTestPlanTests
     public void Parse_RejectsInvalidShapeOrValue(string json)
     {
         Assert.Throws<InvalidDataException>(() => Parse(json));
+    }
+
+    public static TheoryData<string> InvalidVersionTwoPlans => new()
+    {
+        "{\"schemaVersion\":2}",
+        "{\"schemaVersion\":2,\"covered\":[{\"id\":\"old-check\",\"summary\":\"Already reviewed\"}]}",
+        "{\"schemaVersion\":2,\"targetModel\":\"RZ09-581\",\"activityIds\":[\"fans\"]}",
+        "{\"schemaVersion\":2,\"targetModel\":581,\"activityIds\":[\"fans\"]}",
+        "{\"schemaVersion\":2,\"activityIds\":[\"fans\"],\"command\":\"capture\"}",
+        "{\"schemaVersion\":2,\"checks\":{}}",
+        "{\"schemaVersion\":2,\"checks\":[1]}",
+        "{\"schemaVersion\":2,\"checks\":[{\"id\":\"manual\",\"kind\":\"OpenBlade\",\"title\":\"Title\",\"steps\":[\"Step\"],\"expected\":\"Expected\",\"requiresRestoration\":false}]}",
+        "{\"schemaVersion\":2,\"checks\":[{\"id\":\"manual/path\",\"kind\":\"openblade\",\"title\":\"Title\",\"steps\":[\"Step\"],\"expected\":\"Expected\",\"requiresRestoration\":false}]}",
+        "{\"schemaVersion\":2,\"checks\":[{\"id\":\"manual\",\"kind\":\"openblade\",\"title\":\"Bad/path\",\"steps\":[\"Step\"],\"expected\":\"Expected\",\"requiresRestoration\":false}]}",
+        "{\"schemaVersion\":2,\"checks\":[{\"id\":\"manual\",\"kind\":\"openblade\",\"title\":\"Title\",\"steps\":[],\"expected\":\"Expected\",\"requiresRestoration\":false}]}",
+        "{\"schemaVersion\":2,\"checks\":[{\"id\":\"manual\",\"kind\":\"openblade\",\"title\":\"Title\",\"steps\":[\"1\",\"2\",\"3\",\"4\",\"5\",\"6\",\"7\"],\"expected\":\"Expected\",\"requiresRestoration\":false}]}",
+        "{\"schemaVersion\":2,\"checks\":[{\"id\":\"manual\",\"kind\":\"openblade\",\"title\":\"Title\",\"steps\":[\"Step\"],\"expected\":\"Expected\",\"requiresRestoration\":\"false\"}]}",
+        "{\"schemaVersion\":2,\"checks\":[{\"id\":\"manual\",\"kind\":\"openblade\",\"title\":\"Title\",\"steps\":[\"Step\"],\"expected\":\"Expected\",\"requiresRestoration\":true}]}",
+        "{\"schemaVersion\":2,\"checks\":[{\"id\":\"manual\",\"kind\":\"openblade\",\"title\":\"Title\",\"steps\":[\"Step\"],\"expected\":\"Expected\",\"requiresRestoration\":false,\"restore\":\"Restore\"}]}",
+        "{\"schemaVersion\":2,\"checks\":[{\"id\":\"research\",\"kind\":\"research\",\"title\":\"Title\",\"steps\":[\"Step\"],\"expected\":\"Expected\",\"requiresRestoration\":true,\"restore\":\"Restore\"}]}",
+        "{\"schemaVersion\":2,\"activityIds\":[\"fans\"],\"checks\":[{\"id\":\"fans\",\"kind\":\"openblade\",\"title\":\"Title\",\"steps\":[\"Step\"],\"expected\":\"Expected\",\"requiresRestoration\":false}]}",
+        "{\"schemaVersion\":2,\"checks\":[{\"id\":\"same\",\"kind\":\"openblade\",\"title\":\"Title\",\"steps\":[\"Step\"],\"expected\":\"Expected\",\"requiresRestoration\":false}],\"covered\":[{\"id\":\"same\",\"summary\":\"Reviewed\"}]}",
+        "{\"schemaVersion\":2,\"checks\":[{\"id\":\"manual\",\"kind\":\"openblade\",\"title\":\"Title\",\"steps\":[\"Step\"],\"expected\":\"Expected\",\"requiresRestoration\":false,\"extra\":1}]}",
+        "{\"schemaVersion\":2,\"checks\":[{\"id\":\"manual\",\"id\":\"other\",\"kind\":\"openblade\",\"title\":\"Title\",\"steps\":[\"Step\"],\"expected\":\"Expected\",\"requiresRestoration\":false}]}",
+        "{\"schemaVersion\":2,\"activityIds\":[\"fans\"],\"covered\":[{\"id\":\"covered\",\"summary\":\"Bad/path\"}]}",
+        "{\"schemaVersion\":2,\"activityIds\":[\"fans\"],\"covered\":[{\"id\":\"covered\"}]}",
+    };
+
+    [Theory]
+    [MemberData(nameof(InvalidVersionTwoPlans))]
+    public void Parse_VersionTwo_RejectsInvalidOrInconsistentShape(string json)
+    {
+        Assert.Throws<InvalidDataException>(() => Parse(json));
+    }
+
+    [Fact]
+    public void Parse_VersionTwo_RejectsBoundedScalarOverflow()
+    {
+        var identifier = new string('a', 81);
+        var title = new string('t', 129);
+        var text = new string('x', 257);
+
+        Assert.Throws<InvalidDataException>(() => Parse(OpenBladeCheck(identifier, "Title", "Step", "Expected")));
+        Assert.Throws<InvalidDataException>(() => Parse(OpenBladeCheck("manual", title, "Step", "Expected")));
+        Assert.Throws<InvalidDataException>(() => Parse(OpenBladeCheck("manual", "Title", text, "Expected")));
+        Assert.Throws<InvalidDataException>(() => Parse(OpenBladeCheck("manual", "Title", "Step", text)));
+        Assert.Throws<InvalidDataException>(() => Parse($$"""
+            {"schemaVersion":2,"activityIds":["fans"],"covered":[{"id":"covered","summary":"{{text}}"}]}
+            """));
+    }
+
+    [Fact]
+    public void Parse_VersionTwo_RejectsMoreThanTwentyFourChecksOrCoveredEntries()
+    {
+        var checks = string.Join(',', Enumerable.Range(0, 25).Select(index => $$"""
+            {"id":"manual-{{index}}","kind":"openblade","title":"Title","steps":["Step"],"expected":"Expected","requiresRestoration":false}
+            """));
+        var covered = string.Join(',', Enumerable.Range(0, 25).Select(index =>
+            $$"""{"id":"covered-{{index}}","summary":"Reviewed"}"""));
+
+        Assert.Throws<InvalidDataException>(() => Parse($$"""{"schemaVersion":2,"checks":[{{checks}}]}"""));
+        Assert.Throws<InvalidDataException>(() => Parse(
+            $$"""{"schemaVersion":2,"activityIds":["fans"],"covered":[{{covered}}]}"""));
     }
 
     [Fact]
@@ -185,6 +385,19 @@ public sealed class CaptureTestPlanTests
         Assert.Throws<InvalidDataException>(() => Parse(
             $"{{\"schemaVersion\":1,\"specialKeys\":[{entries}]}}"));
     }
+
+    private static string OpenBladeCheck(string id, string title, string step, string expected) => $$"""
+        {"schemaVersion":2,"checks":[{"id":"{{id}}","kind":"openblade","title":"{{title}}","steps":["{{step}}"],"expected":"{{expected}}","requiresRestoration":false}]}
+        """;
+
+    private static InventorySnapshot Inventory(string productName) => new(
+        InventorySnapshot.CurrentSchemaVersion,
+        DateTimeOffset.UnixEpoch,
+        SectionResult<IReadOnlyList<MachineIdentity>>.Collected(
+            [new MachineIdentity("Registry64", "Razer", productName, null, null, null)]),
+        SectionResult<PowerSourceEvidence?>.Absent(null),
+        SectionResult<IReadOnlyList<HidInterfaceEvidence>>.Absent([]),
+        SectionResult<IReadOnlyList<SynapseProcessEvidence>>.Absent([]));
 
     private static CaptureTestPlan Parse(string json, IReadOnlySet<string>? known = null) =>
         CaptureTestPlan.Parse(Encoding.UTF8.GetBytes(json), known ?? KnownActivities);

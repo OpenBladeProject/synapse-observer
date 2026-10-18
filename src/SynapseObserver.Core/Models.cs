@@ -379,6 +379,8 @@ public sealed record EvidenceSessionSnapshot(
 
     [System.Text.Json.Serialization.JsonIgnore]
     public CaptureTestPlan? RequestedTestPlan { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public IReadOnlyList<PlanCheckReport> PlanCheckReports { get; init; } = [];
 
     public IReadOnlyList<SpecialKeyObservation> SpecialKeyObservations { get; init; } = [];
     public IReadOnlyList<SpecialKeyProbeSummary> SpecialKeyProbes { get; init; } = [];

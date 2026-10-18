@@ -30,8 +30,8 @@ Use UTF-8 JSON, at most 16 KiB:
 
 At least one activity or special key is required. Arrays may be omitted when
 empty. Names are case-sensitive; duplicate IDs, unknown fields, unknown IDs,
-numeric key values, comments and trailing commas are rejected. Plans select
-built-in checks, not custom instructions or target values.
+numeric key values, comments and trailing commas are rejected. Version 1 plans select built-in checks only. Version 2 also supports bounded,
+displayed instructions for owner reports and maintainer research.
 
 Examples: [fans and displayed sensors](examples/focused-fans.json) and
 [a focused Fn + P check](examples/focused-fn-p.json). Fn + P may change a setting;
@@ -96,3 +96,40 @@ the recording. Selecting a plan does not narrow that call stream.
 Use M1, M2, M3, M4, M5, Fn, FnP, FnR, or FnF1 through FnF12.
 Special-key evidence items in activityIds are user reports; specialKeys selects
 separate five-second input checks. Choose each explicitly when both are needed.
+
+## Follow-up plans (version 2)
+
+[The Blade 18 follow-up plan](examples/blade18-remaining-checks.json) separates
+remaining owner checks, maintainer research, and work already covered. Its
+[rationale](blade18-remaining-checks.md) explains why each item remains.
+
+Version 2 preserves activityIds and specialKeys, and adds:
+
+- targetModel: optional model family such as RZ09-0484. OpenBlade reports are
+  blocked when collected product information does not match it.
+- checks: at most 24 entries. Each has a unique id, kind (openblade or research),
+  title, one to six steps, expected, and requiresRestoration. A required
+  restoration also needs restore.
+- covered: at most 24 objects with id and summary describing evidence already
+  retained. These are not tests to repeat.
+
+IDs are bounded tokens (80 characters); titles are at most 128 characters;
+steps, expected results, restoration instructions and summaries are at most 256.
+Display strings reject paths and control characters. IDs must be unique across
+activities, checks and covered entries. The entire file still fits in 16 KiB.
+At least one activity, key or check is required. Unknown fields are rejected.
+Version 1 imports and exports retain their original format.
+
+OpenBlade checks ask the owner to record starting settings before beginning.
+The plan then stays locked. The owner reports Worked, Problem, Control unavailable
+or Skipped, and records restoration when required. If restoration is unconfirmed,
+record a Problem and stop testing. Save the partial ZIP. Observer neither applies
+these settings nor connects to OpenBlade. Finish Synapse recording and close
+Synapse before following OpenBlade instructions; leave Observer open to report.
+
+The ZIP contains the normalized plan and, when a check begins,
+openblade-checks.json. Its append-only start and result records are explicitly
+user-reported, never firmware readback or automatic validation. A started check
+without a result stays unfinished in collection review. Research and covered
+entries have no owner result controls and do not count as unfinished owner work.
+Importing instructions cannot execute commands or authorize attachment.

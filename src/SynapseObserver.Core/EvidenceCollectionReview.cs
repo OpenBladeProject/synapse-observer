@@ -17,13 +17,25 @@ public sealed record EvidenceCollectionReview(string Summary, IReadOnlyList<stri
         EvidenceSessionSnapshot snapshot, ContributionQualityReceipt quality, ObservationQualityStatistics statistics)
     {
         var counts = quality.Counts;
+        var manualResults = snapshot.PlanCheckReports.GroupBy(report => report.CheckId).Select(group => group.Last()).ToArray();
         var retained = counts.ControlObservations - counts.RedactedControlBodies;
         var summary = $"{Count(counts.CompleteActionWindows, "complete action sequence")} · "
             + $"{Count(snapshot.SpecialKeyProbes.Count, "key check")} · "
             + $"{Count(retained, "complete report body", "complete report bodies")} retained.";
         if (snapshot.Observations.Count == 0 && counts.ActionWindows == 0 && snapshot.SpecialKeyProbes.Count == 0)
             summary = "Device information collected. No Synapse recording or key check yet.";
+        if (manualResults.Length > 0) summary += $" {manualResults.Count(report => report.Outcome != PlanCheckOutcome.Started)} owner-reported OpenBlade results.";
         var notes = new List<string>();
+        if (snapshot.RequestedTestPlan is { } manualPlan)
+        {
+            int pendingManual = manualPlan.Checks.Count(check => check.Kind == PlanCheckKind.OpenBlade
+                && !manualResults.Any(report => report.CheckId == check.Id && report.Outcome != PlanCheckOutcome.Started));
+            if (pendingManual > 0) notes.Add($"{pendingManual} OpenBlade checks have no finished owner report. Maintainer research is not owner testing.");
+        }
+        if (manualResults.Any(report => report.Outcome == PlanCheckOutcome.Started))
+            notes.Add("An OpenBlade check is unfinished. Restore its saved starting settings and save the partial report.");
+        if (manualResults.Any(report => report.Restoration == PlanRestoration.Unconfirmed))
+            notes.Add("OpenBlade restoration was reported unconfirmed. Stop testing and report the unresolved setting.");
         if (counts.CompleteActionWindows == 0 && (snapshot.RequestedTestPlan is null || counts.ActionWindows > 0))
             notes.Add("No complete setting-change sequence was recorded. Device information is still useful; add a Synapse recording if it is available.");
         var pending = snapshot.Coverage.Count(item => item.State == CoverageState.Pending

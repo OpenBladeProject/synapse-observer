@@ -47,7 +47,7 @@ internal sealed partial class CollectorViewModel
             Changed();
         }
     }
-    public bool CanProbeSpecialKeys => ShowSpecialKeyProbe && SpecialKeyChoices.Any(choice => choice.Key == expectedSpecialKey) && !capacityReached && !closing && !busy && !probingSpecialKey && !preview
+    public bool CanProbeSpecialKeys => !manualActive && !manualTestingStopped && ShowSpecialKeyProbe && SpecialKeyChoices.Any(choice => choice.Key == expectedSpecialKey) && !capacityReached && !closing && !busy && !probingSpecialKey && !preview
         && specialKeyProbe is not null && stepPhase == 0 && SpecialKeyProbeParser.IsSingleBladeRoot(inputCandidates)
         && inputCandidates.Any(SpecialKeyProbeParser.IsInputCandidate)
         && session!.SpecialKeyProbeCount < EvidenceLimits.MaxSpecialKeyProbes

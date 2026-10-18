@@ -78,12 +78,17 @@ public static class EvidenceBundleWriter
                 {
                     if (snapshot.RequestedTestPlan is { } plan)
                     {
-                        await WriteJsonEntryAsync(archive, "test-plan.json", new
-                        {
-                            schemaVersion = 1, activityIds = plan.ActivityIds,
-                            specialKeys = plan.SpecialKeys.Select(key => key.ToString()).ToArray(),
-                        }, JsonOptions, cancellationToken).ConfigureAwait(false);
+                        if (plan.FormatVersion == CaptureTestPlan.SchemaVersion)
+                            await WriteJsonEntryAsync(archive, "test-plan.json", CreatePlanProjection(plan), JsonOptions, cancellationToken).ConfigureAwait(false);
+                        else
+                            await WriteEntryAsync(archive, "test-plan.json", plan.ValidatedJson, cancellationToken).ConfigureAwait(false);
                     }
+                    if (snapshot.PlanCheckReports.Count > 0)
+                        await WriteJsonEntryAsync(archive, "openblade-checks.json", new
+                        {
+                            schemaVersion = 1, provenance = "userReported", isFirmwareReadback = false,
+                            reports = snapshot.PlanCheckReports,
+                        }, JsonOptions, cancellationToken).ConfigureAwait(false);
                     await WriteJsonEntryAsync(archive, "manifest.json", manifest, JsonOptions, cancellationToken).ConfigureAwait(false);
                     await WriteJsonEntryAsync(archive, "coverage-draft.json", drafts.Coverage, ContributionJsonOptions, cancellationToken).ConfigureAwait(false);
                     await WriteJsonEntryAsync(archive, "annotation-draft.json", drafts.Annotation, ContributionJsonOptions, cancellationToken).ConfigureAwait(false);
@@ -110,6 +115,12 @@ public static class EvidenceBundleWriter
         }
     }
 
+    private static object CreatePlanProjection(CaptureTestPlan plan) => new
+    {
+        schemaVersion = 1, activityIds = plan.ActivityIds,
+        specialKeys = plan.SpecialKeys.Select(key => key.ToString()).ToArray(),
+    };
+
     private static EvidenceBundleManifest CreateManifest(EvidenceSessionSnapshot snapshot) =>
         new EvidenceBundleManifest(
             "synapse-observer.bundle.v2",
@@ -119,6 +130,7 @@ public static class EvidenceBundleWriter
             "No upload was performed. Restoration markers are user-reported, and observations are user-mode call evidence rather than firmware readback.",
             [
                 .. snapshot.RequestedTestPlan is null ? Array.Empty<string>() : new[] { "test-plan.json" },
+                .. snapshot.PlanCheckReports.Count == 0 ? Array.Empty<string>() : new[] { "openblade-checks.json" },
                 "manifest.json",
                 "coverage-draft.json",
                 "annotation-draft.json",
@@ -163,7 +175,8 @@ public static class EvidenceBundleWriter
         builder.AppendLine("Payload hex is included only for a matching selected Razer HID feature call whose complete envelope, checksum, padding, command, and typed values match a reviewed numeric control or lighting grammar. Unknown, sensitive, malformed, failed, and over-limit payloads keep bounded header and shape metadata while their bytes are omitted.");
         builder.AppendLine("This privacy classification does not admit a device or command, prove physical transport, or prove firmware application. See payloadPrivacySources in manifest.json for the reviewed grammar sources.");
         builder.AppendLine("A user-reported restoration marker records what the user selected; it is not independent hardware readback.");
-        if (snapshot.RequestedTestPlan is not null) builder.AppendLine("test-plan.json contains the requested built-in check IDs. The focused checklist does not limit passive control-call recording or prove support for a feature.");
+        if (snapshot.RequestedTestPlan is not null) builder.AppendLine("test-plan.json contains the validated requested plan. The focused checklist does not limit passive control-call recording or prove support for a feature.");
+        if (snapshot.PlanCheckReports.Count > 0) builder.AppendLine("openblade-checks.json contains owner-reported OpenBlade behavior and restoration. It is not firmware readback, Synapse capture, or production-validation evidence.");
         builder.AppendLine("coverage-draft.json lists every OpenBlade support-evidence leaf. Captured means only that this bundle contains passive evidence for that leaf; every other leaf remains NotInvestigated.");
         builder.AppendLine("annotation-draft.json groups bounded evidence into prompted action windows. quality-receipt.json keeps collection gaps and the remaining maintainer validation stages visible.");
         builder.AppendLine("These drafts are not PCAP files or capture-toolkit annotations, and they do not claim capture-validator compliance, query validation, setter validation, or production admission.");

@@ -14,7 +14,7 @@ internal sealed partial class CollectorViewModel
     public string TestPlanStatus => TestPlanLocked
         ? testPlanStatus + " The plan is fixed for this session. Reopen Observer to use a different plan." : testPlanStatus;
     public bool ShowTestPlanControls => !TestPlanLocked;
-    private bool TestPlanLocked => stepPhase != 0 || observedCalls > 0 || recordingNumber > 0 || probeSequence > 0
+    private bool TestPlanLocked => manualSessionStarted || stepPhase != 0 || observedCalls > 0 || recordingNumber > 0 || probeSequence > 0
         || allActivities.Any(activity => activity.State != CoverageState.Pending);
     private bool PlanNeedsRecording => Activities.Any(static activity => !activity.IsReadOnly);
     public string RecordingGuideTitle => PlanNeedsRecording ? "Record Synapse changes" : "Report current settings";
@@ -67,12 +67,13 @@ internal sealed partial class CollectorViewModel
             var parsed = CaptureTestPlan.Parse(bytes, allActivities.Select(activity => activity.Id).ToHashSet(StringComparer.Ordinal));
             session?.SetRequestedTestPlan(parsed);
             testPlan = parsed;
+            ConfigureManualChecks(parsed);
             selectedSpecialKeyChoices = parsed.SpecialKeys.Select(key => AllSpecialKeyChoices.Single(choice => choice.Key == key)).ToArray();
             selectedActivities = parsed.ActivityIds.Select(id => allActivities.Single(activity => activity.Id == id)).ToArray();
             if (parsed.SpecialKeys.Count > 0) ExpectedSpecialKey = parsed.SpecialKeys[0];
             MoveToActivity(Activities.Count > 0 ? 0 : -1);
             if (Activities.Count == 0) IsSpecialKeyExpanded = true;
-            testPlanStatus = $"Imported plan: {Activities.Count} evidence {(Activities.Count == 1 ? "item" : "items")} and {parsed.SpecialKeys.Count} key {(parsed.SpecialKeys.Count == 1 ? "check" : "checks")}. Only these checks are shown.";
+            testPlanStatus = $"Imported plan: {manualChecks.Count} OpenBlade checks, {researchChecks.Count} maintainer tasks, {Activities.Count} evidence {(Activities.Count == 1 ? "item" : "items")} and {parsed.SpecialKeys.Count} key {(parsed.SpecialKeys.Count == 1 ? "check" : "checks")}. Only these checks are shown.";
             Refresh();
             return true;
         }
@@ -89,6 +90,7 @@ internal sealed partial class CollectorViewModel
         if (!CanChangeTestPlan || testPlan is null) return;
         session?.SetRequestedTestPlan(null);
         testPlan = null;
+        ConfigureManualChecks(null);
         selectedSpecialKeyChoices = null;
         selectedActivities = null;
         MoveToActivity(0);
