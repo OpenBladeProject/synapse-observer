@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Documentation
+
+- Direct new evidence collection to Synapse Observer and replace links to the
+  private legacy capture toolkit in the English, Russian, and Chinese guides
+  ([#25](https://github.com/OpenBladeProject/synapse-observer/pull/25)).
+
 ## [0.2.12] - 2026-10-18
 
 ### Added
