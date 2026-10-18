@@ -21,6 +21,10 @@ You can collect information from Blade, Blade Pro, and Blade Stealth laptops.
 Recording availability depends on how Synapse communicates with your laptop.
 See [model coverage](docs/model-coverage.md).
 
+If a maintainer sent a JSON test plan, choose **Import test plan…** before
+starting a check. Only the requested items and keys will be shown. See
+[focused test plans](docs/test-plans.md).
+
 ## Send evidence
 
 1. Open the app and select **Collect device information**.

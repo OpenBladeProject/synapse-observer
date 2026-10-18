@@ -51,8 +51,13 @@ internal sealed class SettingEntry : INotifyPropertyChanged
     public void Reset(int activity)
     {
         var activities = CaptureActivityCatalog.Create();
-        Choices = activity >= 0 && activity < activities.Length
-            ? activities[activity].Choices
+        Reset(activity >= 0 && activity < activities.Length ? activities[activity] : null);
+    }
+
+    public void Reset(CaptureActivity? activity)
+    {
+        Choices = activity is not null
+            ? activity.Choices
             : [new("Other state…", "State or value shown (required)", "Use a short description without personal information.", true)];
         selectedChoice = null;
         details = string.Empty;

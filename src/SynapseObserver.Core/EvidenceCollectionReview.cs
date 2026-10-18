@@ -24,11 +24,17 @@ public sealed record EvidenceCollectionReview(string Summary, IReadOnlyList<stri
         if (snapshot.Observations.Count == 0 && counts.ActionWindows == 0 && snapshot.SpecialKeyProbes.Count == 0)
             summary = "Device information collected. No Synapse recording or key check yet.";
         var notes = new List<string>();
-        if (counts.CompleteActionWindows == 0)
+        if (counts.CompleteActionWindows == 0 && (snapshot.RequestedTestPlan is null || counts.ActionWindows > 0))
             notes.Add("No complete setting-change sequence was recorded. Device information is still useful; add a Synapse recording if it is available.");
-        var pending = snapshot.Coverage.Count(item => item.State == CoverageState.Pending);
+        var pending = snapshot.Coverage.Count(item => item.State == CoverageState.Pending
+            && (snapshot.RequestedTestPlan is null || snapshot.RequestedTestPlan.ActivityIds.Contains(item.ActivityId, StringComparer.Ordinal)));
         if (pending > 0)
             notes.Add($"{Count(pending, "evidence item")} {(pending == 1 ? "has" : "have")} not been recorded. You can save this partial collection.");
+        if (snapshot.RequestedTestPlan is { } requested)
+        {
+            var missingKeys = requested.SpecialKeys.Count(key => !snapshot.SpecialKeyProbes.Any(probe => probe.ExpectedKey == key));
+            if (missingKeys > 0) notes.Add($"{Count(missingKeys, "requested key check")} {(missingKeys == 1 ? "has" : "have")} not been attempted. You can save this partial collection.");
+        }
         var unchanged = quality.Gaps.Count(item => item.Code == "UnchangedReportedValues");
         if (unchanged > 0)
             notes.Add($"{Count(unchanged, "action sequence")} reported the same starting and changed value. "

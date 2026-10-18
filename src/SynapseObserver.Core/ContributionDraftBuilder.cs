@@ -1082,7 +1082,8 @@ public static class ContributionDraftBuilder
             }
         }
 
-        foreach (var item in snapshot.Coverage.Where(static item => item.State != CoverageState.Completed))
+        foreach (var item in snapshot.Coverage.Where(item => item.State != CoverageState.Completed
+            && (snapshot.RequestedTestPlan is null || snapshot.RequestedTestPlan.ActivityIds.Contains(item.ActivityId, StringComparer.Ordinal))))
         {
             gaps.Add(new ContributionQualityGap(
                 $"coverage.{item.ActivityId}",

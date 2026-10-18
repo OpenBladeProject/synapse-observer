@@ -377,6 +377,9 @@ public sealed record EvidenceSessionSnapshot(
 {
     public const string CurrentSchemaVersion = "synapse-observer.session.v2";
 
+    [System.Text.Json.Serialization.JsonIgnore]
+    public CaptureTestPlan? RequestedTestPlan { get; init; }
+
     public IReadOnlyList<SpecialKeyObservation> SpecialKeyObservations { get; init; } = [];
     public IReadOnlyList<SpecialKeyProbeSummary> SpecialKeyProbes { get; init; } = [];
     public EvidenceStorageFailure? StorageFailure { get; init; }

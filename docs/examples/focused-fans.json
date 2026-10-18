@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "activityIds": [
+    "fans",
+    "sensor-telemetry"
+  ],
+  "specialKeys": []
+}

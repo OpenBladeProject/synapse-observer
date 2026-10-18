@@ -93,6 +93,11 @@ public partial class MainWindow : Window
             SpecialKeyCard.BringIntoView();
             UpdateLayout();
         }
+        if (stage >= 9)
+        {
+            GuideScrollViewer.ScrollToTop();
+            UpdateLayout();
+        }
         // The preview uses a real maximized window; record dimensions to catch
         // restored-size caps that also restrict Windows maximization.
         File.WriteAllText(Path.ChangeExtension(path, ".layout.json"), System.Text.Json.JsonSerializer.Serialize(new

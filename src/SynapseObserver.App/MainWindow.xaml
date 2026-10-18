@@ -17,8 +17,18 @@
       <Image Source="Assets/Brand/OpenBlade.png" Width="28" Height="28" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="0,3,0,0" />
       <Border Grid.Column="1" Background="{StaticResource ButtonBrush}" CornerRadius="4" Padding="8,3" VerticalAlignment="Top" Margin="12,4,0,0"><TextBlock Text="{Binding VersionLabel}" ToolTip="{Binding BuildVersion}" FontSize="11" Foreground="{StaticResource MutedTextBrush}" /></Border>
     </Grid>
-    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,8,0">
+    <ScrollViewer x:Name="GuideScrollViewer" Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,8,0">
       <StackPanel>
+        <Border Style="{StaticResource Card}">
+          <StackPanel>
+            <TextBlock Text="Test plan" FontSize="17" FontWeight="SemiBold" />
+            <TextBlock Text="{Binding TestPlanStatus}" Foreground="{StaticResource MutedTextBrush}" Margin="0,8,0,10" AutomationProperties.LiveSetting="Polite" />
+            <WrapPanel Visibility="{Binding ShowTestPlanControls, Converter={StaticResource VisibleWhenTrue}}">
+              <Button Content="Import test plan…" Command="{Binding ImportTestPlanCommand}" AutomationProperties.HelpText="Choose a JSON file supplied by a maintainer to show only the requested checks." />
+              <Button Content="Show all checks" Command="{Binding ClearTestPlanCommand}" Visibility="{Binding HasTestPlan, Converter={StaticResource VisibleWhenTrue}}" />
+            </WrapPanel>
+          </StackPanel>
+        </Border>
         <Border Style="{StaticResource Card}" Visibility="{Binding ShowInventoryScreen, Converter={StaticResource VisibleWhenTrue}}">
           <StackPanel>
             <TextBlock Text="Your laptop" FontSize="17" FontWeight="SemiBold" />
@@ -28,7 +38,7 @@
           </StackPanel>
         </Border>
         <TextBlock Text="{Binding DeviceSummary}" Foreground="{StaticResource MutedTextBrush}" Margin="0,0,0,12" Visibility="{Binding HasInventory, Converter={StaticResource VisibleWhenTrue}}" />
-        <Border Style="{StaticResource Card}" Visibility="{Binding HasInventory, Converter={StaticResource VisibleWhenTrue}}">
+        <Border Style="{StaticResource Card}" Visibility="{Binding ShowRecordingGuide, Converter={StaticResource VisibleWhenTrue}}">
           <StackPanel>
             <TextBlock Text="Record Synapse changes" FontSize="17" FontWeight="SemiBold" />
             <TextBlock Text="{Binding RecorderStatus}" Margin="0,8,0,10" Foreground="{StaticResource MutedTextBrush}" FontSize="12" AutomationProperties.LiveSetting="Polite" />

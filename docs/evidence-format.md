@@ -211,3 +211,12 @@ records independent facts: `UnchangedReportedValues` or
 feature-call observations. An empty unchanged sequence retains both diagnoses.
 A completed restoration of an unchanged value is not presented as an unfinished
 restoration; it still does not establish a setting change.
+
+## Requested test plan
+
+A focused session adds test-plan.json and lists it in manifest.json entries.
+Its schemaVersion is 1, activityIds are built-in checklist IDs, and specialKeys
+are exact prompted-key names. Both arrays preserve requested order. Import paths
+and filenames are omitted. The optional file does not change the bundle v2 or
+session v2 shape. Unrequested checklist entries remain available as inventory
+coverage, but do not produce requested-item gaps or incomplete-checklist notes.

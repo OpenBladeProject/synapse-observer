@@ -11,7 +11,9 @@ namespace SynapseObserver.App;
 
 internal sealed partial class CollectorViewModel : INotifyPropertyChanged
 {
-    public IReadOnlyList<CaptureActivity> Activities { get; } = CaptureActivityCatalog.Create();
+    private readonly IReadOnlyList<CaptureActivity> allActivities = CaptureActivityCatalog.Create();
+    private IReadOnlyList<CaptureActivity>? selectedActivities;
+    public IReadOnlyList<CaptureActivity> Activities => selectedActivities ?? allActivities;
     private readonly bool preview;
     private long sessionOriginTicks = Stopwatch.GetTimestamp();
     private double RelativeMilliseconds => (Stopwatch.GetTimestamp() - sessionOriginTicks) * 1000.0 / Stopwatch.Frequency;
@@ -98,8 +100,10 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
             Changed(nameof(StepStatus));
             RefreshCommands();
         };
+        ImportTestPlanCommand = new AsyncCommand(ImportTestPlanAsync, () => CanChangeTestPlan);
+        ClearTestPlanCommand = new AsyncCommand(() => { ClearTestPlan(); return Task.CompletedTask; }, () => CanChangeTestPlan && HasTestPlan);
         CollectCommand = new AsyncCommand(() => GuardAsync(CollectAsync), () => !closing && !capacityReached && !busy && !collecting && !recording && !IsProbingSpecialKey);
-        StartCommand = new AsyncCommand(() => GuardAsync(StartAsync), () => !closing && !busy && !IsProbingSpecialKey && !capacityReached && HasInventory && consent && !recording && (preview || backendCandidate is not null));
+        StartCommand = new AsyncCommand(() => GuardAsync(StartAsync), () => !closing && !busy && !IsProbingSpecialKey && !capacityReached && HasInventory && Activities.Count > 0 && consent && !recording && (preview || backendCandidate is not null));
         StopCommand = new AsyncCommand(() => GuardAsync(StopAsync), () => recording && !busy && !closing);
         MarkCommand = new AsyncCommand(() => GuardAsync(MarkAsync), () => !closing && !busy && !IsProbingSpecialKey && !capacityReached && HasInventory && HasCurrentStep
             && (CurrentActivity.IsReadOnly || (recording && !observerEnded))
@@ -233,7 +237,8 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
             var identity = identities.FirstOrDefault();
             deviceSummary = $"{identity?.ProductName ?? "Laptop identity unavailable"} · BIOS {identity?.BiosVersion ?? "unavailable"}\n{inventory.RazerHidInterfaces.Value.Count} Razer HID interfaces · {inventory.SynapseProcesses.Value.Count} related software processes";
             Marker(EvidenceMarkerKind.SessionStarted, "session", "Device information collected", EvidenceProvenance.Collector);
-            foreach (var activity in Activities)
+            session.SetRequestedTestPlan(testPlan);
+            foreach (var activity in allActivities)
             {
                 session.SetCoverage(new CoverageItem(activity.Id, activity.Title, CoverageState.Pending, CoverageReason.None));
             }
@@ -505,8 +510,8 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
     {
         stepPhase = 0;
         startingSetting = string.Empty;
-        StartingEntry.Reset(step);
-        ChangedEntry.Reset(step);
+        StartingEntry.Reset(HasCurrentStep ? CurrentActivity : null);
+        ChangedEntry.Reset(HasCurrentStep ? CurrentActivity : null);
     }
 
     private Task StopAsync() => stopTask ??= StopCoreAsync();
@@ -1001,7 +1006,20 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
             ResetEntries();
             status = CapacityInstructions;
         }
-        if (stage >= 5)
+        if (stage is 9 or 11)
+        {
+            recording = false;
+            ResetEntries();
+            TryImportTestPlan(System.Text.Encoding.UTF8.GetBytes("{\"schemaVersion\":1,\"activityIds\":[\"fans\",\"full-charge\"],\"specialKeys\":[]}"));
+            if (stage == 11) { recording = true; recordingNumber = 1; }
+        }
+        else if (stage == 10)
+        {
+            recording = false;
+            ResetEntries();
+            TryImportTestPlan(System.Text.Encoding.UTF8.GetBytes("{\"schemaVersion\":1,\"specialKeys\":[\"FnP\"]}"));
+        }
+        else if (stage >= 5)
         {
             var activityId = stage switch
             {
@@ -1031,6 +1049,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
 
     private void RefreshCommands()
     {
+        ImportTestPlanCommand.Refresh(); ClearTestPlanCommand.Refresh();
         ProbeSpecialKeyCommand?.Refresh(); CancelSpecialKeyProbeCommand?.Refresh();
         CollectCommand.Refresh(); StartCommand.Refresh(); StopCommand.Refresh(); MarkCommand.Refresh();
         SkipCommand.Refresh(); UnavailableCommand.Refresh(); SaveCommand.Refresh();

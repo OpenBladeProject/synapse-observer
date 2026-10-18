@@ -15,6 +15,7 @@ public sealed class EvidenceSession : IDisposable
     private readonly SanitizedObservationStore _observations;
     private readonly Dictionary<string, CoverageItem> _coverage = new(StringComparer.Ordinal);
     private readonly Dictionary<(int Recording, int Segment), int> _dropMarkerIndices = [];
+    private CaptureTestPlan? _requestedTestPlan;
     private int _rejectedMarkers;
     private int _rejectedObservations;
     private int _rejectedCoverage;
@@ -263,6 +264,20 @@ public sealed class EvidenceSession : IDisposable
         }
     }
 
+    public void SetRequestedTestPlan(CaptureTestPlan? plan)
+    {
+        lock (_sync)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (_markers.Any(marker => marker.Provenance == EvidenceProvenance.UserReported
+                    || marker.Kind is EvidenceMarkerKind.RecordingStarted or EvidenceMarkerKind.RecordingStopped)
+                || _specialKeyProbes.Count > 0 || _specialKeys.Count > 0 || ObservationCount > 0
+                || _coverage.Values.Any(item => item.State != CoverageState.Pending))
+                throw new InvalidOperationException("The test plan cannot change after evidence collection starts.");
+            _requestedTestPlan = plan;
+        }
+    }
+
     public EvidenceSessionSnapshot Snapshot()
     {
         lock (_sync)
@@ -280,6 +295,7 @@ public sealed class EvidenceSession : IDisposable
                 Volatile.Read(ref _rejectedObservations),
                 _rejectedCoverage)
             {
+                RequestedTestPlan = _requestedTestPlan,
                 SpecialKeyObservations = EvidenceSessionSnapshot.Freeze(_specialKeys),
                 SpecialKeyProbes = EvidenceSessionSnapshot.Freeze(_specialKeyProbes),
                 StorageFailure = storageFailure,
