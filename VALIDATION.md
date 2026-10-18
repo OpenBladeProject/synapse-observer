@@ -678,3 +678,19 @@ retention with explicit gaps; duration constants agree; exact DLL path/hash
 checks preserve pairing with the unchanged protocol layout. Countdown UX and
 future constant generation are possible follow-ups, not verified regressions.
 Historical five-minute validation above refers to the earlier runtime.
+
+## Fixed Windows PDH temperature inventory, 2026-10-18
+
+The collector now samples the two fixed EC TZRZ `High Precision Temperature`
+counters separately from WMI thermal-zone inventory. Synthetic native tests
+cover the exact path allowlist, per-operation errors, both valid PDH statuses,
+invalid values, cancellation between native calls, query cleanup, partial
+success, missing native APIs, sanitization, and ZIP quality-gap preservation.
+The complete Release suite passed 433 Core, 89 Backend, and 173 App tests.
+Both owned native fixtures passed; existing MinHook compiler warnings remain.
+The WPF application built and its disconnected inventory-stage preview was
+rendered and inspected with the new separate WMI/PDH status line.
+
+This validation did not run the PDH probe on a physical laptop, attach to
+Synapse, install software, or issue hardware commands. Live counter availability
+and the resulting values remain unverified for this Observer change.
