@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Fixed
+
+- Collect the two fixed Windows PDH EC temperature counters separately from WMI,
+  retaining per-counter values, failures, units, and provenance in the evidence ZIP
+  ([#21](https://github.com/OpenBladeProject/synapse-observer/pull/21)).
+
 ## [0.2.11] - 2026-10-16
 
 ### Fixed
