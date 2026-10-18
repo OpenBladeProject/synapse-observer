@@ -16,6 +16,8 @@ internal sealed partial class CollectorViewModel
     public bool ShowTestPlanControls => !TestPlanLocked;
     private bool TestPlanLocked => stepPhase != 0 || observedCalls > 0 || recordingNumber > 0 || probeSequence > 0
         || allActivities.Any(activity => activity.State != CoverageState.Pending);
+    private bool PlanNeedsRecording => Activities.Any(static activity => !activity.IsReadOnly);
+    public string RecordingGuideTitle => PlanNeedsRecording ? "Record Synapse changes" : "Report current settings";
     public bool ShowRecordingGuide => HasInventory && Activities.Count > 0;
     public bool CanChangeTestPlan => !closing && !busy && !collecting && !recording
         && !IsProbingSpecialKey && !capacityReached && !TestPlanLocked

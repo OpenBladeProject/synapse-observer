@@ -40,7 +40,7 @@
         <TextBlock Text="{Binding DeviceSummary}" Foreground="{StaticResource MutedTextBrush}" Margin="0,0,0,12" Visibility="{Binding HasInventory, Converter={StaticResource VisibleWhenTrue}}" />
         <Border Style="{StaticResource Card}" Visibility="{Binding ShowRecordingGuide, Converter={StaticResource VisibleWhenTrue}}">
           <StackPanel>
-            <TextBlock Text="Record Synapse changes" FontSize="17" FontWeight="SemiBold" />
+            <TextBlock Text="{Binding RecordingGuideTitle}" FontSize="17" FontWeight="SemiBold" />
             <TextBlock Text="{Binding RecorderStatus}" Margin="0,8,0,10" Foreground="{StaticResource MutedTextBrush}" FontSize="12" AutomationProperties.LiveSetting="Polite" />
             <StackPanel Visibility="{Binding ShowAttach, Converter={StaticResource VisibleWhenTrue}}">
               <CheckBox Content="Allow observation of Synapse during this session" IsChecked="{Binding AttachConsent}" Margin="0,0,0,12" AutomationProperties.HelpText="The collector loads a fixed observer into a verified Synapse process. It records control feature calls without replaying them." />

@@ -103,7 +103,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
         ImportTestPlanCommand = new AsyncCommand(ImportTestPlanAsync, () => CanChangeTestPlan);
         ClearTestPlanCommand = new AsyncCommand(() => { ClearTestPlan(); return Task.CompletedTask; }, () => CanChangeTestPlan && HasTestPlan);
         CollectCommand = new AsyncCommand(() => GuardAsync(CollectAsync), () => !closing && !capacityReached && !busy && !collecting && !recording && !IsProbingSpecialKey);
-        StartCommand = new AsyncCommand(() => GuardAsync(StartAsync), () => !closing && !busy && !IsProbingSpecialKey && !capacityReached && HasInventory && Activities.Count > 0 && consent && !recording && (preview || backendCandidate is not null));
+        StartCommand = new AsyncCommand(() => GuardAsync(StartAsync), () => !closing && !busy && !IsProbingSpecialKey && !capacityReached && HasInventory && PlanNeedsRecording && consent && !recording && (preview || backendCandidate is not null));
         StopCommand = new AsyncCommand(() => GuardAsync(StopAsync), () => recording && !busy && !closing);
         MarkCommand = new AsyncCommand(() => GuardAsync(MarkAsync), () => !closing && !busy && !IsProbingSpecialKey && !capacityReached && HasInventory && HasCurrentStep
             && (CurrentActivity.IsReadOnly || (recording && !observerEnded))
@@ -166,7 +166,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
     public string ActivityGuidance => HasCurrentStep ? CurrentActivity.Guidance : string.Empty;
     public bool ShowStartingValue => HasCurrentStep && stepPhase == 0;
     public bool ShowChangedValue => HasCurrentStep && stepPhase == 1;
-    public bool ShowAttach => !recording;
+    public bool ShowAttach => !recording && PlanNeedsRecording;
     public string CollectButtonText => HasInventory ? "Refresh device information" : "Collect device information";
     public string VersionLabel => "v" + BuildVersion.Split('+')[0];
     public string BuildVersion => typeof(CollectorViewModel).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "Unknown";

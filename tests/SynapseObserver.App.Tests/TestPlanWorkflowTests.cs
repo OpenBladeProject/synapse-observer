@@ -75,6 +75,9 @@ public sealed class TestPlanWorkflowTests
         model.TryImportTestPlan(Plan("[\"keyboard-layout\"]"));
         model.CollectCommand.Execute(null);
         await model.CollectCommand.CurrentExecution;
+        Assert.False(model.ShowAttach);
+        Assert.False(model.StartCommand.CanExecute(null));
+        Assert.Equal("Report current settings", model.RecordingGuideTitle);
         model.StartingSetting = "ANSI US";
         model.MarkCommand.Execute(null);
         await model.MarkCommand.CurrentExecution;

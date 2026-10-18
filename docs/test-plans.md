@@ -13,7 +13,8 @@ plan. Invalid imports leave the current checklist unchanged.
 Importing does not start recording, allow Synapse observation, arm a key check,
 or change a setting. You still choose each action. Skip controls the laptop does
 not offer and restore the exact starting setting. A key-only plan hides the
-recording guide; keep Observer active during its prompted key check.
+recording guide; keep Observer active during its prompted key check. A plan
+containing only current-state reports hides recording consent and Start recording.
 
 ## JSON format
 
