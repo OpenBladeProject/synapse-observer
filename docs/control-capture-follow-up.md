@@ -6,11 +6,17 @@ step needs its starting value, changed value and restoration marker; selecting
 an item alone does not record that sequence.
 
 1. **Chroma effects and frame streaming:** record the starting effect and its
-   settings, begin the step, then select one other effect. Let it run for five
-   seconds before marking the change. Restore the exact starting effect and
-   settings, wait five seconds and mark restoration. Repeat for another effect
-   if needed. The ZIP can retain 16-column and 17-column RGB rows; the effect
-   name comes from your markers. Rows alone do not establish a physical key map.
+   settings, begin the step, then change and save one effect in Synapse or
+   Chroma Studio. Keep Synapse open when using Studio. Record the effect name
+   and any changed color, speed or direction. Let it run for five seconds before
+   marking the change. Restore and save the exact starting effect and settings,
+   including Studio properties you edited. Saving in Studio can select Advanced
+   Effects; select Quick Effects again after saving if that was the starting
+   mode. Wait five seconds and mark restoration. Skip the step if Studio reports no compatible devices.
+   The ZIP can retain 375-byte matrix frames and 16-column or 17-column RGB rows;
+   the effect name comes from your markers. Frames alone do not establish a
+   physical key map. See the [Studio trial](../VALIDATION.md#chroma-studio-live-retry-2026-10-17)
+   for the tested laptop and capture limits.
 2. **Logo lighting:** begin this item before changing only the logo control.
    Wait five seconds after changing and restoring it. Use Static, Breathing,
    Off or the exact setting offered. If Synapse has no logo control, select
