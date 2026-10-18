@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Added
+
+- Import a JSON test plan to show only requested evidence items and M/Fn key checks,
+  keep the plan fixed during testing, and include its selected IDs in the evidence ZIP.
+  Add version 2 owner-reported OpenBlade checks, restoration reports, separate
+  maintainer research and already-covered evidence, with a focused Blade 18 plan.
+  Cache filtered choices and keep unrequested items out of unfinished-check notes
+  ([#23](https://github.com/OpenBladeProject/synapse-observer/pull/23)).
+
 ### Fixed
 
 - Collect the two fixed Windows PDH EC temperature counters separately from WMI,

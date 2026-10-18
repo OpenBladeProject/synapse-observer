@@ -7,6 +7,11 @@
 [Скачайте последний выпуск](https://github.com/OpenBladeProject/synapse-observer/releases/latest), распакуйте ZIP и запустите `SynapseObserver.exe` обычным способом.
 
 <a id="what-you-need"></a>
+
+Если разработчик прислал JSON-план, выберите **Import test plan…** до начала
+проверок. Приложение покажет только нужные пункты и клавиши.
+См. [планы проверок](docs/test-plans.md).
+
 ## Что потребуется
 
 - Windows 11, x64.

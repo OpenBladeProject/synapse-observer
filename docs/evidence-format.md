@@ -243,3 +243,23 @@ when the other succeeds. Missing counters mean unavailable evidence, not missing
 hardware support. Windows thermal-zone observations alone do not establish CPU
 package temperature or firmware readback. This collection calls Windows PDH only;
 it does not load Synapse DLLs or call vendor services, drivers, or HID endpoints.
+
+## Requested test plan
+
+A focused session adds test-plan.json and lists it in manifest.json entries.
+Its schemaVersion is 1, activityIds are built-in checklist IDs, and specialKeys
+are exact prompted-key names. Both arrays preserve requested order. Import paths
+and filenames are omitted. The optional file does not change the bundle v2 or
+session v2 shape. Unrequested checklist entries remain available as inventory
+coverage, but do not produce requested-item gaps or incomplete-checklist notes.
+
+## Follow-up owner reports
+
+Version 2 test plans retain separate OpenBlade checks, maintainer research and
+already-covered work in test-plan.json. When an owner begins an OpenBlade
+check, openblade-checks.json contains schema version 1 append-only reports with
+relative time, check ID, outcome, saved starting settings, optional notes and
+restoration status. Both the file and individual records identify user-reported
+provenance and isFirmwareReadback: false. These records do not promote passive
+coverage, confirm hardware application or claim production support. An unfinished
+start or unconfirmed restoration remains visible in collection review.

@@ -83,6 +83,17 @@ public partial class MainWindow : Window
         settle.Start();
         System.Windows.Threading.Dispatcher.PushFrame(frame);
         UpdateLayout();
+        if (stage == 13)
+        {
+            var top = ManualBaselineBox.TranslatePoint(new Point(0, 0), GuideScrollViewer).Y;
+            GuideScrollViewer.ScrollToVerticalOffset(GuideScrollViewer.VerticalOffset + top - 16);
+            UpdateLayout();
+        }
+        if (stage == 14)
+        {
+            ResearchExpander.IsExpanded = true; CoveredExpander.IsExpanded = true;
+            UpdateLayout(); ResearchExpander.BringIntoView(); UpdateLayout();
+        }
         if (stage == 4)
         {
             ExportCard.BringIntoView();
@@ -91,6 +102,11 @@ public partial class MainWindow : Window
         if (stage == 5)
         {
             SpecialKeyCard.BringIntoView();
+            UpdateLayout();
+        }
+        if (stage is >= 9 and <= 12)
+        {
+            GuideScrollViewer.ScrollToTop();
             UpdateLayout();
         }
         // The preview uses a real maximized window; record dimensions to catch
@@ -116,13 +132,22 @@ public partial class MainWindow : Window
         encoder.Frames.Add(BitmapFrame.Create(image));
         using var output = File.Create(path);
         encoder.Save(output);
+        closing = true; // Disconnected preview disposal must not prompt for synthetic reports.
         Close();
     }
 
     private async void HandleClosing(object? sender, CancelEventArgs e)
     {
         viewModel.CancelSpecialKeyProbe();
-        if (closing || (!viewModel.IsRecording && !viewModel.IsBusy))
+        if (!closing && viewModel.ManualCheckActive
+            && MessageBox.Show(this,
+                "An OpenBlade check is unfinished. Restore its starting settings and save the result, or save a partial evidence ZIP.\n\nClose without saving this report?",
+                "Unfinished OpenBlade check", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) != MessageBoxResult.Yes)
+        {
+            e.Cancel = true;
+            return;
+        }
+        if (closing || (!viewModel.IsRecording && !viewModel.IsBusy && !viewModel.ManualCheckActive))
         {
             return;
         }

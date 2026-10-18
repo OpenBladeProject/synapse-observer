@@ -18,7 +18,7 @@ internal sealed partial class CollectorViewModel
     private SpecialKeyExpectedKey expectedSpecialKey = SpecialKeyExpectedKey.Fn;
     private string specialKeyStatus = SpecialKeySelectionGuidance(SpecialKeyExpectedKey.Fn);
     public sealed record SpecialKeyChoice(SpecialKeyExpectedKey Key, string Label);
-    public IReadOnlyList<SpecialKeyChoice> SpecialKeyChoices { get; } =
+    private static IReadOnlyList<SpecialKeyChoice> AllSpecialKeyChoices { get; } =
     [
         new(SpecialKeyExpectedKey.Fn, SpecialKeyLabel(SpecialKeyExpectedKey.Fn)),
         .. Enumerable.Range(1, 12).Select(number =>
@@ -31,8 +31,10 @@ internal sealed partial class CollectorViewModel
         new(SpecialKeyExpectedKey.M4, SpecialKeyLabel(SpecialKeyExpectedKey.M4)),
         new(SpecialKeyExpectedKey.M5, SpecialKeyLabel(SpecialKeyExpectedKey.M5)),
     ];
+    private IReadOnlyList<SpecialKeyChoice>? selectedSpecialKeyChoices;
+    public IReadOnlyList<SpecialKeyChoice> SpecialKeyChoices => selectedSpecialKeyChoices ?? AllSpecialKeyChoices;
     public bool IsProbingSpecialKey => probingSpecialKey;
-    public bool ShowSpecialKeyProbe => HasInventory;
+    public bool ShowSpecialKeyProbe => HasInventory && SpecialKeyChoices.Count > 0;
     public bool IsSpecialKeyActivity => HasCurrentStep
         && CurrentActivity.Id.StartsWith("special-key-", StringComparison.Ordinal);
     public bool IsSpecialKeyExpanded
@@ -45,7 +47,7 @@ internal sealed partial class CollectorViewModel
             Changed();
         }
     }
-    public bool CanProbeSpecialKeys => HasInventory && !capacityReached && !closing && !busy && !probingSpecialKey && !preview
+    public bool CanProbeSpecialKeys => !manualActive && !manualTestingStopped && ShowSpecialKeyProbe && SpecialKeyChoices.Any(choice => choice.Key == expectedSpecialKey) && !capacityReached && !closing && !busy && !probingSpecialKey && !preview
         && specialKeyProbe is not null && stepPhase == 0 && SpecialKeyProbeParser.IsSingleBladeRoot(inputCandidates)
         && inputCandidates.Any(SpecialKeyProbeParser.IsInputCandidate)
         && session!.SpecialKeyProbeCount < EvidenceLimits.MaxSpecialKeyProbes
@@ -58,7 +60,7 @@ internal sealed partial class CollectorViewModel
         get => expectedSpecialKey;
         set
         {
-            if (probingSpecialKey || !Enum.IsDefined(value) || expectedSpecialKey == value) return;
+            if (probingSpecialKey || !SpecialKeyChoices.Any(choice => choice.Key == value) || expectedSpecialKey == value) return;
             expectedSpecialKey = value;
             specialKeyStatus = SpecialKeySelectionGuidance(value);
             Changed();

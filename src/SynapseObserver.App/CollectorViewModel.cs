@@ -11,7 +11,9 @@ namespace SynapseObserver.App;
 
 internal sealed partial class CollectorViewModel : INotifyPropertyChanged
 {
-    public IReadOnlyList<CaptureActivity> Activities { get; } = CaptureActivityCatalog.Create();
+    private readonly IReadOnlyList<CaptureActivity> allActivities = CaptureActivityCatalog.Create();
+    private IReadOnlyList<CaptureActivity>? selectedActivities;
+    public IReadOnlyList<CaptureActivity> Activities => selectedActivities ?? allActivities;
     private readonly bool preview;
     private long sessionOriginTicks = Stopwatch.GetTimestamp();
     private double RelativeMilliseconds => (Stopwatch.GetTimestamp() - sessionOriginTicks) * 1000.0 / Stopwatch.Frequency;
@@ -98,10 +100,14 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
             Changed(nameof(StepStatus));
             RefreshCommands();
         };
-        CollectCommand = new AsyncCommand(() => GuardAsync(CollectAsync), () => !closing && !capacityReached && !busy && !collecting && !recording && !IsProbingSpecialKey);
-        StartCommand = new AsyncCommand(() => GuardAsync(StartAsync), () => !closing && !busy && !IsProbingSpecialKey && !capacityReached && HasInventory && consent && !recording && (preview || backendCandidate is not null));
+        ImportTestPlanCommand = new AsyncCommand(ImportTestPlanAsync, () => CanChangeTestPlan);
+        ClearTestPlanCommand = new AsyncCommand(() => { ClearTestPlan(); return Task.CompletedTask; }, () => CanChangeTestPlan && HasTestPlan);
+        BeginManualCheckCommand = new AsyncCommand(() => GuardAsync(BeginManualCheckAsync), () => CanBeginManualCheck);
+        SaveManualCheckCommand = new AsyncCommand(() => GuardAsync(SaveManualCheckAsync), () => CanSaveManualCheck);
+        CollectCommand = new AsyncCommand(() => GuardAsync(CollectAsync), () => !manualActive && !manualTestingStopped && !closing && !capacityReached && !busy && !collecting && !recording && !IsProbingSpecialKey);
+        StartCommand = new AsyncCommand(() => GuardAsync(StartAsync), () => !closing && !busy && !manualActive && !manualTestingStopped && !IsProbingSpecialKey && !capacityReached && HasInventory && PlanNeedsRecording && consent && !recording && (preview || backendCandidate is not null));
         StopCommand = new AsyncCommand(() => GuardAsync(StopAsync), () => recording && !busy && !closing);
-        MarkCommand = new AsyncCommand(() => GuardAsync(MarkAsync), () => !closing && !busy && !IsProbingSpecialKey && !capacityReached && HasInventory && HasCurrentStep
+        MarkCommand = new AsyncCommand(() => GuardAsync(MarkAsync), () => !closing && !busy && !manualActive && !manualTestingStopped && !IsProbingSpecialKey && !capacityReached && HasInventory && HasCurrentStep
             && (CurrentActivity.IsReadOnly || (recording && !observerEnded))
             && (stepPhase == 2 || (stepPhase == 0 ? StartingEntry.HasValue : HasDistinctChangedSetting)));
         SkipCommand = new AsyncCommand(() => GuardAsync(() => SkipAsync(false)), () => CanSelectActivity && HasCurrentStep);
@@ -143,7 +149,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
     public bool ShowExport => HasInventory && !recording;
     public bool IsRecording => recording;
     public bool HasCurrentStep => step >= 0 && step < Activities.Count;
-    public bool CanSelectActivity => !closing && !capacityReached && HasInventory && !busy && !IsProbingSpecialKey && (!recording || !observerEnded) && stepPhase == 0;
+    public bool CanSelectActivity => !manualActive && !manualTestingStopped && !closing && !capacityReached && HasInventory && !busy && !IsProbingSpecialKey && (!recording || !observerEnded) && stepPhase == 0;
     public int SelectedActivityIndex
     {
         get => HasCurrentStep ? step : -1;
@@ -162,7 +168,7 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
     public string ActivityGuidance => HasCurrentStep ? CurrentActivity.Guidance : string.Empty;
     public bool ShowStartingValue => HasCurrentStep && stepPhase == 0;
     public bool ShowChangedValue => HasCurrentStep && stepPhase == 1;
-    public bool ShowAttach => !recording;
+    public bool ShowAttach => !recording && PlanNeedsRecording;
     public string CollectButtonText => HasInventory ? "Refresh device information" : "Collect device information";
     public string VersionLabel => "v" + BuildVersion.Split('+')[0];
     public string BuildVersion => typeof(CollectorViewModel).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "Unknown";
@@ -233,7 +239,8 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
             var identity = identities.FirstOrDefault();
             deviceSummary = $"{identity?.ProductName ?? "Laptop identity unavailable"} · BIOS {identity?.BiosVersion ?? "unavailable"}\n{inventory.RazerHidInterfaces.Value.Count} Razer HID interfaces · {inventory.SynapseProcesses.Value.Count} related software processes\n{TemperatureSummary(inventory.Support)}";
             Marker(EvidenceMarkerKind.SessionStarted, "session", "Device information collected", EvidenceProvenance.Collector);
-            foreach (var activity in Activities)
+            session.SetRequestedTestPlan(testPlan);
+            foreach (var activity in allActivities)
             {
                 session.SetCoverage(new CoverageItem(activity.Id, activity.Title, CoverageState.Pending, CoverageReason.None));
             }
@@ -505,8 +512,8 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
     {
         stepPhase = 0;
         startingSetting = string.Empty;
-        StartingEntry.Reset(step);
-        ChangedEntry.Reset(step);
+        StartingEntry.Reset(HasCurrentStep ? CurrentActivity : null);
+        ChangedEntry.Reset(HasCurrentStep ? CurrentActivity : null);
     }
 
     private Task StopAsync() => stopTask ??= StopCoreAsync();
@@ -917,6 +924,8 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
         await StartCommand.CurrentExecution;
         await SaveCommand.CurrentExecution;
         await MarkCommand.CurrentExecution;
+        await BeginManualCheckCommand.CurrentExecution;
+        await SaveManualCheckCommand.CurrentExecution;
         await specialKeyReviewTask;
         if (recording || observer is not null)
         {
@@ -1001,7 +1010,39 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
             ResetEntries();
             status = CapacityInstructions;
         }
-        if (stage >= 5)
+        if (stage >= 12)
+        {
+            recording = false;
+            ResetEntries();
+            TryImportTestPlan(System.Text.Encoding.UTF8.GetBytes("""
+                {"schemaVersion":2,"checks":[
+                {"id":"preview-lighting","kind":"openblade","title":"Per-key colors and sequence playback","steps":["Save the current lighting settings in OpenBlade.","Choose two visible keys, use different colors, then try a short sequence."],"expected":"The selected keys show the chosen colors and sequence changes are visible.","requiresRestoration":true,"restore":"Restore the exact starting lighting settings and confirm they are visible."},
+                {"id":"preview-research","kind":"research","title":"Driver interface research","steps":["Review the exact model driver interface."],"expected":"A reviewed model-specific interface.","requiresRestoration":false}],
+                "covered":[{"id":"preview-covered","summary":"The existing Synapse fan and lighting captures are retained. Do not repeat them."}]}
+                """));
+            if (stage == 13)
+            {
+                ManualBaseline = "Static green keyboard with the logo off";
+                BeginManualCheckAsync().GetAwaiter().GetResult();
+                ManualOutcome = ManualOutcomes.Single(item => item.Value == PlanCheckOutcome.Problem);
+                ManualDetails = "One selected key did not change color.";
+                ManualRestoration = ManualRestorations.Single(item => item.Value == PlanRestoration.Unconfirmed);
+            }
+        }
+        else if (stage is 9 or 11)
+        {
+            recording = false;
+            ResetEntries();
+            TryImportTestPlan(System.Text.Encoding.UTF8.GetBytes("{\"schemaVersion\":1,\"activityIds\":[\"fans\",\"full-charge\"],\"specialKeys\":[]}"));
+            if (stage == 11) { recording = true; recordingNumber = 1; }
+        }
+        else if (stage == 10)
+        {
+            recording = false;
+            ResetEntries();
+            TryImportTestPlan(System.Text.Encoding.UTF8.GetBytes("{\"schemaVersion\":1,\"specialKeys\":[\"FnP\"]}"));
+        }
+        else if (stage >= 5)
         {
             var activityId = stage switch
             {
@@ -1034,6 +1075,8 @@ internal sealed partial class CollectorViewModel : INotifyPropertyChanged
 
     private void RefreshCommands()
     {
+        BeginManualCheckCommand?.Refresh(); SaveManualCheckCommand?.Refresh();
+        ImportTestPlanCommand.Refresh(); ClearTestPlanCommand.Refresh();
         ProbeSpecialKeyCommand?.Refresh(); CancelSpecialKeyProbeCommand?.Refresh();
         CollectCommand.Refresh(); StartCommand.Refresh(); StopCommand.Refresh(); MarkCommand.Refresh();
         SkipCommand.Refresh(); UnavailableCommand.Refresh(); SaveCommand.Refresh();

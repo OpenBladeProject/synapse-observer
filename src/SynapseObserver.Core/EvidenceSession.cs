@@ -15,6 +15,8 @@ public sealed class EvidenceSession : IDisposable
     private readonly SanitizedObservationStore _observations;
     private readonly Dictionary<string, CoverageItem> _coverage = new(StringComparer.Ordinal);
     private readonly Dictionary<(int Recording, int Segment), int> _dropMarkerIndices = [];
+    private CaptureTestPlan? _requestedTestPlan;
+    private readonly List<PlanCheckReport> _planCheckReports = [];
     private int _rejectedMarkers;
     private int _rejectedObservations;
     private int _rejectedCoverage;
@@ -263,6 +265,53 @@ public sealed class EvidenceSession : IDisposable
         }
     }
 
+    public void SetRequestedTestPlan(CaptureTestPlan? plan)
+    {
+        lock (_sync)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (_markers.Any(marker => marker.Provenance == EvidenceProvenance.UserReported
+                    || marker.Kind is EvidenceMarkerKind.RecordingStarted or EvidenceMarkerKind.RecordingStopped)
+                || _planCheckReports.Count > 0 || _specialKeyProbes.Count > 0 || _specialKeys.Count > 0 || ObservationCount > 0
+                || _coverage.Values.Any(item => item.State != CoverageState.Pending))
+                throw new InvalidOperationException("The test plan cannot change after evidence collection starts.");
+            _requestedTestPlan = plan;
+        }
+    }
+
+    public EvidenceAddResult AddPlanCheckReport(PlanCheckReport report)
+    {
+        ArgumentNullException.ThrowIfNull(report);
+        lock (_sync)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (_planCheckReports.Count >= 128) return EvidenceAddResult.RejectedLimit;
+            var check = _requestedTestPlan?.Checks.SingleOrDefault(item => item.Id == report.CheckId
+                && item.Kind == PlanCheckKind.OpenBlade);
+            if (check is null || !_requestedTestPlan!.MatchesTarget(Inventory) || !double.IsFinite(report.RelativeMilliseconds) || report.RelativeMilliseconds < 0
+                || !Enum.IsDefined(report.Outcome) || !Enum.IsDefined(report.Restoration)
+                || !EvidenceText.IsDisplayText(report.Baseline)
+                || report.Details is not null && !EvidenceText.IsDisplayText(report.Details)
+                || report.Outcome == PlanCheckOutcome.Started
+                    && report.Restoration != (check.RequiresRestoration ? PlanRestoration.Pending : PlanRestoration.NotRequired)
+                || report.Outcome != PlanCheckOutcome.Started && report.Restoration == PlanRestoration.Pending
+                || check.RequiresRestoration && report.Restoration == PlanRestoration.NotRequired
+                || !check.RequiresRestoration && report.Restoration != PlanRestoration.NotRequired
+                || report.Restoration == PlanRestoration.Unconfirmed && report.Outcome != PlanCheckOutcome.Problem)
+                return EvidenceAddResult.RejectedInvalid;
+            var previous = _planCheckReports.LastOrDefault(item => item.CheckId == report.CheckId);
+            if (_planCheckReports.Any(item => item.Restoration == PlanRestoration.Unconfirmed)
+                || _markers.FindLastIndex(item => item.Kind == EvidenceMarkerKind.RecordingStarted)
+                    > _markers.FindLastIndex(item => item.Kind == EvidenceMarkerKind.RecordingStopped)
+                || report.Outcome == PlanCheckOutcome.Started && (previous is not null
+                    || _planCheckReports.GroupBy(item => item.CheckId).Any(group => group.Last().Outcome == PlanCheckOutcome.Started))
+                || report.Outcome != PlanCheckOutcome.Started && (previous?.Outcome != PlanCheckOutcome.Started
+                    || previous.Baseline != report.Baseline || report.RelativeMilliseconds < previous.RelativeMilliseconds)) return EvidenceAddResult.RejectedInvalid;
+            _planCheckReports.Add(report);
+            return EvidenceAddResult.Added;
+        }
+    }
+
     public EvidenceSessionSnapshot Snapshot()
     {
         lock (_sync)
@@ -280,6 +329,8 @@ public sealed class EvidenceSession : IDisposable
                 Volatile.Read(ref _rejectedObservations),
                 _rejectedCoverage)
             {
+                RequestedTestPlan = _requestedTestPlan,
+                PlanCheckReports = EvidenceSessionSnapshot.Freeze(_planCheckReports),
                 SpecialKeyObservations = EvidenceSessionSnapshot.Freeze(_specialKeys),
                 SpecialKeyProbes = EvidenceSessionSnapshot.Freeze(_specialKeyProbes),
                 StorageFailure = storageFailure,

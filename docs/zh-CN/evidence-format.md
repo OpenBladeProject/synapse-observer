@@ -90,3 +90,13 @@ WMI 失败不会抑制 PDH 结果。即使另一个别名读取成功，失败�
 计数器缺失表示证据不可用，并不表示硬件不支持。仅有 Windows 热区观测无法
 确定 CPU 封装温度，也不构成固件回读。此采集只调用 Windows PDH；它不会加载
 Synapse DLL，也不会调用厂商服务、驱动程序或 HID 端点。
+
+<a id="requested-test-plan"></a>
+## 请求的测试计划
+
+聚焦会话会添加 test-plan.json，并将其列入 manifest.json 的 entries。其 schemaVersion 为 1，activityIds 是内置检查表 ID，specialKeys 是提示按键的准确名称。两个数组都保留请求顺序。导入路径和文件名会被省略。这个可选文件不会改变包 v2 或会话 v2 的结构。未请求的检查表项目仍作为清单覆盖信息保留，但不会产生请求项目缺口或检查表未完成提示。
+
+<a id="follow-up-owner-reports"></a>
+## 后续所有者报告
+
+版本 2 测试计划在 test-plan.json 中分别保留 OpenBlade 检查、维护者研究和已覆盖工作。所有者开始 OpenBlade 检查后，openblade-checks.json 会包含架构版本 1 的仅追加报告，其中记录相对时间、检查 ID、结果、已保存的初始设置、可选备注和恢复状态。文件和每条记录都会标明 user-reported 来源以及 isFirmwareReadback: false。这些记录不会提升被动覆盖状态、确认硬件已应用设置或声明生产支持。未完成的开始记录或未确认的恢复仍会显示在采集检查中。

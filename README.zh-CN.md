@@ -7,6 +7,10 @@
 [下载最新版本](https://github.com/OpenBladeProject/synapse-observer/releases/latest)，解压 ZIP，然后正常打开 `SynapseObserver.exe`。
 
 <a id="what-you-need"></a>
+
+如果维护者提供了 JSON 测试计划，请在开始检查前选择 **Import test plan…**。
+界面只显示所需的项目和按键。详见[测试计划](docs/test-plans.md)。
+
 ## 所需环境
 
 - Windows 11，x64。

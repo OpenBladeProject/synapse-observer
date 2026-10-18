@@ -17,8 +17,18 @@
       <Image Source="Assets/Brand/OpenBlade.png" Width="28" Height="28" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="0,3,0,0" />
       <Border Grid.Column="1" Background="{StaticResource ButtonBrush}" CornerRadius="4" Padding="8,3" VerticalAlignment="Top" Margin="12,4,0,0"><TextBlock Text="{Binding VersionLabel}" ToolTip="{Binding BuildVersion}" FontSize="11" Foreground="{StaticResource MutedTextBrush}" /></Border>
     </Grid>
-    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,8,0">
+    <ScrollViewer x:Name="GuideScrollViewer" Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,8,0">
       <StackPanel>
+        <Border Style="{StaticResource Card}">
+          <StackPanel>
+            <TextBlock Text="Test plan" FontSize="17" FontWeight="SemiBold" />
+            <TextBlock Text="{Binding TestPlanStatus}" Foreground="{StaticResource MutedTextBrush}" Margin="0,8,0,10" AutomationProperties.LiveSetting="Polite" />
+            <WrapPanel Visibility="{Binding ShowTestPlanControls, Converter={StaticResource VisibleWhenTrue}}">
+              <Button Content="Import test plan…" Command="{Binding ImportTestPlanCommand}" AutomationProperties.HelpText="Choose a JSON file supplied by a maintainer to show only the requested checks." />
+              <Button Content="Show all checks" Command="{Binding ClearTestPlanCommand}" Visibility="{Binding HasTestPlan, Converter={StaticResource VisibleWhenTrue}}" />
+            </WrapPanel>
+          </StackPanel>
+        </Border>
         <Border Style="{StaticResource Card}" Visibility="{Binding ShowInventoryScreen, Converter={StaticResource VisibleWhenTrue}}">
           <StackPanel>
             <TextBlock Text="Your laptop" FontSize="17" FontWeight="SemiBold" />
@@ -28,9 +38,51 @@
           </StackPanel>
         </Border>
         <TextBlock Text="{Binding DeviceSummary}" Foreground="{StaticResource MutedTextBrush}" Margin="0,0,0,12" Visibility="{Binding HasInventory, Converter={StaticResource VisibleWhenTrue}}" />
-        <Border Style="{StaticResource Card}" Visibility="{Binding HasInventory, Converter={StaticResource VisibleWhenTrue}}">
+        <Border Style="{StaticResource Card}" Visibility="{Binding ShowManualChecks, Converter={StaticResource VisibleWhenTrue}}">
           <StackPanel>
-            <TextBlock Text="Record Synapse changes" FontSize="17" FontWeight="SemiBold" />
+            <TextBlock Text="OpenBlade behavior checks" FontSize="17" FontWeight="SemiBold" />
+            <TextBlock Text="Close Synapse and use the requested OpenBlade build. Do not record Synapse during these checks. Observer saves your reports; it does not change settings." Foreground="{StaticResource MutedTextBrush}" Margin="0,8,0,12" />
+            <Label Content="Choose a check" Target="{Binding ElementName=ManualCheckPicker}" Padding="0,0,0,6" />
+            <ComboBox x:Name="ManualCheckPicker" ItemsSource="{Binding ManualChecks}" DisplayMemberPath="DisplayLabel" SelectedIndex="{Binding SelectedManualCheckIndex}" IsEnabled="{Binding CanSelectManualCheck}" MinHeight="34" AutomationProperties.Name="OpenBlade check" />
+            <TextBlock Text="{Binding ManualCheckTitle}" FontSize="15" FontWeight="SemiBold" Margin="0,12,0,6" />
+            <ItemsControl ItemsSource="{Binding ManualSteps}"><ItemsControl.ItemTemplate><DataTemplate><TextBlock Text="{Binding}" TextWrapping="Wrap" Margin="0,0,0,8" /></DataTemplate></ItemsControl.ItemTemplate></ItemsControl>
+            <TextBlock Text="Expected result" FontWeight="SemiBold" Margin="0,4,0,5" />
+            <TextBlock Text="{Binding ManualExpected}" Foreground="{StaticResource MutedTextBrush}" />
+            <TextBlock Text="Restore afterward" FontWeight="SemiBold" Margin="0,10,0,5" />
+            <TextBlock Text="{Binding ManualRestore}" Foreground="{StaticResource MutedTextBrush}" />
+            <Label Content="Starting settings or why the control is unavailable" Target="{Binding ElementName=ManualBaselineBox}" Padding="0,12,0,6" />
+            <TextBox x:Name="ManualBaselineBox" Text="{Binding ManualBaseline, UpdateSourceTrigger=PropertyChanged}" MaxLength="256" IsEnabled="{Binding CanEnterManualBaseline}" MinHeight="34" AutomationProperties.Name="Starting settings" />
+            <Button Content="Begin check" Command="{Binding BeginManualCheckCommand}" Style="{StaticResource PrimaryButton}" HorizontalAlignment="Left" Margin="0,10,0,0" />
+            <StackPanel IsEnabled="{Binding ManualCheckActive}">
+              <Label Content="Your result" Target="{Binding ElementName=ManualOutcomePicker}" Padding="0,12,0,6" />
+              <ComboBox x:Name="ManualOutcomePicker" ItemsSource="{Binding ManualOutcomes}" DisplayMemberPath="Label" SelectedItem="{Binding ManualOutcome}" MinHeight="34" />
+              <Label Content="What happened (optional, no personal information)" Target="{Binding ElementName=ManualDetailsBox}" Padding="0,10,0,6" />
+              <TextBox x:Name="ManualDetailsBox" Text="{Binding ManualDetails, UpdateSourceTrigger=PropertyChanged}" MaxLength="256" MinHeight="34" />
+              <StackPanel Visibility="{Binding ManualNeedsRestoration, Converter={StaticResource VisibleWhenTrue}}">
+                <Label Content="Restoration" Target="{Binding ElementName=ManualRestorationPicker}" Padding="0,10,0,6" />
+                <ComboBox x:Name="ManualRestorationPicker" ItemsSource="{Binding ManualRestorations}" DisplayMemberPath="Label" SelectedItem="{Binding ManualRestoration}" MinHeight="34" />
+              </StackPanel>
+            </StackPanel>
+            <Button x:Name="ManualResultButton" Content="Save result" Command="{Binding SaveManualCheckCommand}" HorizontalAlignment="Left" Style="{StaticResource PrimaryButton}" Margin="0,12,0,0" />
+            <TextBlock Text="{Binding ManualCheckStatus}" Foreground="{StaticResource MutedTextBrush}" Margin="0,10,0,0" AutomationProperties.LiveSetting="Polite" />
+          </StackPanel>
+        </Border>
+        <Border Style="{StaticResource Card}" Visibility="{Binding ShowResearchChecks, Converter={StaticResource VisibleWhenTrue}}">
+          <Expander x:Name="ResearchExpander" Header="Maintainer research — no owner testing requested">
+            <ItemsControl ItemsSource="{Binding ResearchChecks}" Margin="0,10,0,0"><ItemsControl.ItemTemplate><DataTemplate><StackPanel Margin="0,0,0,12">
+              <TextBlock Text="{Binding Title}" FontWeight="SemiBold" />
+              <ItemsControl ItemsSource="{Binding Steps}"><ItemsControl.ItemTemplate><DataTemplate><TextBlock Text="{Binding}" TextWrapping="Wrap" Margin="0,5,0,0" /></DataTemplate></ItemsControl.ItemTemplate></ItemsControl>
+            </StackPanel></DataTemplate></ItemsControl.ItemTemplate></ItemsControl>
+          </Expander>
+        </Border>
+        <Border Style="{StaticResource Card}" Visibility="{Binding ShowCoveredChecks, Converter={StaticResource VisibleWhenTrue}}">
+          <Expander x:Name="CoveredExpander" Header="Already covered — do not repeat">
+            <ItemsControl ItemsSource="{Binding CoveredChecks}" Margin="0,10,0,0"><ItemsControl.ItemTemplate><DataTemplate><TextBlock Text="{Binding Summary}" TextWrapping="Wrap" Margin="0,0,0,8" /></DataTemplate></ItemsControl.ItemTemplate></ItemsControl>
+          </Expander>
+        </Border>
+        <Border Style="{StaticResource Card}" Visibility="{Binding ShowRecordingGuide, Converter={StaticResource VisibleWhenTrue}}">
+          <StackPanel>
+            <TextBlock Text="{Binding RecordingGuideTitle}" FontSize="17" FontWeight="SemiBold" />
             <TextBlock Text="{Binding RecorderStatus}" Margin="0,8,0,10" Foreground="{StaticResource MutedTextBrush}" FontSize="12" AutomationProperties.LiveSetting="Polite" />
             <StackPanel Visibility="{Binding ShowAttach, Converter={StaticResource VisibleWhenTrue}}">
               <CheckBox Content="Allow observation of Synapse during this session" IsChecked="{Binding AttachConsent}" Margin="0,0,0,12" AutomationProperties.HelpText="The collector loads a fixed observer into a verified Synapse process. It records control feature calls without replaying them." />
