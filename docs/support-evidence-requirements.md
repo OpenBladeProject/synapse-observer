@@ -81,7 +81,7 @@ OpenBlade capture-repository annotation validator.
 
 ## What maintainers must still do
 
-Production support requires a separate, reviewed workflow:
+Promotion to physically validated OpenBlade support requires a separate, reviewed workflow:
 
 1. Commit a sanitized oracle capture for the exact model, PID, firmware, and
    interface.
@@ -96,6 +96,14 @@ Production support requires a separate, reviewed workflow:
    reconnect behavior, and attended sleep and resume where required.
 7. Back production code with the committed sanitized fixture and complete the
    explicit model admission review.
+
+Separately implemented experimental controls may ship from reviewed, pinned
+exact-model vendor or upstream definitions before physical validation. They retain
+exact-device admission, experimental provenance, failure and recovery tests,
+applicable readback, durable restoration, and stop-on-ambiguity behavior. They do
+not inherit another model's commands or physical results. Physical validation
+remains the promotion gate; see [OpenBlade's admission policy](https://github.com/OpenBladeProject/openblade-core/blob/01402f870da52cc3d647b9a4d2774bfbc30332c8/AGENTS.md#source-backed-experimental-admission).
+Observer supplies evidence for review and authorizes neither route.
 
 If submission or readback is ambiguous, validation stops and continues
 read-only. A maintainer does not replay the uncertain write or substitute a

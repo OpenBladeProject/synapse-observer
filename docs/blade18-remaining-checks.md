@@ -6,6 +6,10 @@ bundles and the later exact-model source recovery in OpenBlade commit
 captured identity, Synapse performance, Balanced fan, charge-limit, brightness,
 Fire, Wheel, or logo actions.
 
+The research boundaries below were refreshed against OpenBlade commit
+`01402f870da52cc3d647b9a4d2774bfbc30332c8`. The owner checks remain unchanged;
+reviewed THX and SnapTap control contracts do not add owner tests to this plan.
+
 Import [the plan](examples/blade18-remaining-checks.json) into an Observer build
 that includes schema version 2 from [PR #23](https://github.com/OpenBladeProject/synapse-observer/pull/23)
 and PDH temperature collection from [PR #21](https://github.com/OpenBladeProject/synapse-observer/pull/21).
@@ -49,10 +53,10 @@ source and native-component questions as maintainer work.
 
 | Check | Why it is research only | Evidence |
 | --- | --- | --- |
-| `research-fn-primary-abi` | The present hook cannot safely suppress only this laptop before device identity is known. Default Fn shortcuts do not admit always-on function-primary inversion. | `OpenSynapse/docs/blade18-source-feature-recovery.md:263-276` |
+| `research-fn-primary-abi` | The shared PID02A0 suppression/output ABI is reviewed for SnapTap, but function-row driver admission excludes this model. Exact Fn-primary and keyboard-mode semantics remain unresolved; default Fn shortcuts do not establish them. | `OpenSynapse/src/OpenBlade.SessionAgent/SnapTapDriverSupervisor.cs:390-400`, `OpenSynapse/src/OpenBlade.SessionAgent/FunctionRowDriverContext.cs:26-33`; `OpenSynapse/docs/snap-tap-filter-abi.md:19-59` |
 | `research-firmware-gaming-mode` | Product 672 supports the host mapping policy but lacks the reviewed firmware Gaming Mode feature gate. | `OpenSynapse/docs/blade18-source-feature-recovery.md:40-61` |
-| `research-thx-legacy-stack` | This 2023 model uses a legacy THX path; no exact APO, codec binding, client ABI, or complete component pin is available. | `OpenSynapse/docs/blade18-source-feature-recovery.md:109-131` |
-| `research-snaptap-abi` | A signed PID02A0 stack exists, but the installed hash differs and the public interception and output ABI is unproved. | `OpenSynapse/docs/blade18-source-feature-recovery.md:63-107` |
+| `research-thx-legacy-stack` | Installed-component legacy COM spatial control is admitted experimentally. The original endpoint FX binding and fresh-install contract remain unresolved; physical validation on this exact model is still pending. | `OpenSynapse/docs/blade18-source-feature-recovery.md:109-131` |
+| `research-snaptap-abi` | The exact PID02A0 filter and shared control API are reviewed and admitted experimentally. Compatible installed updates use package and API admission. Physical input, setup and recovery validation on this model remain pending. | `OpenSynapse/docs/blade18-source-feature-recovery.md:63-107` |
 | `research-hyperboost` | Shared HyperBoost code exists, but exact Product 672 supplies no enabling feature flag or admitted setter. | `OpenSynapse/docs/blade18-source-feature-recovery.md:40-49`, `OpenSynapse/docs/experimental-blade-reference.md:138-139` |
 | `research-custom-performance-fixed-fans` | The declared Custom range is inactive without its missing feature gate, and no Performance manual range was recovered. | `OpenSynapse/docs/blade18-source-feature-recovery.md:146-151`, `:209-215` |
 | `research-silent-curves` | Silent fixed targets are admitted, while the curve backend and its temperature contract remain Balanced-only. | `OpenSynapse/docs/blade18-source-feature-recovery.md:133-144`, `:188-191` |
@@ -83,7 +87,8 @@ source and native-component questions as maintainer work.
   contains no enable request, while the current OpenBlade control has guarded
   readback and restoration. Startup animation is likewise checked only through
   OpenBlade when its getter admits the control.
-- HyperBoost, function-primary mode, firmware Gaming Mode, THX, SnapTap, fixed
-  fans in Custom or Performance, Silent curves, and a CPU-temperature fallback
+- HyperBoost, function-primary mode, firmware Gaming Mode, THX fresh installation,
+  model-specific SnapTap validation, fixed fans in Custom or Performance, Silent
+  curves, and a CPU-temperature fallback
   remain research entries. The plan does not turn missing source contracts into
   owner experiments.

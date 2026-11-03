@@ -94,7 +94,7 @@ Synapse DLL，也不会调用厂商服务、驱动程序或 HID 端点。
 <a id="requested-test-plan"></a>
 ## 请求的测试计划
 
-聚焦会话会添加 test-plan.json，并将其列入 manifest.json 的 entries。其 schemaVersion 为 1，activityIds 是内置检查表 ID，specialKeys 是提示按键的准确名称。两个数组都保留请求顺序。导入路径和文件名会被省略。这个可选文件不会改变包 v2 或会话 v2 的结构。未请求的检查表项目仍作为清单覆盖信息保留，但不会产生请求项目缺口或检查表未完成提示。
+聚焦会话会添加 test-plan.json，并将其列入 manifest.json 的 entries。对于版本 1 计划，schemaVersion 为 1，activityIds 是内置检查表 ID，specialKeys 是提示按键的准确名称。两个数组都保留请求顺序。导入路径和文件名会被省略。这个可选文件不会改变包 v2 或会话 v2 的结构。未请求的检查表项目仍作为清单覆盖信息保留，但不会产生请求项目缺口或检查表未完成提示。
 
 <a id="follow-up-owner-reports"></a>
 ## 后续所有者报告
