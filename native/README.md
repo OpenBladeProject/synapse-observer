@@ -63,8 +63,11 @@ Known limits:
   disables hooks, waits briefly for callbacks, and drains completed records.
   The DLL and trampoline allocations remain pinned until Synapse exits because
   callback counters alone cannot prove that no thread is about to enter a hook.
-  Another recording requires a manual Synapse restart. No process is stopped
-  automatically. A failure to confirm stop must remain visible to the user.
+  The same collector can reuse its verified resident observer after a successful
+  stop and confirmed worker exit, with unchanged process and module identity.
+  A failed recording, uncertain cleanup, or changed identity requires a manual
+  Synapse restart. No process is stopped automatically. A failure to confirm stop
+  must remain visible to the user.
 - The remote loader completed one authorized trial on the reviewed Synapse build.
   Other builds and security configurations remain unvalidated. Process protection
   or code-integrity policy may refuse attachment. There is no bypass.
